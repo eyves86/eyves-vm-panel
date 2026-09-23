@@ -465,6 +465,13 @@ func ensureSchema() error {
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_volumes_container ON volumes (attached_to_container_id)`,
+		// P1-1 节点状态机 + 租约锁
+		`CREATE TABLE IF NOT EXISTS node_leases (
+			node_id TEXT PRIMARY KEY,
+			token TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			in_progress INTEGER NOT NULL DEFAULT 0
+		)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
