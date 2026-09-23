@@ -784,13 +784,13 @@ const (
 )
 
 type StoragePool struct {
-	ID              string   `json:"id"`
-	Name            string   `json:"name"`
-	Path            string   `json:"path"`
-	MountPoint      string   `json:"mount_point,omitempty"`
-	ContentTypes    []string `json:"content_types"`
-	DefaultContents []string `json:"default_contents,omitempty"`
-	Enabled         bool     `json:"enabled"`
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	Path            string            `json:"path"`
+	MountPoint      string            `json:"mount_point,omitempty"`
+	ContentTypes    []string          `json:"content_types"`
+	DefaultContents []string          `json:"default_contents,omitempty"`
+	Enabled         bool              `json:"enabled"`
 	// Backend 存储后端类型：dir|zfs|lvm|rbd|cephfs|nfs（P0-1 仅实现 dir；
 	// 旧数据该字段为空字符串，加载时自动补 dir）。
 	Backend string `json:"backend,omitempty"`
@@ -800,6 +800,10 @@ type StoragePool struct {
 	WatermarkWarn int `json:"watermark_warn,omitempty"`
 	// WatermarkCritical 使用率禁止写入水位线（百分比），默认 90：超过后拒绝新建/扩容。
 	WatermarkCritical int `json:"watermark_critical,omitempty"`
+	// Config 后端私有配置（K/V，键名空间由后端约定）。dir 池忽略；
+	// zfs 池示例：{"parent":"tank/eyvescloud","compression":"lz4","refquota":"1G"}。
+	// P0-2 不下放接口（前端不可见），仅在池配置同步/启动时供后端读取。
+	Config map[string]string `json:"config,omitempty"`
 }
 
 // 存储池水位线默认值（P0-1 约定 80/90）。
@@ -818,6 +822,10 @@ func NormalizeStoragePoolDefaults(pool *StoragePool) bool {
 	changed := false
 	if backend := storage.NormalizeBackendKind(pool.Backend); pool.Backend != backend {
 		pool.Backend = backend
+		changed = true
+	}
+	if pool.Config == nil {
+		pool.Config = map[string]string{}
 		changed = true
 	}
 	warn := pool.WatermarkWarn

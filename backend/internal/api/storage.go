@@ -95,14 +95,15 @@ func buildStorageInfo() storageInfoResponse {
 	disks := detectStorageDisks()
 	pools := make([]storagePoolInfo, 0, len(config.AppConfig.StoragePools))
 	for _, pool := range config.AppConfig.StoragePools {
-		// P0-1 存储抽象层新增字段（backend/shared/watermark_*）刻意不随
-		// /api/storage 响应暴露：当前唯一后端是 dir，暴露无调度意义；
-		// P0-2 引入 ZFS 后端时再一并开放（届时前端需要展示与选择后端）。
+		// P0-1/P0-2 存储抽象层新增字段（backend/shared/watermark_*/config）
+		// 刻意不随 /api/storage 响应暴露：当前唯一可服务后端是 dir，
+		// 暴露无调度意义；前端需要展示与选择后端时再一并开放。
 		// 此处显式清零，保证 GET 响应结构与字段和 P0-1 之前完全一致。
 		pool.Backend = ""
 		pool.Shared = false
 		pool.WatermarkWarn = 0
 		pool.WatermarkCritical = 0
+		pool.Config = nil
 		info := storagePoolInfo{StoragePool: pool}
 		if filepath.Clean(pool.MountPoint) == string(os.PathSeparator) {
 			_ = os.MkdirAll(pool.Path, 0755)
