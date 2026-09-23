@@ -8,6 +8,7 @@ type CheckAuthData = {
   username?: string
   sub_user?: boolean
   role?: string
+  admin_role?: string
   container_uuids?: string[]
   permission_scopes?: string[]
 }
@@ -17,10 +18,16 @@ interface AuthContextType {
   isLoading: boolean
   username: string | null
   isSubUser: boolean
+  isAdmin: boolean
+  /** 管理员角色：admin | operator | readonly（仅管理员会话有效） */
+  adminRole: string
   isReadOnly: boolean
   containerIdentifiers: string[]
-  login: (username: string, password: string) => Promise<void>
-  loginWith2FA: (username: string, password: string, code: string) => Promise<void>
+  /** 管理员入口登录：仅走 /api/login（含两步验证） */
+  adminLogin: (username: string, password: string) => Promise<void>
+  adminLoginWith2FA: (username: string, password: string, code: string) => Promise<void>
+  /** 用户入口登录：仅走 /api/sub-user/login（账号密码） */
+  userLogin: (username: string, password: string) => Promise<void>
   accessCodeLogin: (code: string, password: string) => Promise<void>
   logout: () => void
   token: string | null
@@ -33,6 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true)
   const [username, setUsername] = useState<string | null>(null)
   const [isSubUser, setIsSubUser] = useState(false)
+  const [adminRole, setAdminRole] = useState('')
   const [isReadOnly, setIsReadOnly] = useState(false)
   const [containerIdentifiers, setContainerIdentifiers] = useState<string[]>([])
   const [token, setToken] = useState<string | null>(null)
@@ -63,12 +71,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUsername(data.username || savedUsername || null)
             setIsSubUser(!!data.sub_user)
             setIsReadOnly(!!data.sub_user && (data.role || '') === 'viewer')
+            setAdminRole(data.admin_role || '')
             setContainerIdentifiers(Array.isArray(data.container_uuids) ? data.container_uuids : [])
           } else {
             const payload = decodeTokenPayload(savedToken)
             setUsername(payload?.username || payload?.sub_user || savedUsername || null)
             setIsSubUser(!!payload?.sub_user)
             setIsReadOnly(!!payload?.sub_user && payload?.role === 'viewer')
+            setAdminRole(payload?.sub_user ? '' : (payload?.role || ''))
             setContainerIdentifiers(Array.isArray(payload?.container_uuids) ? payload.container_uuids : [])
           }
           setIsAuthenticated(true)
@@ -88,29 +98,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [navigate])
 
-  const login = async (user: string, password: string) => {
-    try {
-      const response = await apiLogin(user, password)
-      const data = response.data.data as LoginResponse
-      saveAuth(data.token, data.username, false, [])
-      navigate('/')
-    } catch (adminError) {
-      try {
-        const res = await api.post('/sub-user/login', { username: user, password })
-        const data = res.data.data as { token: string; username: string; role?: string; container_uuids: string[] }
-        saveAuth(data.token, data.username, true, data.container_uuids || [], data.role === 'viewer')
-        const first = data.container_uuids?.[0]
-        navigate(first ? `/container/${encodeURIComponent(first)}` : '/containers')
-      } catch {
-        throw adminError
-      }
-    }
+  // 管理员入口：只认 /api/login，不尝试子用户，避免两个门户互相穿透。
+  const adminLogin = async (user: string, password: string) => {
+    const response = await apiLogin(user, password)
+    const data = response.data.data as LoginResponse
+    saveAuth(data.token, data.username, false, [])
+    setAdminRole('')
+    navigate('/')
   }
 
-  const loginWith2FA = async (user: string, password: string, code: string) => {
+  // 用户入口：只认 /api/sub-user/login（账号密码）。
+  const userLogin = async (user: string, password: string) => {
+    const res = await api.post('/sub-user/login', { username: user, password })
+    const data = res.data.data as { token: string; username: string; role?: string; container_uuids: string[] }
+    saveAuth(data.token, data.username, true, data.container_uuids || [], data.role === 'viewer')
+    navigate('/user')
+  }
+
+  const adminLoginWith2FA = async (user: string, password: string, code: string) => {
     const response = await apiLogin(user, password, code)
     const data = response.data.data as LoginResponse
     saveAuth(data.token, data.username, false, [])
+    setAdminRole('')
     navigate('/')
   }
 
@@ -118,8 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const res = await api.post('/sub-user/access', { code, password })
     const data = res.data.data as { token: string; username: string; role?: string; container_uuids: string[] }
     saveAuth(data.token, data.username, true, data.container_uuids || [], data.role === 'viewer')
-    const first = data.container_uuids?.[0]
-    navigate(first ? `/container/${encodeURIComponent(first)}` : '/containers')
+    navigate('/user')
   }
 
   const logout = () => {
@@ -129,13 +137,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUsername(null)
     setIsSubUser(false)
     setIsReadOnly(false) // 重置只读态，防止登出后残留 viewer 限制影响下一次登录
+    setAdminRole('')
     setContainerIdentifiers([])
     setIsAuthenticated(false)
     navigate('/login')
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, isSubUser, isReadOnly, containerIdentifiers, login, loginWith2FA, accessCodeLogin, logout, token }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, isSubUser, isAdmin: isAuthenticated && !isSubUser, adminRole, isReadOnly, containerIdentifiers, adminLogin, adminLoginWith2FA, userLogin, accessCodeLogin, logout, token }}>
       {children}
     </AuthContext.Provider>
   )

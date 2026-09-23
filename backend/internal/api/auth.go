@@ -232,6 +232,19 @@ func claimsFromToken(tokenString string) (jwt.MapClaims, bool) {
 		return claims, ok
 	}
 
+	// 额外管理员（多管理员）：按账号自身的 TokenVersion 校验；账号被删除或禁用即失效。
+	if adminID, _ := claims["admin_id"].(string); adminID != "" {
+		acct, ok := config.FindAdminAccountByID(adminID)
+		if !ok || acct.Disabled {
+			return nil, false
+		}
+		tokenVersionFloat, hasVersion := claims["token_version"].(float64)
+		if !hasVersion || int(tokenVersionFloat) != acct.TokenVersion {
+			return nil, false
+		}
+		return claims, true
+	}
+
 	// Admin tokens carry token_version so they can be revoked by rotating the
 	// admin password or username. Once the stored version becomes non-zero,
 	// every existing token (including legacy ones without the claim) is invalid.
@@ -294,10 +307,14 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	adminUser := config.AppConfig.AdminUser
 	adminPassHash := config.AppConfig.AdminPassHash
 	adminTokenVersion := config.AppConfig.AdminTokenVersion
-	jwtSecret := config.AppConfig.JWTSecret
 	config.AppConfigMu.RUnlock()
 
 	if req.Username != adminUser {
+		// 非主管理员：尝试额外管理员账号（多管理员）。未命中则走通用“凭据无效”分支，
+		// 避免通过响应差异枚举用户名。
+		if handleExtraAdminLogin(w, r, req.Username, req.Password, ip, ua, rateKey) {
+			return
+		}
 		loginLimiter.recordFail(rateKey)
 		RecordLoginLog(req.Username, ip, ua, false)
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid credentials"})
@@ -345,16 +362,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate JWT token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"username":      req.Username,
-		"token_version": adminTokenVersion,
-		"iss":           jwtIssuer,
-		"aud":           jwtAudience,
-		"exp":           time.Now().Add(24 * time.Hour).Unix(),
-		"iat":           time.Now().Unix(),
-	})
-
-	tokenString, err := token.SignedString([]byte(jwtSecret))
+	tokenString, err := signAdminToken(req.Username, "", "", adminTokenVersion)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to generate token"})
 		return
@@ -367,6 +375,64 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 			Username: req.Username,
 		},
 	})
+}
+
+// signAdminToken 为主管理员（adminID 为空）或额外管理员签发管理端 JWT。
+// 额外管理员会带上 admin_id 与 role，令牌有效性按其自身的 TokenVersion 校验。
+func signAdminToken(username, adminID, role string, tokenVersion int) (string, error) {
+	claims := jwt.MapClaims{
+		"username":      username,
+		"token_version": tokenVersion,
+		"iss":           jwtIssuer,
+		"aud":           jwtAudience,
+		"exp":           time.Now().Add(24 * time.Hour).Unix(),
+		"iat":           time.Now().Unix(),
+	}
+	if adminID != "" {
+		claims["admin_id"] = adminID
+		claims["role"] = config.NormalizeAdminRole(role)
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(config.GetJWTSecret()))
+}
+
+// handleExtraAdminLogin 处理额外管理员（非主管理员）的账号密码登录。
+// 返回 true 表示已处理（成功或已明确拒绝）；false 表示不存在该账号，
+// 由调用方统一返回“凭据无效”，以免泄露用户名是否存在。
+func handleExtraAdminLogin(w http.ResponseWriter, r *http.Request, username, password, ip, ua, rateKey string) bool {
+	acct, ok := config.FindAdminAccount(username)
+	if !ok {
+		return false
+	}
+	invalid := func() {
+		loginLimiter.recordFail(rateKey)
+		RecordLoginLog(acct.Username, ip, ua, false)
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid credentials"})
+	}
+	if acct.Disabled {
+		invalid()
+		return true
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(acct.PassHash), []byte(password)); err != nil {
+		invalid()
+		return true
+	}
+	loginLimiter.reset(rateKey)
+	RecordLoginLog(acct.Username, ip, ua, true)
+	_ = config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Admins {
+			if cfg.Admins[i].ID == acct.ID {
+				cfg.Admins[i].LastLoginAt = time.Now().Format("2006-01-02 15:04:05")
+			}
+		}
+	})
+	tokenString, err := signAdminToken(acct.Username, acct.ID, acct.Role, acct.TokenVersion)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to generate token"})
+		return true
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: LoginResponse{Token: tokenString, Username: acct.Username}})
+	return true
 }
 
 // HandleChangePassword processes password change requests
@@ -419,8 +485,12 @@ func HandleCheckAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	role := ""
+	adminRole := ""
 	if ctx.Type == authTypeSubUser {
 		role = ctx.Role
+	}
+	if ctx.Type == authTypeAdmin {
+		adminRole = config.NormalizeAdminRole(ctx.Role)
 	}
 	jsonResponse(w, http.StatusOK, APIResponse{
 		Success: true,
@@ -430,6 +500,7 @@ func HandleCheckAuth(w http.ResponseWriter, r *http.Request) {
 			"username":          ctx.Username,
 			"sub_user":          ctx.Type == authTypeSubUser,
 			"role":              role,
+			"admin_role":        adminRole,
 			"container_uuids":   ctx.ContainerUUIDs,
 			"permission_scopes": defaultScopesForType(ctx),
 		},
@@ -478,7 +549,12 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if username == "" {
 				username = config.AppConfig.AdminUser
 			}
-			next(w, withAuthContext(r, AuthContext{Type: authTypeAdmin, Username: username, Actor: username}))
+			// 角色：额外管理员令牌带 role；旧令牌（主管理员）视为全权 admin。
+			role := config.AdminRoleAdmin
+			if claimRole, _ := claims["role"].(string); claimRole != "" {
+				role = config.NormalizeAdminRole(claimRole)
+			}
+			next(w, withAuthContext(r, AuthContext{Type: authTypeAdmin, Username: username, Actor: username, Role: role}))
 			return
 		}
 
@@ -507,6 +583,10 @@ func AdminMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Administrator permission required"})
 			return
 		}
+		// 管理员账号角色（admin/operator/readonly）按 rbac 权限点强制。
+		if ctx.Type == authTypeAdmin && !enforceAdminRole(w, r, ctx.Role) {
+			return
+		}
 		next(w, r)
 	})
 }
@@ -522,6 +602,12 @@ func AdminSessionMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		ctx, _ := authContextFromRequest(r)
 		if ctx.Type != authTypeAdmin {
 			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "此操作仅限管理员本人会话（API Key 与子用户不可用）"})
+			return
+		}
+		// 主管理员专属：这些操作（2FA、改主管理员密码/用户名）作用于**主管理员账号本身**，
+		// 额外管理员不得操作，否则可关闭主管理员的两步验证。
+		if !strings.EqualFold(ctx.Username, config.AppConfig.AdminUser) {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "此操作仅限主管理员账号"})
 			return
 		}
 		next(w, r)

@@ -271,6 +271,48 @@ func (e *Engine) Authorize(subject, roleID, resource, resourceID string, perm Pe
 	return Decision{Allow: false, Source: "default-deny", Reason: fmt.Sprintf("no permission for %s on %s/%s", perm, resource, resourceID)}
 }
 
+// ---- 管理端（管理员账号）角色 ----
+//
+// 与 BuiltinRoles 的“平台内置角色”区分：这里是**管理员账号**在管理端控制台里的
+// 角色，供多管理员场景按最小权限分配。判定入口是 AdminConsoleRole。
+
+const (
+	AdminConsoleAdmin    = "admin"
+	AdminConsoleOperator = "operator"
+	AdminConsoleReadonly = "readonly"
+)
+
+// AdminConsoleRole 返回管理端角色定义：
+//   - admin：全权（*），兼容旧行为（旧令牌无 role 即视为 admin）
+//   - operator：日常运维（容器/快照/网络/终端/主机只读/审计只读），
+//     禁平台级：账号与密钥、策略、租户、备份还原、SSL、系统设置、审计设置
+//   - readonly：只读（无任何写权限）
+//
+// 未知取值返回 false，调用方必须 fail closed。
+func AdminConsoleRole(id string) (Role, bool) {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case AdminConsoleAdmin, "":
+		return Role{ID: AdminConsoleAdmin, Name: "Administrator", Permissions: []Permission{PermWildcard}}, true
+	case AdminConsoleOperator:
+		return Role{ID: AdminConsoleOperator, Name: "Operator", Permissions: []Permission{
+			PermContainerRead, PermContainerPower, PermContainerReinstall, PermContainerPassword,
+			PermContainerAccount, PermContainerNetwork, PermContainerCreate, PermContainerDelete,
+			PermImageRead, PermTemplateManage,
+			PermSnapshotRead, PermSnapshotCreate, PermSnapshotDelete, PermSnapshotRestore, PermSnapshotSchedule,
+			PermRoutingRead, PermRoutingManage,
+			PermHostRead, PermTerminalSSH, PermTerminalVNC,
+			PermAuditRead, PermTenantRead,
+		}}, true
+	case AdminConsoleReadonly, "viewer", "read":
+		return Role{ID: AdminConsoleReadonly, Name: "Read only", Permissions: []Permission{
+			PermContainerRead, PermImageRead, PermSnapshotRead, PermRoutingRead,
+			PermHostRead, PermAuditRead, PermTenantRead,
+			PermTerminalSSH, PermTerminalVNC,
+		}}, true
+	}
+	return Role{}, false
+}
+
 // MigrateLegacyRole 把历史 admin/sub-user role 字符串映射到新角色 ID。
 //   - ""：旧管理员会话无 role 声明 → admin
 //   - "admin"：平台管理员 → admin

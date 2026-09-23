@@ -729,6 +729,98 @@ func DeleteApiKey(id string) {
 	_ = saveConfigToDB()
 }
 
+// AdminAccount 是主管理员之外的管理员账号（多管理员支持）。
+//
+// 主管理员仍由 AdminUser/AdminPassHash/AdminTOTP* 承载，行为完全不变（TOTP、
+// 备份码、CLI、改用户名/密码都走原路径）。这里存放管理员自行创建的额外账号，
+// 用于多人协作；每个账号有独立 TokenVersion，改密码只吊销该账号自己的令牌。
+//
+// Role 取值：admin（全权）/ operator（运维，禁平台级）/ readonly（只读）。
+type AdminAccount struct {
+	ID           string `json:"id"`
+	Username     string `json:"username"`
+	PassHash     string `json:"pass_hash"`
+	Role         string `json:"role"`
+	TokenVersion int    `json:"token_version"`
+	Disabled     bool   `json:"disabled,omitempty"`
+	CreatedAt    string `json:"created_at"`
+	LastLoginAt  string `json:"last_login_at,omitempty"`
+}
+
+// 管理员角色常量。
+const (
+	AdminRoleAdmin    = "admin"
+	AdminRoleOperator = "operator"
+	AdminRoleReadonly = "readonly"
+)
+
+// NormalizeAdminRole 归一化管理员角色，未知取值一律降级为 readonly（fail closed）。
+func NormalizeAdminRole(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case AdminRoleAdmin:
+		return AdminRoleAdmin
+	case AdminRoleOperator:
+		return AdminRoleOperator
+	case AdminRoleReadonly, "viewer", "read":
+		return AdminRoleReadonly
+	}
+	return AdminRoleReadonly
+}
+
+// FindAdminAccount 按用户名查找额外管理员（返回副本，调用方无需持锁）。
+func FindAdminAccount(username string) (AdminAccount, bool) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return AdminAccount{}, false
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for i := range AppConfig.Admins {
+		if strings.EqualFold(AppConfig.Admins[i].Username, username) {
+			return AppConfig.Admins[i], true
+		}
+	}
+	return AdminAccount{}, false
+}
+
+// FindAdminAccountByID 按 ID 查找额外管理员（返回副本）。
+func FindAdminAccountByID(id string) (AdminAccount, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return AdminAccount{}, false
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for i := range AppConfig.Admins {
+		if AppConfig.Admins[i].ID == id {
+			return AppConfig.Admins[i], true
+		}
+	}
+	return AdminAccount{}, false
+}
+
+// AdminUsernameTaken 判断用户名是否已被主管理员或其它管理员占用（大小写不敏感）。
+func AdminUsernameTaken(username string, exceptID string) bool {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return true
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if strings.EqualFold(AppConfig.AdminUser, username) {
+		return true
+	}
+	for i := range AppConfig.Admins {
+		if AppConfig.Admins[i].ID == exceptID {
+			continue
+		}
+		if strings.EqualFold(AppConfig.Admins[i].Username, username) {
+			return true
+		}
+	}
+	return false
+}
+
 type SubUser struct {
 	ID                   string   `json:"id"`
 	Username             string   `json:"username"`
@@ -1037,6 +1129,7 @@ type EyvescloudConfig struct {
 	KVMNATSubnet         string                 `json:"kvm_nat_subnet"`
 	SetupComplete        bool                   `json:"setup_complete"`
 	SubUsers             []SubUser              `json:"sub_users"`
+	Admins               []AdminAccount         `json:"admins,omitempty"`
 	ApiKeys              []ApiKeyConfig         `json:"api_keys"`
 	AuditLogs            []AuditLog             `json:"audit_logs"`
 	Tasks                []SavedTask            `json:"tasks"`
@@ -1458,6 +1551,17 @@ func normalizeConfigDefaults(dataDir string) bool {
 	if AppConfig.SubUsers == nil {
 		AppConfig.SubUsers = make([]SubUser, 0)
 		changed = true
+	}
+	if AppConfig.Admins == nil {
+		AppConfig.Admins = make([]AdminAccount, 0)
+		changed = true
+	} else {
+		for i := range AppConfig.Admins {
+			if normalized := NormalizeAdminRole(AppConfig.Admins[i].Role); normalized != AppConfig.Admins[i].Role {
+				AppConfig.Admins[i].Role = normalized
+				changed = true
+			}
+		}
 	}
 	if AppConfig.ApiKeys == nil {
 		AppConfig.ApiKeys = make([]ApiKeyConfig, 0)

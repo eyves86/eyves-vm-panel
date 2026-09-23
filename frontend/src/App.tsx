@@ -1,6 +1,9 @@
 import { Routes, Route, Navigate } from 'react-router'
 import { useAuth } from './contexts/AuthContext'
 import Login from './pages/Login'
+import UserLogin from './pages/UserLogin'
+import MyServers from './pages/MyServers'
+import UserLayout from './components/UserLayout'
 import Dashboard from './pages/Dashboard'
 import Containers from './pages/Containers'
 import ContainerDetail from './pages/ContainerDetail'
@@ -15,6 +18,7 @@ import Snapshots from './pages/Snapshots'
 import Routing from './pages/Routing'
 import Storage from './pages/Storage'
 import SubUserManagement from './pages/SubUserManagement'
+import AdminAccounts from './pages/AdminAccounts'
 import NodeMigration from './pages/NodeMigration'
 import PolicyManagement from './pages/PolicyManagement'
 import NodeManagement from './pages/NodeManagement'
@@ -26,93 +30,73 @@ import ISOs from './pages/ISOs'
 import MetricRetention from './pages/MetricRetention'
 import Monitoring from './pages/Monitoring'
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth()
+function LoadingScreen() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-white"></div>
+    </div>
+  )
+}
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-white"></div>
-      </div>
-    )
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
-  }
-
+// AdminPortalRoute 保护**管理员门户**（/ 及全部管理页）：未登录去管理员登录页；
+// 子用户被送到用户门户，避免出现空管理页或入口混淆（数据接口仍由后端 scope 兜底）。
+function AdminPortalRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, isSubUser } = useAuth()
+  if (isLoading) return <LoadingScreen />
+  if (!isAuthenticated) return <Navigate to="/login" replace />
+  if (isSubUser) return <Navigate to="/user" replace />
   return <>{children}</>
 }
 
-// AdminRoute 仅允许内置管理员访问；子用户（含仅授权容器）越权直达管理路由时
-// 重定向到其容器视图，避免出现空管理员页面或泄露入口。数据接口仍由后端 scope 兜底。
-function AdminRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading, isSubUser, containerIdentifiers } = useAuth()
-
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-white"></div>
-      </div>
-    )
-  }
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />
-  }
-
-  if (isSubUser) {
-    const firstContainer = containerIdentifiers[0]
-    return <Navigate to={firstContainer ? `/container/${encodeURIComponent(firstContainer)}` : '/containers'} replace />
-  }
-
+// UserPortalRoute 保护**用户门户**（/user/*）：未登录去用户登录页；
+// 管理员被送回管理门户（管理员不需要用户视图）。
+function UserPortalRoute({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading, isSubUser } = useAuth()
+  if (isLoading) return <LoadingScreen />
+  if (!isAuthenticated) return <Navigate to="/user/login" replace />
+  if (!isSubUser) return <Navigate to="/" replace />
   return <>{children}</>
-}
-
-function HomeRoute() {
-  const { isSubUser, containerIdentifiers } = useAuth()
-  if (isSubUser) {
-    const firstContainer = containerIdentifiers[0]
-    return <Navigate to={firstContainer ? `/container/${encodeURIComponent(firstContainer)}` : '/containers'} replace />
-  }
-  return <Dashboard />
 }
 
 function App() {
   return (
     <Routes>
+      {/* 管理员入口 */}
       <Route path="/login" element={<Login />} />
-      <Route
-        path="/"
-        element={
-          <ProtectedRoute>
-            <Layout />
-          </ProtectedRoute>
-        }
-      >
-        <Route index element={<HomeRoute />} />
+
+      {/* 用户入口 */}
+      <Route path="/user/login" element={<UserLogin />} />
+      <Route path="/user" element={<UserPortalRoute><UserLayout /></UserPortalRoute>}>
+        <Route index element={<MyServers />} />
+        <Route path="container/:id" element={<ContainerDetail />} />
+      </Route>
+
+      {/* 管理员门户 */}
+      <Route path="/" element={<AdminPortalRoute><Layout /></AdminPortalRoute>}>
+        <Route index element={<Dashboard />} />
         <Route path="containers" element={<Containers />} />
-        <Route path="monitoring" element={<AdminRoute><Monitoring /></AdminRoute>} />
+        <Route path="monitoring" element={<Monitoring />} />
         <Route path="container/:id" element={<ContainerDetail />} />
 
-        <Route path="images" element={<AdminRoute><ImageManagement /></AdminRoute>} />
-        <Route path="security" element={<AdminRoute><Security /></AdminRoute>} />
-        <Route path="snapshots" element={<AdminRoute><Snapshots /></AdminRoute>} />
-        <Route path="routing" element={<AdminRoute><Routing /></AdminRoute>} />
-        <Route path="migration" element={<AdminRoute><NodeMigration /></AdminRoute>} />
-        <Route path="nodes" element={<AdminRoute><NodeManagement /></AdminRoute>} />
-        <Route path="policies" element={<AdminRoute><PolicyManagement /></AdminRoute>} />
-        <Route path="storage" element={<AdminRoute><Storage /></AdminRoute>} />
-        <Route path="audit-logs" element={<AdminRoute><AuditLogs /></AdminRoute>} />
-        <Route path="api-integration" element={<AdminRoute><ApiIntegration /></AdminRoute>} />
-        <Route path="host-report" element={<AdminRoute><HostReport /></AdminRoute>} />
-        <Route path="sub-users" element={<AdminRoute><SubUserManagement /></AdminRoute>} />
-        <Route path="tenants" element={<AdminRoute><Tenants /></AdminRoute>} />
-        <Route path="regions" element={<AdminRoute><Regions /></AdminRoute>} />
-        <Route path="ip-groups" element={<AdminRoute><IPGroups /></AdminRoute>} />
-        <Route path="isos" element={<AdminRoute><ISOs /></AdminRoute>} />
-        <Route path="metric-retention" element={<AdminRoute><MetricRetention /></AdminRoute>} />
-        <Route path="settings" element={<AdminRoute><Settings /></AdminRoute>} />
+        <Route path="images" element={<ImageManagement />} />
+        <Route path="security" element={<Security />} />
+        <Route path="snapshots" element={<Snapshots />} />
+        <Route path="routing" element={<Routing />} />
+        <Route path="migration" element={<NodeMigration />} />
+        <Route path="nodes" element={<NodeManagement />} />
+        <Route path="policies" element={<PolicyManagement />} />
+        <Route path="storage" element={<Storage />} />
+        <Route path="audit-logs" element={<AuditLogs />} />
+        <Route path="api-integration" element={<ApiIntegration />} />
+        <Route path="host-report" element={<HostReport />} />
+        <Route path="sub-users" element={<SubUserManagement />} />
+        <Route path="admins" element={<AdminAccounts />} />
+        <Route path="tenants" element={<Tenants />} />
+        <Route path="regions" element={<Regions />} />
+        <Route path="ip-groups" element={<IPGroups />} />
+        <Route path="isos" element={<ISOs />} />
+        <Route path="metric-retention" element={<MetricRetention />} />
+        <Route path="settings" element={<Settings />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

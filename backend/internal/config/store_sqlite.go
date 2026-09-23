@@ -726,6 +726,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["admin_backup_codes"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.AdminBackupCodes)
 	}
+	if raw := strings.TrimSpace(meta["admins"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.Admins)
+	}
 	if raw := strings.TrimSpace(meta["ssl"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.SSL)
 	}
@@ -877,6 +880,7 @@ func saveMeta(tx *sql.Tx) error {
 	instanceBackupsJSON, _ := json.Marshal(AppConfig.InstanceBackups)
 	rateLimitJSON, _ := json.Marshal(AppConfig.APIRateLimit)
 	tenantsJSON, _ := json.Marshal(AppConfig.Tenants)
+	adminsJSON, _ := json.Marshal(AppConfig.Admins)
 	ksmTuningJSON, _ := json.Marshal(AppConfig.KSMTuning)
 	values := map[string]string{
 		"admin_user":             AppConfig.AdminUser,
@@ -884,6 +888,7 @@ func saveMeta(tx *sql.Tx) error {
 		"admin_totp_secret":      AppConfig.AdminTOTPSecret,
 		"admin_totp_enabled":     btoa(AppConfig.AdminTOTPEnabled),
 		"admin_backup_codes":     string(nCIbackup),
+		"admins":                 string(adminsJSON),
 		"jwt_secret":             AppConfig.JWTSecret,
 		"port":                   strconv.Itoa(AppConfig.Port),
 		"data_dir":               AppConfig.DataDir,

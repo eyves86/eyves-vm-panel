@@ -346,6 +346,18 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             </button>
 
             <button
+              onClick={() => navigate('/admins')}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
+                location.pathname.startsWith('/admins')
+                  ? 'bg-black text-white dark:bg-white dark:text-black'
+                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+              }`}
+            >
+              <ShieldAlert className="w-4 h-4" />
+              {!collapsed && <span>管理员账号</span>}
+            </button>
+
+            <button
               onClick={() => navigate('/tenants')}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
                 location.pathname.startsWith('/tenants')
