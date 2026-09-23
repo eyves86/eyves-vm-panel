@@ -272,13 +272,20 @@ func (e *Engine) Authorize(subject, roleID, resource, resourceID string, perm Pe
 }
 
 // MigrateLegacyRole 把历史 admin/sub-user role 字符串映射到新角色 ID。
-//   - "admin" / "" / "owner"：admin（兼容旧管理员）
+//   - ""：旧管理员会话无 role 声明 → admin
+//   - "admin"：平台管理员 → admin
+//   - "owner"：租户所有者 → owner（**不得**映射为 admin：owner 无 admin:access，
+//     误映射会造成租户角色越权为平台管理员）
 //   - "operator"：operator
-//   - "viewer" / "readonly"：readonly
+//   - "viewer" / "readonly" / "read"：readonly
+//
+// 未识别的取值一律降级为 readonly（fail closed），绝不默认放行。
 func MigrateLegacyRole(legacy string) string {
 	switch strings.ToLower(strings.TrimSpace(legacy)) {
-	case "", "admin", "owner":
+	case "", "admin":
 		return "admin"
+	case "owner":
+		return "owner"
 	case "operator":
 		return "operator"
 	case "viewer", "readonly", "read":

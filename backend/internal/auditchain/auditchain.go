@@ -73,17 +73,21 @@ func Chain(entries []Entry) error {
 }
 
 // Verify 校验整链；返回首个错误条目的索引 + 错误。
-// 校验规则：每条 PrevHash == 上条 Hash；每条 Hash == ComputeHash()。
+//
+// 校验规则：相邻记录 prev_hash == 上条 hash；每条 hash == ComputeHash()。
+//
+// 关于首条：链首记录的 PrevHash 允许非空——审计日志是**有界环形缓冲**（仅保留
+// 最近 N 条），截断后首条的 PrevHash 指向已被清理的上一条，此时它是"锚点"而非
+// 错误。强校验只作用于相邻链接与自身 hash，因此 in-place 篡改与重排序必然被发现。
+//
+// 已知局限：单纯"从头部删除若干条"无法被本函数发现（新首条的 PrevHash 无从比对）。
+// 需要外部锚点（例如定期把最新 Hash 上报 SIEM）才能覆盖该场景。
 func Verify(entries []Entry) error {
 	if len(entries) == 0 {
 		return ErrEmptyEntries
 	}
 	for i := range entries {
-		if i == 0 {
-			if entries[i].PrevHash != "" {
-				return fmt.Errorf("auditchain: first entry prev_hash must be empty, got %q", entries[i].PrevHash)
-			}
-		} else {
+		if i > 0 {
 			if entries[i].PrevHash != entries[i-1].Hash {
 				return fmt.Errorf("auditchain: entry %d prev_hash %q != prev entry hash %q",
 					i, entries[i].PrevHash, entries[i-1].Hash)
@@ -213,9 +217,15 @@ func escapeSyslog(s string) string {
 	return s
 }
 
+// csvEscape 对字段做 CSV 转义，并防御公式注入：以 = + - @ 或制表符/回车开头
+// 的字段会被 Excel/LibreOffice 当作公式执行，这里加前导单引号强制按文本处理。
 func csvEscape(s string) string {
 	if s == "" {
 		return ""
+	}
+	switch s[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		s = "'" + s
 	}
 	if !strings.ContainsAny(s, ",\"\r\n") {
 		return s

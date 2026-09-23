@@ -508,13 +508,28 @@ func ApiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid API key or IP not in whitelist"})
 			return
 		}
-		if key.RateLimitPerMinute > 0 && !apiKeyLimiter.AllowKey(key.ID, key.RateLimitPerMinute) {
-			w.Header().Set("Retry-After", "60")
-			jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "API key rate limit exceeded"})
+		if !enforceAPIKeyRateLimit(w, key) {
 			return
 		}
 		next(w, withAuthContext(r, authContextFromAPIKey(key)))
 	}
+}
+
+// enforceAPIKeyRateLimit 对携带 RateLimitPerMinute 的 Key 做单 key 滑动窗口限流；
+// 超限时写 429 + Retry-After 并返回 false。
+//
+// 注意：真正的鉴权入口是 AuthMiddleware（所有路由都经它），因此该检查必须同时
+// 在 AuthMiddleware 中调用，否则限流形同虚设。
+func enforceAPIKeyRateLimit(w http.ResponseWriter, key *config.ApiKeyConfig) bool {
+	if key == nil || key.RateLimitPerMinute <= 0 {
+		return true
+	}
+	if apiKeyLimiter.AllowKey(key.ID, key.RateLimitPerMinute) {
+		return true
+	}
+	w.Header().Set("Retry-After", "60")
+	jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "API key rate limit exceeded"})
+	return false
 }
 
 // apiKeyLimiter 是单进程限流器；进程重启时窗口重置（可接受）。

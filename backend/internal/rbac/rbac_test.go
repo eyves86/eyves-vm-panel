@@ -151,16 +151,40 @@ func TestMigrateLegacyRole(t *testing.T) {
 	cases := map[string]string{
 		"admin":    "admin",
 		"":         "admin",
-		"owner":    "admin",
 		"operator": "operator",
 		"viewer":   "readonly",
 		"readonly": "readonly",
+		"read":     "readonly",
 		"unknown":  "readonly",
+		// owner 必须保持 owner，绝不能升级为 admin（越权回归测试）
+		"owner": "owner",
+		"OWNER": "owner",
 	}
 	for in, want := range cases {
 		if got := MigrateLegacyRole(in); got != want {
 			t.Fatalf("MigrateLegacyRole(%q) = %s, want %s", in, got, want)
 		}
+	}
+}
+
+// TestMigrateLegacyOwnerDoesNotEscalate 锁定越权修复：租户 owner 迁移后
+// 不得持有 admin:access / system:settings 等平台管理权限。
+func TestMigrateLegacyOwnerDoesNotEscalate(t *testing.T) {
+	e := NewEngine()
+	roleID := MigrateLegacyRole("owner")
+	r, ok := e.GetRole(roleID)
+	if !ok {
+		t.Fatalf("migrated role %q must exist", roleID)
+	}
+	if r.HasPermission(PermAdminAccess) {
+		t.Fatal("migrated owner must NOT have admin:access")
+	}
+	if r.HasPermission(PermSystemSettings) {
+		t.Fatal("migrated owner must NOT have system:settings")
+	}
+	// 但租户内应有基本读写能力
+	if !r.HasPermission(PermContainerRead) {
+		t.Fatal("migrated owner should keep container:read")
 	}
 }
 

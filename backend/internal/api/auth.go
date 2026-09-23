@@ -483,6 +483,10 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		if key, ok := validateApiKeyRequest(r); ok {
+			// 单 key 限流必须在此强制：AuthMiddleware 是所有路由的唯一鉴权入口。
+			if !enforceAPIKeyRateLimit(w, key) {
+				return
+			}
 			next(w, withAuthContext(r, authContextFromAPIKey(key)))
 			return
 		}

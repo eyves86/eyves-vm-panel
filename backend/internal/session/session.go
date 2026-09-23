@@ -124,7 +124,7 @@ func (s *Store) RotateRefresh(refreshID string, ttl time.Duration) (RefreshToken
 	if time.Now().After(old.ExpiresAt) {
 		return RefreshToken{}, fmt.Errorf("session: refresh token %q expired", refreshID)
 	}
-	// 撤销整个 family 后，本次视为合法，但保留 family 状态以防边缘时序。
+	// 正常旋转：旧 token 标记 used，同 family 签发新 token。
 	now := time.Now()
 	newRT := &RefreshToken{
 		ID:        randomID(24),
@@ -222,16 +222,30 @@ func NewChallengeStore() *ChallengeStore {
 	return &ChallengeStore{challenges: map[string]*PasskeyChallenge{}}
 }
 
+// maxChallenges 限制未消费 challenge 的上限，防止重复调用注册/认证入口
+// 造成内存无限增长（DoS）。
+const maxChallenges = 4096
+
 // NewChallenge 生成 32 字节随机 challenge，记录到仓库，ttl 后过期。
+//
+// 写入前会清理过期条目；若清理后仍超过 maxChallenges 上限，则拒绝签发，
+// 避免被刷爆内存。
 func (c *ChallengeStore) NewChallenge(userID string, kind ChallengeType, rpID string, ttl time.Duration) (PasskeyChallenge, error) {
 	if ttl <= 0 {
 		ttl = 5 * time.Minute
 	}
+	now := time.Now()
+	c.mu.Lock()
+	c.purgeExpiredLocked(now)
+	if len(c.challenges) >= maxChallenges {
+		c.mu.Unlock()
+		return PasskeyChallenge{}, errors.New("session: too many pending challenges")
+	}
 	buf := make([]byte, 32)
 	if _, err := rand.Read(buf); err != nil {
+		c.mu.Unlock()
 		return PasskeyChallenge{}, err
 	}
-	now := time.Now()
 	ch := &PasskeyChallenge{
 		ID:        randomID(16),
 		UserID:    userID,
@@ -241,10 +255,18 @@ func (c *ChallengeStore) NewChallenge(userID string, kind ChallengeType, rpID st
 		ExpiresAt: now.Add(ttl),
 		RPID:      rpID,
 	}
-	c.mu.Lock()
 	c.challenges[ch.ID] = ch
 	c.mu.Unlock()
 	return *ch, nil
+}
+
+// purgeExpiredLocked 删除已过期的 challenge（调用方须持锁）。
+func (c *ChallengeStore) purgeExpiredLocked(now time.Time) {
+	for id, ch := range c.challenges {
+		if now.After(ch.ExpiresAt) {
+			delete(c.challenges, id)
+		}
+	}
 }
 
 // ConsumeChallenge 按 ID 取并删除 challenge；过期/不存在/类型不匹配都返回错误。

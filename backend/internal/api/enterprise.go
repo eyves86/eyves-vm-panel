@@ -80,8 +80,27 @@ func HandleAuditLogExport(w http.ResponseWriter, r *http.Request) {
 		if l.Success != nil {
 			success = strconv.FormatBool(*l.Success)
 		}
-		_ = cw.Write([]string{l.Time, l.Action, l.Target, l.Detail, l.User, l.IP, l.UserAgent, success, l.Error, l.PrevHash, l.Hash})
+		_ = cw.Write([]string{
+			neutralizeCSVFormula(l.Time), neutralizeCSVFormula(l.Action), neutralizeCSVFormula(l.Target),
+			neutralizeCSVFormula(l.Detail), neutralizeCSVFormula(l.User), neutralizeCSVFormula(l.IP),
+			neutralizeCSVFormula(l.UserAgent), success, neutralizeCSVFormula(l.Error),
+			neutralizeCSVFormula(l.PrevHash), neutralizeCSVFormula(l.Hash),
+		})
 	}
+}
+
+// neutralizeCSVFormula 防御 CSV 公式注入：以 = + - @ 或制表符/回车开头的字段
+// 在 Excel/LibreOffice 打开时会被当作公式执行。审计字段（容器名、详情等）含用户
+// 可控输入，这里统一加前导单引号使其按纯文本处理。
+func neutralizeCSVFormula(v string) string {
+	if v == "" {
+		return v
+	}
+	switch v[0] {
+	case '=', '+', '-', '@', '\t', '\r':
+		return "'" + v
+	}
+	return v
 }
 
 // exportSIEM 走 CEF 或 syslog 格式流式输出审计日志，供 SIEM（Elastic/Wazuh）

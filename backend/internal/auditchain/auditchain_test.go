@@ -143,6 +143,44 @@ func TestCSVEscape(t *testing.T) {
 	}
 }
 
+// TestCSVEscapeNeutralizesFormulaInjection 锁定 CSV 公式注入修复。
+func TestCSVEscapeNeutralizesFormulaInjection(t *testing.T) {
+	for _, in := range []string{`=cmd|'/C calc'!A0`, "+1+1", "-2+3", "@SUM(A1)"} {
+		got := csvEscape(in)
+		if got == in {
+			t.Fatalf("formula-leading field %q must be neutralized", in)
+		}
+		if !strings.HasPrefix(got, "'") {
+			t.Fatalf("neutralized field %q must be prefixed with a single quote", got)
+		}
+	}
+	// 普通数值/文本不应被改写
+	if csvEscape("2026-09-24 10:00:00") != "2026-09-24 10:00:00" {
+		t.Fatal("normal timestamp must not be altered")
+	}
+}
+
+// TestVerifyAcceptsTruncatedChainAnchor 锁定审计链截断修复：有界环形缓冲
+// 截断后首条 PrevHash 指向已清理记录（非空锚点），Verify 必须仍能通过，
+// 否则 chain=verify 端点会恒失败、篡改检测彻底失效。
+func TestVerifyAcceptsTruncatedChainAnchor(t *testing.T) {
+	entries := sampleEntries()
+	Chain(entries)
+	// 模拟仅保留最后两条（首条 PrevHash 指向被清理的前一条，非空）
+	truncated := append([]Entry(nil), entries[1:]...)
+	if truncated[0].PrevHash == "" {
+		t.Fatal("precondition: truncated first entry must carry a non-empty anchor")
+	}
+	if err := Verify(truncated); err != nil {
+		t.Fatalf("truncated chain must verify via anchor: %v", err)
+	}
+	// 截断链内篡改仍必须被发现
+	truncated[1].Detail = "tampered"
+	if err := Verify(truncated); err == nil {
+		t.Fatal("tampering inside truncated chain must be detected")
+	}
+}
+
 func TestChainEmpty(t *testing.T) {
 	if err := Chain(nil); err != nil {
 		t.Fatal(err)

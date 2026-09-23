@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -25,12 +26,23 @@ func Summarize(records []UsageRecord) Usage {
 // BuildInvoice 根据价目表 + 用量生成账单。
 //
 // 用量四舍五入到两位小数；金额按"四舍五入到最近分"。
+//
+// 安全约束：records 中任何一条的 TenantID 与入参 tenantID 不一致时直接拒绝，
+// 防止跨租户用量被误计入他人账单（账单串号）。
 func BuildInvoice(tenantID string, rc RateCard, records []UsageRecord, periodStart, periodEnd time.Time, invoiceID string) (Invoice, error) {
 	if err := rc.Validate(); err != nil {
 		return Invoice{}, err
 	}
+	if strings.TrimSpace(tenantID) == "" {
+		return Invoice{}, errors.New("metering: tenant_id is required")
+	}
 	if !periodStart.Before(periodEnd) {
 		return Invoice{}, errors.New("metering: period_start must precede period_end")
+	}
+	for _, r := range records {
+		if r.TenantID != tenantID {
+			return Invoice{}, fmt.Errorf("metering: usage record for tenant %q cannot be billed to %q", r.TenantID, tenantID)
+		}
 	}
 	usage := Summarize(records)
 	cpuCents := roundHalfUp(usage.CPUHours * rc.CPUPerHourCent)

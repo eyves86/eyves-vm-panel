@@ -126,6 +126,22 @@ func TestBuildInvoiceRequiresPeriodOrder(t *testing.T) {
 	}
 }
 
+// TestBuildInvoiceRejectsCrossTenantUsage 锁定计费越权修复：属于其他租户的
+// 用量记录不得被计入本租户账单。
+func TestBuildInvoiceRejectsCrossTenantUsage(t *testing.T) {
+	rc := defaultRateCard()
+	t0 := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
+	hour := t0.Add(time.Hour)
+	foreign := sampleRecord(&hour, true)
+	foreign.TenantID = "tenant-OTHER"
+	if _, err := BuildInvoice("tenant-1", rc, []UsageRecord{foreign}, t0, t0.Add(2*time.Hour), "inv-x"); err == nil {
+		t.Fatal("cross-tenant usage must be rejected")
+	}
+	if _, err := BuildInvoice("  ", rc, nil, t0, t0.Add(time.Hour), "inv-x"); err == nil {
+		t.Fatal("blank tenant id must be rejected")
+	}
+}
+
 func TestSourceHashDeterministicAcrossOrder(t *testing.T) {
 	t0 := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	t1 := t0.Add(time.Hour)

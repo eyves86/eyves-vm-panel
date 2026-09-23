@@ -171,6 +171,45 @@ func TestChallengeTypeMismatch(t *testing.T) {
 	}
 }
 
+// TestChallengeStorePurgesExpired 锁定 DoS 修复：未消费的过期 challenge 必须在
+// 签发新 challenge 时被清理，否则反复调用入口会撑爆内存。
+func TestChallengeStorePurgesExpired(t *testing.T) {
+	c := NewChallengeStore()
+	old, _ := c.NewChallenge("u1", ChallengeRegistration, "localhost", time.Hour)
+	// 手动把旧 challenge 置为过期（模拟已过 ttl 但从未被消费）
+	c.mu.Lock()
+	c.challenges[old.ID].ExpiresAt = time.Now().Add(-time.Second)
+	c.mu.Unlock()
+
+	if _, err := c.NewChallenge("u2", ChallengeRegistration, "localhost", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	size := len(c.challenges)
+	_, stillThere := c.challenges[old.ID]
+	c.mu.Unlock()
+	if stillThere {
+		t.Fatal("expired unconsumed challenge must be purged")
+	}
+	if size != 1 {
+		t.Fatalf("challenge store size = %d, want 1 after purge", size)
+	}
+}
+
+// TestChallengeStoreRejectsWhenFull 锁定上限：达到 maxChallenges 后必须拒绝签发，
+// 避免无界增长。
+func TestChallengeStoreRejectsWhenFull(t *testing.T) {
+	c := NewChallengeStore()
+	for i := 0; i < maxChallenges; i++ {
+		if _, err := c.NewChallenge("u1", ChallengeAssertion, "localhost", time.Hour); err != nil {
+			t.Fatalf("fill %d failed: %v", i, err)
+		}
+	}
+	if _, err := c.NewChallenge("u1", ChallengeAssertion, "localhost", time.Hour); err == nil {
+		t.Fatal("must reject when store is full")
+	}
+}
+
 func TestFingerprintIsStable(t *testing.T) {
 	if Fingerprint("ua", "1.2.3.4") != Fingerprint("ua", "1.2.3.4") {
 		t.Fatal("fingerprint must be stable for identical inputs")

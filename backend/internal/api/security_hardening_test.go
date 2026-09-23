@@ -79,3 +79,68 @@ func TestTOTPQRDataURL(t *testing.T) {
 		t.Fatalf("empty uri should yield empty qr, got %q", got)
 	}
 }
+
+// TestSanitizeMailHeaderBlocksSMTPInjection 锁定邮件头注入修复：容器名等用户
+// 可控字段中的 CR/LF 必须被剥离，否则可注入额外邮件头（如 Bcc）篡改收件人。
+func TestSanitizeMailHeaderBlocksSMTPInjection(t *testing.T) {
+	evil := "web-01\r\nBcc: attacker@evil.com"
+	got := sanitizeMailHeader(evil)
+	if strings.ContainsAny(got, "\r\n") {
+		t.Fatalf("header value still contains CR/LF: %q", got)
+	}
+	if !strings.Contains(got, "Bcc:") {
+		t.Fatal("test precondition: payload should be preserved as inert text")
+	}
+	// 折叠为单行后不得出现可被解析为新头的换行
+	if got != "web-01 Bcc: attacker@evil.com" {
+		t.Fatalf("unexpected sanitized value: %q", got)
+	}
+	if sanitizeMailHeader("normal") != "normal" {
+		t.Fatal("normal value must be unchanged")
+	}
+}
+
+// TestNeutralizeCSVFormula 锁定审计导出 CSV 公式注入修复。
+func TestNeutralizeCSVFormula(t *testing.T) {
+	for _, in := range []string{"=1+1", "+SUM(A1)", "-2+3", "@cmd", "\tx"} {
+		got := neutralizeCSVFormula(in)
+		if !strings.HasPrefix(got, "'") {
+			t.Fatalf("field %q must be neutralized, got %q", in, got)
+		}
+	}
+	if neutralizeCSVFormula("") != "" {
+		t.Fatal("empty field must stay empty")
+	}
+	if neutralizeCSVFormula("2026-09-24 10:00:00") != "2026-09-24 10:00:00" {
+		t.Fatal("normal value must be unchanged")
+	}
+}
+
+// TestValidateWebhookURLBlocksSSRFTargets 锁定 webhook SSRF 加固：链路本地
+// （云元数据 169.254.169.254）、未指定与组播地址必须被拒；正常公网/内网地址放行。
+func TestValidateWebhookURLBlocksSSRFTargets(t *testing.T) {
+	blocked := []string{
+		"http://169.254.169.254/latest/meta-data/",
+		"http://[fe80::1]/hook",
+		"http://0.0.0.0/hook",
+		"http://224.0.0.1/hook",
+		"ftp://example.com/hook",
+		"http://user:pass@example.com/hook",
+	}
+	for _, u := range blocked {
+		if err := validateWebhookURL(u); err == nil {
+			t.Fatalf("webhook URL %q must be rejected", u)
+		}
+	}
+	allowed := []string{
+		"https://hooks.example.com/notify",
+		"http://10.0.0.5:9000/hook", // 内网自托管允许
+		"http://127.0.0.1:8080/hook", // 本机接收端允许
+		"",
+	}
+	for _, u := range allowed {
+		if err := validateWebhookURL(u); err != nil {
+			t.Fatalf("webhook URL %q must be allowed, got %v", u, err)
+		}
+	}
+}

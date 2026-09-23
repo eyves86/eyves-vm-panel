@@ -256,3 +256,56 @@ func TestApiKeyRateLimitMiddlewareReturns429(t *testing.T) {
 		t.Fatalf("downstream called %d times, want 2", downstreamCalled)
 	}
 }
+
+// TestAuthMiddlewareEnforcesAPIKeyRateLimit 锁定限流修复：真正的鉴权入口
+// AuthMiddleware（所有路由都经它）也必须执行单 key 限流，否则限流形同虚设。
+func TestAuthMiddlewareEnforcesAPIKeyRateLimit(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+
+	raw := "eyvescloud_sk_0123456789abcdef0123456789abcdef"
+	hash, err := hashAPIKey(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.AppConfig = &config.EyvescloudConfig{ApiKeys: []config.ApiKeyConfig{{
+		ID:                 "key-auth-rl",
+		Name:               "rate-limited",
+		KeyHash:            hash,
+		KeyFingerprint:     apiKeyFingerprint(raw),
+		RateLimitPerMinute: 1,
+	}}}
+
+	prevLimiter := apiKeyLimiter
+	t.Cleanup(func() { apiKeyLimiter = prevLimiter })
+	apiKeyLimiter = newFreshLimiter()
+
+	var downstreamCalled int
+	mw := AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		downstreamCalled++
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// 第 1 次放行
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/containers", nil)
+	req.Header.Set("X-API-Key", raw)
+	rr := httptest.NewRecorder()
+	mw(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("1st request code = %d, want 200", rr.Code)
+	}
+	// 第 2 次超限 → 429，且不进入下游
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/containers", nil)
+	req.Header.Set("X-API-Key", raw)
+	rr = httptest.NewRecorder()
+	mw(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("2nd request code = %d, want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Fatal("Retry-After header must be set on 429")
+	}
+	if downstreamCalled != 1 {
+		t.Fatalf("downstream called %d times, want 1", downstreamCalled)
+	}
+}
