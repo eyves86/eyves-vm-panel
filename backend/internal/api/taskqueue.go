@@ -33,6 +33,7 @@ type Task struct {
 	Error         string              `json:"error,omitempty"`
 	Stage         string              `json:"stage,omitempty"`
 	StageDetail   string              `json:"stage_detail,omitempty"`
+	Percent       int                 `json:"percent"`
 	CreatedAt     string              `json:"created_at"`
 	TemplateID    string              `json:"template_id,omitempty"`
 	Config        lxc.ContainerConfig `json:"config,omitempty"`
@@ -356,6 +357,9 @@ func (q *TaskQueue) takeNextTask(create bool) *Task {
 				task.Error = ""
 				task.Stage = "preparing"
 				task.StageDetail = "准备初始化环境"
+				if percent, ok := taskStagePercent(task.Config.Virtualization, "preparing"); ok && percent > task.Percent {
+					task.Percent = percent
+				}
 				task.activeKey = taskConcurrencyKey(task)
 				q.activeTargets[task.activeKey] = true
 				q.activeTasks++
@@ -408,6 +412,8 @@ func (q *TaskQueue) finishTask(task *Task, status string, taskErr error) {
 			task.Stage = "completed"
 			task.StageDetail = "初始化完成"
 		}
+		// 任务成功结束才标记 100%；失败时保留中断处的进度，便于定位卡点。
+		task.Percent = 100
 	}
 	if task.activeKey != "" {
 		delete(q.activeTargets, task.activeKey)
@@ -421,10 +427,50 @@ func (q *TaskQueue) finishTask(task *Task, status string, taskErr error) {
 	q.mu.Unlock()
 }
 
+// createStageOrderLXC / createStageOrderKVM 列出各自运行时创建流程的阶段顺序。
+// 任务百分比按阶段在序列中的位置推导，因此进度条随流程单调推进；
+// 两个运行时的阶段集合与先后顺序不同，必须分开定义，不能用单一映射表。
+var (
+	createStageOrderLXC = []string{
+		"preparing", "rootfs", "storage", "disk", "resources", "data_disk",
+		"addresses", "metadata", "network", "ssh", "permissions", "credentials", "cloud_init",
+	}
+	createStageOrderKVM = []string{
+		"preparing", "storage", "addresses", "disk", "cloud_init", "define", "nat", "metadata",
+	}
+)
+
+// taskStagePercent 把阶段换算成 0-100 的完成度。100 保留给任务真正完成，
+// 因此中间阶段最高到 99，避免任务未结束就显示 100%。
+func taskStagePercent(virtualization, stage string) (int, bool) {
+	stage = strings.TrimSpace(stage)
+	switch stage {
+	case "queued":
+		return 0, true
+	case "starting":
+		return 99, true
+	case "completed":
+		return 100, true
+	}
+	order := createStageOrderLXC
+	if strings.EqualFold(strings.TrimSpace(virtualization), config.VirtualizationKVM) {
+		order = createStageOrderKVM
+	}
+	for i, s := range order {
+		if s == stage {
+			return (i + 1) * 99 / len(order), true
+		}
+	}
+	return 0, false
+}
+
 func (q *TaskQueue) updateTaskStage(task *Task, stage, detail string) {
 	q.mu.Lock()
 	task.Stage = stage
 	task.StageDetail = detail
+	if percent, ok := taskStagePercent(task.Config.Virtualization, stage); ok && percent > task.Percent {
+		task.Percent = percent
+	}
 	q.mu.Unlock()
 }
 

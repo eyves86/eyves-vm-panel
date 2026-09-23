@@ -1117,7 +1117,26 @@ function TaskQueueModal({ tasks, onRefresh, onClose }: {
                     <td className="whitespace-nowrap px-4 py-2.5 text-gray-800">{t(actionLabel(task.type))}</td>
                     <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-gray-700">{task.container_name}</td>
                     <td className="min-w-[210px] px-4 py-2.5 text-xs text-gray-700">
-                      {task.type === 'create' ? t(task.stage_detail || (task.status === 'pending' ? '排队等待' : '-')) : '-'}
+                      {task.status === 'pending' ? (
+                        t('排队等待')
+                      ) : (
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{t(task.stage_detail || '-')}</span>
+                            {typeof task.percent === 'number' && task.percent > 0 && (
+                              <span className="font-mono text-[10px] text-gray-500">{task.percent}%</span>
+                            )}
+                          </div>
+                          <div className="h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${
+                                task.status === 'failed' ? 'bg-red-500' : 'bg-blue-500'
+                              }`}
+                              style={{ width: `${Math.min(100, Math.max(0, task.percent ?? 0))}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap px-4 py-2.5 font-mono text-xs text-gray-500">{task.created_at}</td>
                     <td className="min-w-[260px] px-4 py-2.5 text-gray-600">{task.error || '-'}</td>

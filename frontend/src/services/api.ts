@@ -1319,6 +1319,7 @@ export interface Task {
   error?: string
   stage?: string
   stage_detail?: string
+  percent?: number
   created_at: string
   template_id?: string
   config?: CreateContainerRequest
