@@ -37,6 +37,12 @@ func (r *scriptRunner) on(args []string, output string, err error) {
 	r.byArgs[joinArgs("zfs", args)] = scriptReply{output: output, err: err}
 }
 
+func (r *scriptRunner) onCmd(name string, args []string, output string, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byArgs[joinArgs(name, args)] = scriptReply{output: output, err: err}
+}
+
 func (r *scriptRunner) Run(name string, args ...string) (string, error) {
 	r.mu.Lock()
 	r.calls = append(r.calls, recordedCall{name: name, args: append([]string(nil), args...)})

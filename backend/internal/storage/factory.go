@@ -11,6 +11,7 @@ import "fmt"
 // 当前支持的池后端与对应实现：
 //   - "dir" → DirBackend（PoolPath = 文件系统绝对路径）
 //   - "zfs" → ZFSBackend（PoolPath = zfs dataset 路径）
+//   - "lvm" → LVMBackend（poolPath 忽略；池元数据来自 Config[vg]+[thinpool]）
 //   - 其他 → 返回错误（未实现或识别失败不静默）
 //
 // 此函数不持有 runner / backend 引用，调用方负责复用与并发安全。
@@ -20,6 +21,8 @@ func BackendForPool(poolID, poolPath string, backendKind string, config map[stri
 		return NewDirBackend(poolID, poolPath), nil
 	case BackendZFS:
 		return NewZFSBackend(poolID, poolPath, config, runner)
+	case BackendLVM:
+		return NewLVMBackend(poolID, config, runner)
 	default:
 		return nil, fmt.Errorf("storage backend %q is not implemented", backendKind)
 	}
