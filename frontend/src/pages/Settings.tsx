@@ -11,6 +11,8 @@ import {
   getAuditSettings,
   getBackupList,
   getBackupSettings,
+  getInstanceBackupSettings,
+  updateInstanceBackupSettings,
   getHealthDetail,
   getLoginLogs,
   getOvercommitSettings,
@@ -115,6 +117,11 @@ export default function Settings() {
   const [backupEnabled, setBackupEnabled] = useState(false)
   const [backupInterval, setBackupInterval] = useState(24)
   const [backupKeep, setBackupKeep] = useState(14)
+  const [instanceBackupEnabled, setInstanceBackupEnabled] = useState(false)
+  const [instanceBackupInterval, setInstanceBackupInterval] = useState(24)
+  const [instanceBackupKeep, setInstanceBackupKeep] = useState(7)
+  const [instanceBackupLastRun, setInstanceBackupLastRun] = useState('')
+  const [savingInstanceBackup, setSavingInstanceBackup] = useState(false)
   const [backups, setBackups] = useState<BackupRecord[]>([])
   const [creatingBackup, setCreatingBackup] = useState(false)
 
@@ -266,6 +273,18 @@ export default function Settings() {
     try {
       const res2 = await getBackupList()
       if (res2.data.data) setBackups(res2.data.data)
+    } catch (err) {
+      console.error(err)
+    }
+    try {
+      const res3 = await getInstanceBackupSettings()
+      const data = res3.data.data
+      if (data) {
+        setInstanceBackupEnabled(data.enabled)
+        setInstanceBackupInterval(data.interval_hours)
+        setInstanceBackupKeep(data.keep)
+        setInstanceBackupLastRun(data.last_run_at || '')
+      }
     } catch (err) {
       console.error(err)
     }
@@ -608,6 +627,23 @@ export default function Settings() {
     }
   }
 
+  const handleSaveInstanceBackup = async () => {
+    setSavingInstanceBackup(true)
+    try {
+      const res = await updateInstanceBackupSettings({
+        enabled: instanceBackupEnabled,
+        interval_hours: Math.max(1, Math.round(instanceBackupInterval || 24)),
+        keep: Math.max(1, Math.round(instanceBackupKeep || 7)),
+      })
+      if (res.data.data) setInstanceBackupLastRun(res.data.data.last_run_at || '')
+      dialog.alert('完成', instanceBackupEnabled ? '实例磁盘自动备份已启用' : '实例磁盘自动备份已关闭')
+    } catch (err: unknown) {
+      dialog.alert('失败', apiError(err))
+    } finally {
+      setSavingInstanceBackup(false)
+    }
+  }
+
   const handleCreateBackup = async () => {
     setCreatingBackup(true)
     try {
@@ -772,20 +808,33 @@ export default function Settings() {
           )}
 
           {activeSection === 'backup' && (
-            <BackupCard
-              enabled={backupEnabled}
-              interval={backupInterval}
-              keep={backupKeep}
-              backups={backups}
-              creating={creatingBackup}
-              onEnabledChange={setBackupEnabled}
-              onIntervalChange={setBackupInterval}
-              onKeepChange={setBackupKeep}
-              onRefresh={fetchBackup}
-              onSave={handleSaveBackup}
-              onCreate={handleCreateBackup}
-              onRestore={handleRestoreBackup}
-            />
+            <div className="space-y-4">
+              <BackupCard
+                enabled={backupEnabled}
+                interval={backupInterval}
+                keep={backupKeep}
+                backups={backups}
+                creating={creatingBackup}
+                onEnabledChange={setBackupEnabled}
+                onIntervalChange={setBackupInterval}
+                onKeepChange={setBackupKeep}
+                onRefresh={fetchBackup}
+                onSave={handleSaveBackup}
+                onCreate={handleCreateBackup}
+                onRestore={handleRestoreBackup}
+              />
+              <InstanceBackupCard
+                enabled={instanceBackupEnabled}
+                interval={instanceBackupInterval}
+                keep={instanceBackupKeep}
+                lastRun={instanceBackupLastRun}
+                saving={savingInstanceBackup}
+                onEnabledChange={setInstanceBackupEnabled}
+                onIntervalChange={setInstanceBackupInterval}
+                onKeepChange={setInstanceBackupKeep}
+                onSave={handleSaveInstanceBackup}
+              />
+            </div>
           )}
 
           {activeSection === 'ratelimit' && (
@@ -1131,6 +1180,69 @@ function AuditComplianceCard(props: AuditComplianceCardProps) {
         <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存保留期'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface InstanceBackupCardProps {
+  enabled: boolean
+  interval: number
+  keep: number
+  lastRun: string
+  saving: boolean
+  onEnabledChange: (value: boolean) => void
+  onIntervalChange: (value: number) => void
+  onKeepChange: (value: number) => void
+  onSave: () => void
+}
+
+function InstanceBackupCard(props: InstanceBackupCardProps) {
+  return (
+    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
+          <Database className="h-4 w-4" />实例磁盘自动备份
+        </h2>
+        {props.lastRun && <span className="text-xs text-gray-500 dark:text-gray-400">上次运行 {props.lastRun}</span>}
+      </div>
+
+      <p className="mb-4 rounded-md border border-gray-100 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-800 dark:bg-gray-950 dark:text-gray-300">
+        按设定周期为所有运行中的容器创建磁盘备份（先做一致性快照再打包），并按保留份数自动轮换，避免磁盘占满。
+      </p>
+
+      <div className="flex items-center justify-between gap-4 border-y border-gray-100 py-3 dark:border-gray-800">
+        <div>
+          <div className="text-sm font-medium text-gray-800 dark:text-gray-200">启用实例自动备份</div>
+          <div className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">定时为运行中的容器备份磁盘</div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={props.enabled}
+          onClick={() => props.onEnabledChange(!props.enabled)}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-black bg-black dark:border-white dark:bg-white' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
+        >
+          <span className={`pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${props.enabled ? 'translate-x-5 dark:bg-gray-900' : 'translate-x-0 dark:bg-gray-200'}`} />
+        </button>
+      </div>
+
+      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">备份间隔（小时）</label>
+          <input type="number" min={1} value={props.interval} onChange={(e) => props.onIntervalChange(Number(e.target.value))} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">保留份数</label>
+          <input type="number" min={1} value={props.keep} onChange={(e) => props.onKeepChange(Number(e.target.value))} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
+        </div>
+      </div>
+
+      <div className="mt-4 flex justify-end">
+        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+          <Save className="h-4 w-4" />
+          {props.saving ? '保存中...' : '保存设置'}
         </button>
       </div>
     </div>

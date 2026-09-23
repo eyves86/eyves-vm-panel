@@ -1,12 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FileText, Power, RefreshCw, ShieldCheck, X } from 'lucide-react'
-import { getSecurityAlerts, getSecurityLogs, getSecuritySettings, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
+import { FileText, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from 'lucide-react'
+import { getAbuseSummary, getSecurityAlerts, getSecurityLogs, getSecuritySettings, AbuseSummary, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
 
 const typeLabels: Record<string, string> = {
   port_scan: '端口扫描',
   horizontal_scan: '横向扫描',
   brute_force: '暴力破解',
   ddos: 'DDoS/大规模扫描',
+  cc: 'CC/HTTP洪水',
   spam: '垃圾邮件',
   malware: '恶意软件',
   mining: '挖矿连接',
@@ -26,6 +27,8 @@ export default function Security() {
   const [alerts, setAlerts] = useState<SecurityAlert[]>([])
   const [autoShutdown, setAutoShutdown] = useState(false)
   const [arpProtection, setArpProtection] = useState(false)
+  const [ipAntiSpoof, setIpAntiSpoof] = useState(false)
+  const [abuse, setAbuse] = useState<AbuseSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
   const [logAlert, setLogAlert] = useState<SecurityAlert | null>(null)
@@ -34,12 +37,18 @@ export default function Security() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [alertRes, settingsRes] = await Promise.all([getSecurityAlerts(), getSecuritySettings()])
+      const [alertRes, settingsRes, abuseRes] = await Promise.all([
+        getSecurityAlerts(),
+        getSecuritySettings(),
+        getAbuseSummary().catch(() => null),
+      ])
       if (alertRes.data.data) setAlerts(alertRes.data.data)
       if (settingsRes.data.data) {
         setAutoShutdown(settingsRes.data.data.auto_shutdown ?? false)
         setArpProtection(settingsRes.data.data.arp_protection ?? false)
+        setIpAntiSpoof(settingsRes.data.data.ip_anti_spoof ?? false)
       }
+      if (abuseRes?.data.data) setAbuse(abuseRes.data.data)
     } catch (err) {
       console.error(err)
     } finally {
@@ -78,6 +87,21 @@ export default function Security() {
     } catch (err) {
       console.error(err)
       setArpProtection(!next)
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
+  const handleIpAntiSpoofChange = async () => {
+    const next = !ipAntiSpoof
+    setIpAntiSpoof(next)
+    setSavingSettings(true)
+    try {
+      const res = await updateSecuritySettings({ ip_anti_spoof: next })
+      if (res.data.data) setIpAntiSpoof(res.data.data.ip_anti_spoof ?? next)
+    } catch (err) {
+      console.error(err)
+      setIpAntiSpoof(!next)
     } finally {
       setSavingSettings(false)
     }
@@ -144,6 +168,22 @@ export default function Security() {
             <span>{arpProtection ? 'ARP防护已开' : 'ARP防护已关'}</span>
           </button>
           <button
+            type="button"
+            role="switch"
+            aria-checked={ipAntiSpoof}
+            onClick={handleIpAntiSpoofChange}
+            disabled={savingSettings}
+            title="IP 防盗：把平台分配的公网 IP 与容器 MAC 绑定，阻止容器盗用其它 IP"
+            className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors disabled:opacity-60 ${
+              ipAntiSpoof
+                ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <ShieldAlert className="w-4 h-4" />
+            <span>{ipAntiSpoof ? 'IP防盗已开' : 'IP防盗已关'}</span>
+          </button>
+          <button
             onClick={fetchData}
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
           >
@@ -151,6 +191,51 @@ export default function Security() {
             刷新
           </button>
         </div>
+      </div>
+
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-black">滥用用户记录（按用户 / 租户归因）</h2>
+          <span className="text-xs text-gray-500">共 {abuse?.total_alerts ?? 0} 条告警</span>
+        </div>
+        {!abuse || abuse.by_owner.length === 0 ? (
+          <div className="p-8 text-center text-sm text-gray-500">暂无滥用记录</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
+                  <th className="px-4 py-2.5 whitespace-nowrap">用户</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">租户</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">最高等级</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">告警数</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">类型分布</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">涉及容器</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">最近</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {abuse.by_owner.map((row, index) => (
+                  <tr key={`${row.owner}-${row.tenant}-${index}`} className="hover:bg-gray-50">
+                    <td className="px-4 py-2.5 text-gray-800 whitespace-nowrap">{row.owner || '未分配'}</td>
+                    <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{row.tenant || '-'}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <SeverityBadge severity={row.severity} />
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{row.alerts}</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600">
+                      {Object.entries(row.types)
+                        .map(([key, count]) => `${typeLabels[key] || key}×${count}`)
+                        .join('、')}
+                    </td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{row.containers.join(', ')}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-500 whitespace-nowrap">{row.last_seen || '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">

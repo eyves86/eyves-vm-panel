@@ -61,6 +61,7 @@ import {
   updateIPv6Assignments,
   reinstallContainer,
   resetSSHPassword,
+  createContainerAccount,
   restartContainer,
   startContainer,
   stopContainer,
@@ -175,6 +176,7 @@ export default function ContainerDetail() {
   const [reinstallAuthMode, setReinstallAuthMode] = useState<ReinstallSSHAuthMode>('keep')
   const [reinstallPasswordDraft, setReinstallPasswordDraft] = useState('')
   const [reinstallPublicKeyDraft, setReinstallPublicKeyDraft] = useState('')
+  const [reinstallMode, setReinstallMode] = useState<'system' | 'full'>('system')
   const [reinstalling, setReinstalling] = useState(false)
   const [traffic, setTraffic] = useState<TrafficInfo | null>(null)
   const [subUser, setSubUser] = useState<SubUser | null>(null)
@@ -190,6 +192,12 @@ export default function ContainerDetail() {
   const [resetPasswordDraft, setResetPasswordDraft] = useState('')
   const [resetPasswordResult, setResetPasswordResult] = useState('')
   const [resetPasswordSaving, setResetPasswordSaving] = useState(false)
+  const [showCreateAccount, setShowCreateAccount] = useState(false)
+  const [accountUsername, setAccountUsername] = useState('')
+  const [accountPassword, setAccountPassword] = useState('')
+  const [accountSudo, setAccountSudo] = useState(false)
+  const [accountSaving, setAccountSaving] = useState(false)
+  const [accountResult, setAccountResult] = useState('')
   const [showSnapshots, setShowSnapshots] = useState(false)
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [snapshotQuota, setSnapshotQuota] = useState(3)
@@ -648,11 +656,12 @@ export default function ContainerDetail() {
     }
     setReinstalling(true)
     try {
-      await reinstallContainer(containerIdentifier, selectedTemplate, linuxTemplate ? {
-        ssh_auth_mode: reinstallAuthMode,
-        ssh_password: reinstallAuthMode === 'password' ? reinstallPasswordDraft.trim() : '',
-        ssh_public_key: reinstallAuthMode === 'key' ? reinstallPublicKeyDraft.trim() : '',
-      } : undefined)
+      await reinstallContainer(containerIdentifier, selectedTemplate, {
+        ssh_auth_mode: linuxTemplate ? reinstallAuthMode : undefined,
+        ssh_password: linuxTemplate && reinstallAuthMode === 'password' ? reinstallPasswordDraft.trim() : '',
+        ssh_public_key: linuxTemplate && reinstallAuthMode === 'key' ? reinstallPublicKeyDraft.trim() : '',
+        reinstall_mode: reinstallMode,
+      })
       setShowReinstall(false)
       setShowSSH(false)
       setShowVNC(false)
@@ -704,6 +713,55 @@ export default function ContainerDetail() {
     setResetPasswordDraft('')
     setResetPasswordResult('')
     setShowResetPassword(true)
+  }
+
+  const openCreateAccount = () => {
+    setAccountUsername('')
+    setAccountPassword(generateSSHPassword())
+    setAccountSudo(false)
+    setAccountResult('')
+    setShowCreateAccount(true)
+  }
+
+  const accountUsernameError = (username: string) => {
+    const value = username.trim()
+    if (!value) return '请输入用户名'
+    if (!/^[a-z_][a-z0-9_-]{0,31}$/.test(value)) {
+      return '用户名须以小写字母或下划线开头，仅含小写字母、数字、下划线、连字符，最长 32 位'
+    }
+    return ''
+  }
+
+  const handleCreateAccount = async () => {
+    if (!containerIdentifier) return
+    const username = accountUsername.trim()
+    const usernameError = accountUsernameError(username)
+    if (usernameError) {
+      await dialog.alert('用户名格式不正确', usernameError)
+      return
+    }
+    const passwordError = sshPasswordError(accountPassword.trim())
+    if (passwordError) {
+      await dialog.alert('密码格式不正确', passwordError)
+      return
+    }
+    setAccountSaving(true)
+    try {
+      const res = await createContainerAccount(containerIdentifier, {
+        username,
+        password: accountPassword.trim(),
+        sudo: accountSudo,
+      })
+      if (res.data.success) {
+        setAccountResult(`账号 ${username} 已创建${accountSudo ? '（已授予提权）' : ''}`)
+      }
+    } catch (err: unknown) {
+      console.error(err)
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('创建账号失败', error.response?.data?.message || '请稍后重试')
+    } finally {
+      setAccountSaving(false)
+    }
   }
 
   const openRescue = async () => {
@@ -1373,13 +1431,22 @@ export default function ContainerDetail() {
         <Panel
           title="连接信息"
           extra={!isWindows && !isSubUserPolicyBlocked && !readOnly ? (
-            <button
-              onClick={openResetPassword}
-              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-100 hover:text-black"
-            >
-              <Key className="w-3.5 h-3.5" />
-              重置 SSH 密码
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={openResetPassword}
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-100 hover:text-black"
+              >
+                <Key className="w-3.5 h-3.5" />
+                重置 SSH 密码
+              </button>
+              <button
+                onClick={openCreateAccount}
+                className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-100 hover:text-black"
+              >
+                <UserPlus className="w-3.5 h-3.5" />
+                创建账号
+              </button>
+            </div>
           ) : undefined}
         >
           {isSubUserPolicyBlocked ? (
@@ -1653,6 +1720,76 @@ export default function ContainerDetail() {
                 className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
               >
                 {resetPasswordSaving ? '修改中...' : '确认修改'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showCreateAccount && (
+        <Modal title="创建登录账号" onClose={() => setShowCreateAccount(false)}>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">用户名</label>
+              <input
+                type="text"
+                value={accountUsername}
+                onChange={(e) => { setAccountUsername(e.target.value); setAccountResult('') }}
+                placeholder="例如 opsuser"
+                className={inputClass}
+              />
+              {accountUsername && accountUsernameError(accountUsername) && (
+                <p className="mt-1 text-xs text-red-600">{accountUsernameError(accountUsername)}</p>
+              )}
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">密码</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={accountPassword}
+                  onChange={(e) => { setAccountPassword(e.target.value); setAccountResult('') }}
+                  placeholder="请输入 8-64 位，至少包含字母和数字"
+                  className={inputClass}
+                />
+                <button
+                  type="button"
+                  onClick={() => setAccountPassword(generateSSHPassword())}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-gray-600 hover:bg-gray-50 hover:text-black"
+                  title="生成随机密码"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+              {accountPassword && sshPasswordError(accountPassword) && (
+                <p className="mt-1 text-xs text-red-600">{sshPasswordError(accountPassword)}</p>
+              )}
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={accountSudo}
+                onChange={(e) => setAccountSudo(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              授予提权权限（加入 sudo / wheel 组）
+            </label>
+            {accountResult && (
+              <div className="p-3 bg-green-50 border border-green-200 rounded-md text-sm text-green-800">
+                {accountResult}
+              </div>
+            )}
+            <p className="text-xs text-gray-500 leading-relaxed">
+              LXC 通过容器内 chroot 创建账号；KVM 需要虚拟机运行且 guest agent 或 SSH 可用。Windows 暂不支持。
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setShowCreateAccount(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">取消</button>
+              <button
+                onClick={handleCreateAccount}
+                disabled={accountSaving || !accountUsername || !!accountUsernameError(accountUsername) || !accountPassword || !!sshPasswordError(accountPassword)}
+                className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+              >
+                {accountSaving ? '创建中...' : '确认创建'}
               </button>
             </div>
           </div>
@@ -2370,6 +2507,24 @@ export default function ContainerDetail() {
         <Modal title="重装系统" onClose={() => setShowReinstall(false)}>
           <div className="space-y-4">
             <p className="text-sm text-gray-600">重装系统会删除容器内所有数据，请谨慎操作。</p>
+            <Field label="重装范围">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {([
+                  ['system', '仅重装系统盘', '保留数据盘，系统盘重置为新模板'],
+                  ['full', '全盘重装', '系统盘与数据盘一起重建（数据全部清空）'],
+                ] as Array<['system' | 'full', string, string]>).map(([mode, label, hint]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setReinstallMode(mode)}
+                    className={`rounded-md border px-3 py-2 text-left transition-colors ${reinstallMode === mode ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    <div className="text-xs font-medium">{label}</div>
+                    <div className={`mt-0.5 text-[11px] ${reinstallMode === mode ? 'text-gray-200' : 'text-gray-500'}`}>{hint}</div>
+                  </button>
+                ))}
+              </div>
+            </Field>
             <Field label="选择新系统模板">
               <select value={selectedTemplate} onChange={(e) => setSelectedTemplate(e.target.value)} className={inputClass}>
                 {templates.map((template) => (

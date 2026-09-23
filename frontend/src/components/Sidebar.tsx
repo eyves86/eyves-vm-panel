@@ -127,6 +127,8 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
 
   const isNodesPage = location.pathname.startsWith('/nodes')
 
+  const isMonitoringPage = location.pathname.startsWith('/monitoring')
+
   const isImagesPage = location.pathname.startsWith('/images')
 
   const isSnapshotsPage = location.pathname.startsWith('/snapshots')
@@ -202,6 +204,20 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
           <Server className="w-4 h-4" />
           {!collapsed && <span>容器管理</span>}
         </button>
+
+        {!isSubUser && (
+          <button
+            onClick={() => navigate('/monitoring')}
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
+              isMonitoringPage
+                ? 'bg-black text-white dark:bg-white dark:text-black'
+                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            {!collapsed && <span>容器监控</span>}
+          </button>
+        )}
 
         {!isSubUser && (
           <button

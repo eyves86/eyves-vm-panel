@@ -247,6 +247,8 @@ export interface ReinstallContainerOptions {
   ssh_auth_mode?: string
   ssh_password?: string
   ssh_public_key?: string
+  // system: 只重装系统盘（保留数据盘）；full: 全盘重装
+  reinstall_mode?: 'system' | 'full'
 }
 
 export interface IPv6PrefixInfo {
@@ -1405,6 +1407,7 @@ export interface SecuritySummary {
 export interface SecuritySettings {
   auto_shutdown?: boolean
   arp_protection?: boolean
+  ip_anti_spoof?: boolean
 }
 
 export interface SecurityLog {
@@ -1433,6 +1436,74 @@ export const getSecuritySettings = () =>
 
 export const updateSecuritySettings = (data: SecuritySettings) =>
   api.put<APIResponse<SecuritySettings>>('/security/settings', data)
+
+// 管理端集中监控：所有容器的实时指标与滥用概况
+export interface ContainerMonitorRow {
+  id: number
+  uuid: string
+  name: string
+  virtualization: string
+  status: string
+  tenant?: string
+  owner?: string
+  ip?: string
+  vcpu: number
+  ram_mb: number
+  disk_gb: number
+  cpu: number
+  memory: number
+  network_rx: number
+  network_tx: number
+  disk_read: number
+  disk_write: number
+  traffic_used_rx_gb: number
+  traffic_used_tx_gb: number
+  metric_ts?: number
+  abuse_alerts: number
+  abuse_severity?: string
+  policy_blocked: boolean
+}
+
+export const getContainerMonitoring = () =>
+  api.get<APIResponse<{ containers: ContainerMonitorRow[]; total: number; generated_at: string }>>('/monitoring/containers')
+
+// 滥用记录：按用户/租户与类型聚合
+export interface AbuseOwnerSummary {
+  owner: string
+  tenant?: string
+  alerts: number
+  containers: string[]
+  types: Record<string, number>
+  severity: string
+  last_seen: string
+}
+
+export interface AbuseSummary {
+  total_alerts: number
+  by_owner: AbuseOwnerSummary[]
+  by_type: Record<string, number>
+}
+
+export const getAbuseSummary = () =>
+  api.get<APIResponse<AbuseSummary>>('/security/abuse-summary')
+
+// 容器内创建新登录账号
+export const createContainerAccount = (id: ContainerIdentifier, data: { username: string; password: string; sudo?: boolean }) =>
+  api.post<APIResponse<{ username: string; sudo: boolean }>>(`/containers/${id}/create-account`, data)
+
+// 实例磁盘自动备份设置
+export interface InstanceBackupSettings {
+  enabled: boolean
+  interval_hours: number
+  keep: number
+  last_run_at?: string
+}
+
+export const getInstanceBackupSettings = () =>
+  api.get<APIResponse<InstanceBackupSettings>>('/instance-backup/settings')
+
+export const updateInstanceBackupSettings = (data: InstanceBackupSettings) =>
+  api.put<APIResponse<InstanceBackupSettings>>('/instance-backup/settings', data)
 
 export const createWebSSHTicket = (containerName: string) =>
   api.post<APIResponse<{ ticket: string }>>('/ssh-ticket', { container_name: containerName })

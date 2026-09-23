@@ -24,6 +24,7 @@ import Regions from './pages/Regions'
 import IPGroups from './pages/IPGroups'
 import ISOs from './pages/ISOs'
 import MetricRetention from './pages/MetricRetention'
+import Monitoring from './pages/Monitoring'
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useAuth()
@@ -91,6 +92,7 @@ function App() {
       >
         <Route index element={<HomeRoute />} />
         <Route path="containers" element={<Containers />} />
+        <Route path="monitoring" element={<AdminRoute><Monitoring /></AdminRoute>} />
         <Route path="container/:id" element={<ContainerDetail />} />
 
         <Route path="images" element={<AdminRoute><ImageManagement /></AdminRoute>} />
