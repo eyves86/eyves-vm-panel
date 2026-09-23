@@ -101,7 +101,7 @@ func HandleContainerMonitoring(w http.ResponseWriter, r *http.Request) {
 			AbuseSeverity:  abuseSeverities[c.Name],
 			PolicyBlocked:  c.PolicyBlocked,
 		}
-		if tenant, owner := resolveAbuseOwnership(c.Name); owner != "" || tenant != "" {
+		if tenant, owner, _ := resolveAbuseOwnership(c.Name); owner != "" || tenant != "" {
 			if row.Tenant == "" {
 				row.Tenant = tenant
 			}

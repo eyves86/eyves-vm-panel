@@ -1385,6 +1385,7 @@ export const getAuditLogs = () =>
 export interface SecurityAlert {
   id: string
   container_name: string
+  kind?: string
   type: string
   severity: string
   source_ip: string
@@ -1403,12 +1404,14 @@ export interface SecuritySummary {
   medium: number
   low: number
   conntrack_available?: boolean
+  abuse_detection_enabled?: boolean
 }
 
 export interface SecuritySettings {
   auto_shutdown?: boolean
   arp_protection?: boolean
   ip_anti_spoof?: boolean
+  abuse_detection?: boolean
 }
 
 export interface SecurityLog {

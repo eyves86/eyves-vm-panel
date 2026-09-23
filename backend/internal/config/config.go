@@ -974,6 +974,10 @@ type EyvescloudConfig struct {
 	// IPAntiSpoofEnabled 开启后，平台会把分配给容器的公网 IPv4 与其 MAC 绑定，
 	// 阻止容器盗用其它 IP（IP 防盗 / 防 ARP 冒充）。默认关闭。
 	IPAntiSpoofEnabled bool `json:"ip_anti_spoof_enabled"`
+	// AbuseDetectionEnabled 控制是否启用滥用行为检测（挖矿、BT/PT、VPN/代理/Tor、
+	// 25 端口垃圾邮件、DDoS/CC、爆破、端口扫描、后门/远控监听、内网横向移动、
+	// 疑似被入侵等）。仅产生告警，不直接处置容器；默认开启。
+	AbuseDetectionEnabled bool               `json:"abuse_detection_enabled"`
 	Notifications        NotificationConfig     `json:"notifications"`
 	TaskConcurrency      int                    `json:"task_concurrency"`
 	Language             string                 `json:"language"`

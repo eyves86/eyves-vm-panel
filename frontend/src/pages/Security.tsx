@@ -1,20 +1,26 @@
 import { useState, useEffect, useCallback } from 'react'
-import { FileText, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from 'lucide-react'
+import { Activity, FileText, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { getAbuseSummary, getSecurityAlerts, getSecurityLogs, getSecuritySettings, getSecuritySummary, AbuseSummary, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
 
 const typeLabels: Record<string, string> = {
   port_scan: '端口扫描',
   horizontal_scan: '横向扫描',
   brute_force: '暴力破解',
+  inbound_brute_force: '被暴力破解',
+  inbound_ddos: '被DDoS攻击',
+  inbound_scan: '被端口扫描',
   ddos: 'DDoS/大规模扫描',
   cc: 'CC/HTTP洪水',
   p2p: 'BT/PT下载',
   spam: '垃圾邮件',
-  malware: '恶意软件',
-  mining: '挖矿连接',
+  malware: '恶意软件/C2',
+  mining: '挖矿',
   proxy: '代理/VPN/Tor',
   reflection: 'UDP反射放大',
   arp_spoof: 'ARP欺骗/地址冲突',
+  lateral_movement: '内网横向移动',
+  backdoor: '后门/远控监听',
+  compromise: '疑似被入侵',
 }
 
 const severityLabels: Record<string, string> = {
@@ -29,6 +35,7 @@ export default function Security() {
   const [autoShutdown, setAutoShutdown] = useState(false)
   const [arpProtection, setArpProtection] = useState(false)
   const [ipAntiSpoof, setIpAntiSpoof] = useState(false)
+  const [abuseDetection, setAbuseDetection] = useState(true)
   const [abuse, setAbuse] = useState<AbuseSummary | null>(null)
   const [conntrackAvailable, setConntrackAvailable] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
@@ -50,6 +57,7 @@ export default function Security() {
         setAutoShutdown(settingsRes.data.data.auto_shutdown ?? false)
         setArpProtection(settingsRes.data.data.arp_protection ?? false)
         setIpAntiSpoof(settingsRes.data.data.ip_anti_spoof ?? false)
+        setAbuseDetection(settingsRes.data.data.abuse_detection ?? true)
       }
       if (abuseRes?.data.data) setAbuse(abuseRes.data.data)
       if (summaryRes?.data.data) setConntrackAvailable(summaryRes.data.data.conntrack_available ?? null)
@@ -111,6 +119,21 @@ export default function Security() {
     }
   }
 
+  const handleAbuseDetectionChange = async () => {
+    const next = !abuseDetection
+    setAbuseDetection(next)
+    setSavingSettings(true)
+    try {
+      const res = await updateSecuritySettings({ abuse_detection: next })
+      if (res.data.data) setAbuseDetection(res.data.data.abuse_detection ?? next)
+    } catch (err) {
+      console.error(err)
+      setAbuseDetection(!next)
+    } finally {
+      setSavingSettings(false)
+    }
+  }
+
   const openLogs = async (alert: SecurityAlert) => {
     setLogAlert(alert)
     setLogs([])
@@ -139,6 +162,22 @@ export default function Security() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold text-black">安全告警</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={abuseDetection}
+            onClick={handleAbuseDetectionChange}
+            disabled={savingSettings}
+            title="滥用行为检测：检测挖矿、BT/PT、VPN/代理/Tor、25端口垃圾邮件、DDoS/CC、爆破、后门、内网横向移动与疑似被入侵等行为"
+            className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors disabled:opacity-60 ${
+              abuseDetection
+                ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            }`}
+          >
+            <Activity className="w-4 h-4" />
+            <span>{abuseDetection ? '滥用检测已开' : '滥用检测已关'}</span>
+          </button>
           <button
             type="button"
             role="switch"
@@ -197,10 +236,16 @@ export default function Security() {
         </div>
       </div>
 
-      {conntrackAvailable === false && (
+      {!abuseDetection && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+          滥用行为检测已关闭：不会再产生挖矿、BT/PT、VPN/代理、25 端口、DDoS/CC、爆破、后门、内网横向移动等告警。
+        </div>
+      )}
+
+      {abuseDetection && conntrackAvailable === false && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           未检测到连接跟踪数据源（conntrack / <span className="font-mono">/proc/net/nf_conntrack</span>）。
-          基于出站连接的滥用检测（挖矿、VPN/代理、BT/PT、CC、25 端口等）<strong>当前不会生效</strong>，
+          基于出站/入站连接的滥用检测（挖矿、VPN/代理、BT/PT、CC、25 端口、爆破、后门等）<strong>当前不会生效</strong>，
           请安装 <span className="font-mono">conntrack</span> 工具或启用内核 nf_conntrack 模块。
         </div>
       )}
@@ -279,7 +324,14 @@ export default function Security() {
                       <SeverityBadge severity={alert.severity} />
                     </td>
                     <td className="px-4 py-2.5 text-gray-800 whitespace-nowrap">{typeLabels[alert.type] || alert.type}</td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-gray-700 whitespace-nowrap">{alert.container_name}</td>
+                    <td className="px-4 py-2.5 font-mono text-xs text-gray-700 whitespace-nowrap">
+                      {alert.container_name}
+                      {alert.kind && (
+                        <span className="ml-1.5 rounded bg-gray-100 px-1 py-0.5 font-sans text-[10px] text-gray-500">
+                          {alert.kind.toUpperCase()}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap">{alert.source_ip || '-'}</td>
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap">
                       {formatTarget(alert)}
@@ -393,10 +445,16 @@ function formatTarget(alert: SecurityAlert): string {
 }
 
 function filterRelatedLogs(logs: SecurityLog[], alert: SecurityAlert): SecurityLog[] {
+  const containerIP = alert.source_ip
   return logs.filter((log) => {
-    if (alert.source_ip && log.src_ip !== alert.source_ip) return false
-    if (alert.target_ip && alert.target_ip !== '*' && log.dst_ip !== alert.target_ip) return false
-    if (alert.target_port > 0 && log.dst_port !== alert.target_port) return false
+    // 出站告警容器为源地址，入站告警容器为目的地址，两者都算相关。
+    if (containerIP && log.src_ip !== containerIP && log.dst_ip !== containerIP) return false
+    if (alert.target_ip && alert.target_ip !== '*' && log.src_ip !== alert.target_ip && log.dst_ip !== alert.target_ip) {
+      return false
+    }
+    if (alert.target_port > 0 && log.dst_port !== alert.target_port && log.src_port !== alert.target_port) {
+      return false
+    }
     return true
   })
 }

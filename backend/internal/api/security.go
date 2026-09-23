@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,11 +21,13 @@ import (
 type SecurityAlert struct {
 	ID            string `json:"id"`
 	ContainerName string `json:"container_name"`
+	// Kind 为容器类型（lxc / kvm），用于前端展示"xxx容器（LXC）"。
+	Kind string `json:"kind,omitempty"`
 	// Tenant / Owner 记录滥用行为的归属：Tenant 为容器所属租户，Owner 为绑定了该容器的
 	// 子用户（若存在）。便于管理端按用户/租户归因与统计，而不只是按容器。
 	Tenant     string `json:"tenant,omitempty"`
 	Owner      string `json:"owner,omitempty"`
-	Type       string `json:"type"`     // port_scan, horizontal_scan, brute_force, ddos, cc, spam, malware, mining, proxy, reflection
+	Type       string `json:"type"`     // 见 abuseBehaviorLabels
 	Severity   string `json:"severity"` // low, medium, high, critical
 	SourceIP   string `json:"source_ip"`
 	TargetIP   string `json:"target_ip"`
@@ -33,6 +36,57 @@ type SecurityAlert struct {
 	LogLine    string `json:"log_line"`
 	Timestamp  string `json:"timestamp"`
 	Count      int    `json:"count"`
+}
+
+// abuseBehaviorLabels 把告警类型映射为面向管理员的"行为"名称，
+// 用于统一生成「xxx容器（LXC）可能存在 xxx 行为：证据」这类描述。
+var abuseBehaviorLabels = map[string]string{
+	"port_scan":           "端口扫描",
+	"horizontal_scan":     "横向端口扫描",
+	"brute_force":         "暴力破解",
+	"inbound_brute_force": "被暴力破解",
+	"inbound_ddos":        "被 DDoS 攻击",
+	"inbound_scan":        "被端口扫描",
+	"ddos":                "大规模对外攻击/扫描",
+	"cc":                  "CC/HTTP 洪水",
+	"p2p":                 "BT/PT 下载",
+	"spam":                "垃圾邮件发送",
+	"malware":             "恶意软件/C2 外联",
+	"mining":              "挖矿",
+	"proxy":               "代理/VPN/Tor",
+	"reflection":          "UDP 反射放大",
+	"arp_spoof":           "ARP 欺骗/地址冲突",
+	"lateral_movement":    "内网横向移动",
+	"backdoor":            "后门/远控监听",
+}
+
+// compromiseAlertType 是"疑似被入侵"的复合告警类型。
+const compromiseAlertType = "compromise"
+
+// kindLabel 返回容器类型的中文展示标签。
+func kindLabel(kind string) string {
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case config.VirtualizationKVM:
+		return "KVM"
+	case config.VirtualizationLXC:
+		return "LXC"
+	default:
+		return "容器"
+	}
+}
+
+// abuseDetail 生成统一格式的行为告警描述："{容器}（LXC）可能存在{行为}行为：{证据}"。
+// 对 compromise 类型生成"{容器}（LXC）疑似被入侵：{证据}"。
+func abuseDetail(container, kind, alertType, evidence string) string {
+	label := kindLabel(kind)
+	behavior := abuseBehaviorLabels[alertType]
+	if alertType == compromiseAlertType {
+		return fmt.Sprintf("%s（%s）疑似被入侵：%s", container, label, evidence)
+	}
+	if behavior == "" {
+		behavior = alertType
+	}
+	return fmt.Sprintf("%s（%s）可能存在%s行为：%s", container, label, behavior, evidence)
 }
 
 // SecurityScanner monitors container network activity for abuse patterns.
@@ -50,6 +104,49 @@ type connEntry struct {
 	proto   string
 	state   string
 	line    string
+}
+
+// inboundStats 汇总容器作为目的端的入站连接（被扫描 / 被爆破 / 被攻击 / 后门监听）。
+type inboundStats struct {
+	total        int
+	portTotals   map[int]int            // 容器本地端口 -> 入站连接数
+	portPeers    map[int]map[string]int // 容器本地端口 -> 对端 IP -> 次数
+	portSynRecv  map[int]int            // 容器本地端口 -> 半开(SYN_RECV)连接数
+	portSynPeers map[int]map[string]int // 容器本地端口 -> 半开连接对端 IP
+	peerPorts    map[string]map[int]int // 对端 IP -> 容器本地端口 -> 次数
+}
+
+func newInboundStats() *inboundStats {
+	return &inboundStats{
+		portTotals:   make(map[int]int),
+		portPeers:    make(map[int]map[string]int),
+		portSynRecv:  make(map[int]int),
+		portSynPeers: make(map[int]map[string]int),
+		peerPorts:    make(map[string]map[int]int),
+	}
+}
+
+func (is *inboundStats) add(peerIP string, localPort int, proto, state string) {
+	is.total++
+	if localPort <= 0 {
+		return
+	}
+	is.portTotals[localPort]++
+	if is.portPeers[localPort] == nil {
+		is.portPeers[localPort] = make(map[string]int)
+	}
+	is.portPeers[localPort][peerIP]++
+	if is.peerPorts[peerIP] == nil {
+		is.peerPorts[peerIP] = make(map[int]int)
+	}
+	is.peerPorts[peerIP][localPort]++
+	if strings.EqualFold(state, "SYN_RECV") {
+		is.portSynRecv[localPort]++
+		if is.portSynPeers[localPort] == nil {
+			is.portSynPeers[localPort] = make(map[string]int)
+		}
+		is.portSynPeers[localPort][peerIP]++
+	}
 }
 
 type trafficStats struct {
@@ -141,13 +238,96 @@ var proxyPorts = map[int]string{
 
 var malwarePorts = map[int]string{
 	1337:  "common backdoor",
+	1243:  "Sub7 trojan",
+	12345: "NetBus/RAT",
+	12346: "NetBus trojan",
+	20034: "NetBus trojan",
+	27374: "Sub7 trojan",
 	31337: "Back Orifice",
+	31338: "Back Orifice",
 	4444:  "Metasploit/reverse shell",
+	54321: "reverse shell/RAT",
 	5555:  "Android debug/reverse shell",
 	6666:  "IRC botnet",
 	6667:  "IRC botnet",
 	6697:  "IRC over TLS",
 	9050:  "Tor/C2 proxy",
+}
+
+// backdoorPorts 是几乎不可能承载正常公网服务的后门/远控（RAT）监听端口。
+// 容器在这些端口上收到入站连接，强烈提示存在后门或已被植入远控。
+var backdoorPorts = map[int]string{
+	1337:  "后门",
+	1243:  "Sub7 木马",
+	12345: "NetBus/RAT",
+	12346: "NetBus 木马",
+	20034: "NetBus 木马",
+	27374: "Sub7 木马",
+	31337: "Back Orifice",
+	31338: "Back Orifice",
+	4444:  "反弹 Shell/Metasploit",
+	54321: "反弹 Shell/RAT",
+	5555:  "远控/ADB 后门",
+	6666:  "IRC 僵尸网络",
+	6667:  "IRC 僵尸网络",
+}
+
+// lateralSensitivePorts 是内网横向移动常被利用的高价值服务端口。
+// 容器主动连接多个内网主机上的这些端口，通常意味着已被入侵并在横向渗透。
+var lateralSensitivePorts = map[int]string{
+	22:    "SSH",
+	23:    "Telnet",
+	135:   "MS-RPC",
+	139:   "NetBIOS",
+	445:   "SMB",
+	1433:  "MSSQL",
+	1521:  "Oracle",
+	2375:  "Docker API",
+	2376:  "Docker API(TLS)",
+	3306:  "MySQL",
+	3389:  "RDP",
+	5432:  "PostgreSQL",
+	5900:  "VNC",
+	5985:  "WinRM",
+	5986:  "WinRM(TLS)",
+	6379:  "Redis",
+	6443:  "Kubernetes API",
+	9200:  "Elasticsearch",
+	10250: "Kubelet",
+	11211: "Memcached",
+	27017: "MongoDB",
+}
+
+// privateCIDRs 是需要关注"内网横向"的私有/保留网段。
+var privateCIDRs = []string{
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"100.64.0.0/10",
+	"169.254.0.0/16",
+}
+
+var privateNets []*net.IPNet
+
+func init() {
+	for _, cidr := range privateCIDRs {
+		if _, block, err := net.ParseCIDR(cidr); err == nil {
+			privateNets = append(privateNets, block)
+		}
+	}
+}
+
+func isPrivateIP(ip string) bool {
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed == nil {
+		return false
+	}
+	for _, block := range privateNets {
+		if block.Contains(parsed) {
+			return true
+		}
+	}
+	return false
 }
 
 // webPorts 是 CC / HTTP 洪水检测关注的常见 Web 服务端口。
@@ -230,6 +410,7 @@ func (ss *SecurityScanner) alertCount() int {
 func (ss *SecurityScanner) checkAllContainers() {
 	config.AppConfigMu.RLock()
 	arpEnabled := config.AppConfig.ARPProtectionEnabled
+	abuseEnabled := config.AppConfig.AbuseDetectionEnabled
 	config.AppConfigMu.RUnlock()
 
 	// GetContainers 自带读锁，必须在释放上面的读锁之后再调用，
@@ -242,14 +423,20 @@ func (ss *SecurityScanner) checkAllContainers() {
 		if arpEnabled {
 			ss.checkARPConflicts(c)
 		}
+		// 滥用行为检测总开关：关闭后不再做任何出站/入站连接分析。
+		if !abuseEnabled {
+			continue
+		}
 		// macvlan（LAN IPv4 模式）容器的出站流量不经过宿主机协议栈，
 		// 需要进入容器网络命名空间读取 conntrack；NAT/桥接容器仍用宿主机 conntrack。
 		netnsPID := containerConntrackNetnsPID(c)
-		// 逐一对容器的所有地址检查出站连接：容器可能只持有公网 IP（macvlan），
+		// 逐一对容器的所有地址检查连接：容器可能只持有公网 IP（macvlan），
 		// 只监控 c.IP 会漏掉这类容器的滥用行为。
 		for _, address := range containerMonitoredAddresses(c) {
 			ss.checkContainer(c.Name, address, netnsPID)
 		}
+		// 基于指标采样的 CPU 特征检测（可发现非标准端口的矿机）。
+		ss.detectSustainedCPUMining(c)
 	}
 }
 
@@ -310,7 +497,7 @@ func (ss *SecurityScanner) checkARPConflicts(c config.Container) {
 			}
 			if !strings.EqualFold(lladdr, c.MACAddress) {
 				ss.addAlert(c.Name, "arp_spoof", "high", address, c.IP, 0,
-					fmt.Sprintf("ARP 地址冲突/欺骗: IP %s 邻居表 MAC %s 与容器绑定 MAC %s 不一致", address, lladdr, c.MACAddress),
+					fmt.Sprintf("IP %s 邻居表 MAC %s 与容器绑定 MAC %s 不一致", address, lladdr, c.MACAddress),
 					strings.TrimSpace(line))
 			}
 		}
@@ -346,30 +533,50 @@ func (ss *SecurityScanner) checkContainer(name, ip, netnsPID string) {
 		return
 	}
 
-	stats := newTrafficStats()
+	out := newTrafficStats()
+	in := newInboundStats()
 	for _, line := range lines {
-		conn, ok := parseConntrackLine(line, ip)
-		if !ok || conn.dstIP == "" || conn.dstIP == ip {
+		tuples := parseConntrackTuples(line)
+		dir, peer, ok := classifyConntrackTuples(tuples, ip)
+		if !ok || peer.ip == "" || peer.ip == ip {
 			continue
 		}
-		stats.add(conn)
+		proto := extractProtocol(line)
+		state := extractConnState(line)
+		if dir == connOutbound {
+			out.add(connEntry{dstIP: peer.ip, dstPort: peer.port, proto: proto, state: state, line: line})
+			continue
+		}
+		in.add(peer.ip, peer.localPort, proto, state)
 	}
 
-	if stats.total == 0 {
+	if out.total == 0 && in.total == 0 {
 		return
 	}
 
 	alertBefore := ss.alertCount()
-	ss.detectPortScans(name, ip, stats)
-	ss.detectBruteForce(name, ip, stats)
-	ss.detectSpam(name, ip, stats)
-	ss.detectMassAbuse(name, ip, stats)
-	ss.detectCC(name, ip, stats)
-	ss.detectP2P(name, ip, stats)
-	ss.detectReflectionAbuse(name, ip, stats)
-	ss.detectMining(name, ip, stats)
-	ss.detectProxyAndTor(name, ip, stats)
-	ss.detectMalware(name, ip, stats)
+
+	// 出站方向：容器作为发起方（滥用/外联）。
+	ss.detectPortScans(name, ip, out)
+	ss.detectBruteForce(name, ip, out)
+	ss.detectSpam(name, ip, out)
+	ss.detectMassAbuse(name, ip, out)
+	ss.detectCC(name, ip, out)
+	ss.detectP2P(name, ip, out)
+	ss.detectReflectionAbuse(name, ip, out)
+	ss.detectMining(name, ip, out)
+	ss.detectProxyAndTor(name, ip, out)
+	ss.detectMalware(name, ip, out)
+	ss.detectLateralMovement(name, ip, out)
+
+	// 入站方向：容器作为目的方（被攻击/被入侵迹象）。
+	ss.detectInboundBruteForce(name, ip, in)
+	ss.detectInboundDDoS(name, ip, in)
+	ss.detectInboundScan(name, ip, in)
+	ss.detectBackdoorListener(name, ip, in)
+
+	// 复合判定：多个入侵指标同时出现时，给出"疑似被入侵"总结性告警。
+	ss.detectCompromise(name, ip, out, in)
 
 	// If new alerts were generated, snapshot the conntrack data for later retrieval.
 	if ss.alertCount() > alertBefore {
@@ -442,11 +649,11 @@ func (ss *SecurityScanner) detectPortScans(name, ip string, stats *trafficStats)
 		switch {
 		case uniquePorts >= 25:
 			ss.addAlert(name, "port_scan", "high", ip, dstIP, 0,
-				fmt.Sprintf("端口扫描: 同一目标 %s 出现 %d 个不同 TCP 半开目标端口", dstIP, uniquePorts),
+				fmt.Sprintf("对同一目标 %s 发起 %d 个不同 TCP 半开端口探测", dstIP, uniquePorts),
 				"")
 		case uniquePorts >= 12:
 			ss.addAlert(name, "port_scan", "medium", ip, dstIP, 0,
-				fmt.Sprintf("可疑端口探测: 同一目标 %s 出现 %d 个不同 TCP 半开目标端口", dstIP, uniquePorts),
+				fmt.Sprintf("对同一目标 %s 发起 %d 个不同 TCP 半开端口探测", dstIP, uniquePorts),
 				"")
 		}
 	}
@@ -456,11 +663,11 @@ func (ss *SecurityScanner) detectPortScans(name, ip string, stats *trafficStats)
 		if service, ok := bruteForcePorts[port]; ok {
 			if uniqueTargets >= 30 {
 				ss.addAlert(name, "brute_force", "critical", ip, "*", port,
-					fmt.Sprintf("横向爆破: 目标服务 %s(%d) 出现 TCP 半开连接并覆盖 %d 个不同 IP", service, port, uniqueTargets),
+					fmt.Sprintf("对 %s(%d) 服务发起半开连接并覆盖 %d 个不同 IP", service, port, uniqueTargets),
 					"")
 			} else if uniqueTargets >= 12 {
 				ss.addAlert(name, "brute_force", "high", ip, "*", port,
-					fmt.Sprintf("疑似横向爆破: 目标服务 %s(%d) 出现 TCP 半开连接并覆盖 %d 个不同 IP", service, port, uniqueTargets),
+					fmt.Sprintf("对 %s(%d) 服务发起半开连接并覆盖 %d 个不同 IP", service, port, uniqueTargets),
 					"")
 			}
 			continue
@@ -468,11 +675,11 @@ func (ss *SecurityScanner) detectPortScans(name, ip string, stats *trafficStats)
 
 		if uniqueTargets >= 50 {
 			ss.addAlert(name, "horizontal_scan", "high", ip, "*", port,
-				fmt.Sprintf("横向扫描: 同一 TCP 端口 %d 出现半开连接并覆盖 %d 个不同目标", port, uniqueTargets),
+				fmt.Sprintf("对同一 TCP 端口 %d 发起半开连接并覆盖 %d 个不同目标", port, uniqueTargets),
 				"")
 		} else if uniqueTargets >= 20 {
 			ss.addAlert(name, "horizontal_scan", "medium", ip, "*", port,
-				fmt.Sprintf("可疑横向探测: 同一 TCP 端口 %d 出现半开连接并覆盖 %d 个不同目标", port, uniqueTargets),
+				fmt.Sprintf("对同一 TCP 端口 %d 发起半开连接并覆盖 %d 个不同目标", port, uniqueTargets),
 				"")
 		}
 	}
@@ -492,19 +699,19 @@ func (ss *SecurityScanner) detectBruteForce(name, ip string, stats *trafficStats
 			}
 			if synCount >= 25 {
 				ss.addAlert(name, "brute_force", "critical", ip, dstIP, port,
-					fmt.Sprintf("暴力破解: %s(%d) 当前 TCP 半开连接 %d 条", service, port, synCount),
+					fmt.Sprintf("对 %s(%d) 发起 %d 条 TCP 半开连接", service, port, synCount),
 					"")
 			} else if synCount >= 12 {
 				ss.addAlert(name, "brute_force", "high", ip, dstIP, port,
-					fmt.Sprintf("疑似暴力破解: %s(%d) 当前 TCP 半开连接 %d 条", service, port, synCount),
+					fmt.Sprintf("对 %s(%d) 发起 %d 条 TCP 半开连接", service, port, synCount),
 					"")
 			} else if count >= 60 {
 				ss.addAlert(name, "brute_force", "critical", ip, dstIP, port,
-					fmt.Sprintf("暴力破解: %s(%d) 当前连接数 %d 条", service, port, count),
+					fmt.Sprintf("对 %s(%d) 维持 %d 条连接", service, port, count),
 					"")
 			} else if count >= 30 {
 				ss.addAlert(name, "brute_force", "high", ip, dstIP, port,
-					fmt.Sprintf("疑似暴力破解: %s(%d) 当前连接数 %d 条", service, port, count),
+					fmt.Sprintf("对 %s(%d) 维持 %d 条连接", service, port, count),
 					"")
 			}
 		}
@@ -518,11 +725,11 @@ func (ss *SecurityScanner) detectSpam(name, ip string, stats *trafficStats) {
 	switch {
 	case port25 >= 10 || port25Targets >= 5:
 		ss.addAlert(name, "spam", "critical", ip, "*", 25,
-			fmt.Sprintf("SMTP(25) 对外连接异常: 连接 %d 条，覆盖 %d 个目标", port25, port25Targets),
+			fmt.Sprintf("SMTP(25) 对外连接 %d 条，覆盖 %d 个目标", port25, port25Targets),
 			"")
 	case port25 >= 3:
 		ss.addAlert(name, "spam", "high", ip, "*", 25,
-			fmt.Sprintf("SMTP(25) 对外连接: 连接 %d 条，覆盖 %d 个目标", port25, port25Targets),
+			fmt.Sprintf("SMTP(25) 对外连接 %d 条，覆盖 %d 个目标", port25, port25Targets),
 			"")
 	}
 
@@ -533,11 +740,11 @@ func (ss *SecurityScanner) detectSpam(name, ip string, stats *trafficStats) {
 
 	if targets >= 10 || total >= 30 {
 		ss.addAlert(name, "spam", "critical", ip, "*", 25,
-			fmt.Sprintf("疑似垃圾邮件: SMTP 相关端口当前连接 %d 条，覆盖 %d 个目标", total, targets),
+			fmt.Sprintf("SMTP 相关端口连接 %d 条，覆盖 %d 个目标", total, targets),
 			"")
 	} else if targets >= 2 || total >= 5 {
 		ss.addAlert(name, "spam", "high", ip, "*", 25,
-			fmt.Sprintf("可疑邮件发送: SMTP 相关端口当前连接 %d 条，覆盖 %d 个目标", total, targets),
+			fmt.Sprintf("SMTP 相关端口连接 %d 条，覆盖 %d 个目标", total, targets),
 			"")
 	}
 }
@@ -547,11 +754,11 @@ func (ss *SecurityScanner) detectMassAbuse(name, ip string, stats *trafficStats)
 	switch {
 	case targets >= 120 && stats.total >= 600:
 		ss.addAlert(name, "ddos", "critical", ip, "*", 0,
-			fmt.Sprintf("大规模对外连接: 当前 conntrack 出站记录 %d 条，覆盖 %d 个不同目标", stats.total, targets),
+			fmt.Sprintf("对外连接 %d 条，覆盖 %d 个不同目标", stats.total, targets),
 			"")
 	case targets >= 60 && stats.total >= 300:
 		ss.addAlert(name, "ddos", "high", ip, "*", 0,
-			fmt.Sprintf("大量对外连接: 当前 conntrack 出站记录 %d 条，覆盖 %d 个不同目标", stats.total, targets),
+			fmt.Sprintf("对外连接 %d 条，覆盖 %d 个不同目标", stats.total, targets),
 			"")
 	}
 
@@ -559,11 +766,11 @@ func (ss *SecurityScanner) detectMassAbuse(name, ip string, stats *trafficStats)
 	switch {
 	case stats.totalSynSent >= 250 || (synTargets >= 80 && stats.totalSynSent >= 160):
 		ss.addAlert(name, "ddos", "critical", ip, "*", 0,
-			fmt.Sprintf("大量半开连接: 当前 TCP SYN_SENT %d 条，覆盖 %d 个不同目标", stats.totalSynSent, synTargets),
+			fmt.Sprintf("对外半开连接(SYN_SENT) %d 条，覆盖 %d 个不同目标", stats.totalSynSent, synTargets),
 			"")
 	case stats.totalSynSent >= 100 || (synTargets >= 35 && stats.totalSynSent >= 70):
 		ss.addAlert(name, "ddos", "high", ip, "*", 0,
-			fmt.Sprintf("可疑大量半开连接: 当前 TCP SYN_SENT %d 条，覆盖 %d 个不同目标", stats.totalSynSent, synTargets),
+			fmt.Sprintf("对外半开连接(SYN_SENT) %d 条，覆盖 %d 个不同目标", stats.totalSynSent, synTargets),
 			"")
 	}
 
@@ -575,22 +782,22 @@ func (ss *SecurityScanner) detectMassAbuse(name, ip string, stats *trafficStats)
 	switch {
 	case udpTargets >= 120 && udpTotal >= 300:
 		ss.addAlert(name, "ddos", "critical", ip, "*", 0,
-			fmt.Sprintf("UDP 大规模外发: 当前 UDP 连接 %d 条，覆盖 %d 个不同目标", udpTotal, udpTargets),
+			fmt.Sprintf("UDP 外发 %d 条，覆盖 %d 个不同目标", udpTotal, udpTargets),
 			"")
 	case udpTargets >= 50 && udpTotal >= 120:
 		ss.addAlert(name, "ddos", "high", ip, "*", 0,
-			fmt.Sprintf("可疑 UDP 大规模外发: 当前 UDP 连接 %d 条，覆盖 %d 个不同目标", udpTotal, udpTargets),
+			fmt.Sprintf("UDP 外发 %d 条，覆盖 %d 个不同目标", udpTotal, udpTargets),
 			"")
 	}
 
 	for dstIP, count := range stats.synSentByDst {
 		if count >= 50 {
 			ss.addAlert(name, "ddos", "critical", ip, dstIP, 0,
-				fmt.Sprintf("SYN 洪水: 单一目标半开连接 %d 条", count),
+				fmt.Sprintf("对单一目标维持 %d 条半开连接", count),
 				"")
 		} else if count >= 20 {
 			ss.addAlert(name, "ddos", "high", ip, dstIP, 0,
-				fmt.Sprintf("可疑 SYN 洪水: 单一目标半开连接 %d 条", count),
+				fmt.Sprintf("对单一目标维持 %d 条半开连接", count),
 				"")
 		}
 	}
@@ -620,11 +827,11 @@ func (ss *SecurityScanner) detectCC(name, ip string, stats *trafficStats) {
 	switch {
 	case peakCount >= 150 || (total >= 300 && len(targets) <= 3):
 		ss.addAlert(name, "cc", "critical", ip, peakTarget, 0,
-			fmt.Sprintf("疑似 CC/HTTP 洪水: Web 端口连接 %d 条，单一目标最高 %d 条，覆盖 %d 个目标", total, peakCount, len(targets)),
+			fmt.Sprintf("Web 端口连接 %d 条，单一目标最高 %d 条，覆盖 %d 个目标", total, peakCount, len(targets)),
 			"")
 	case peakCount >= 60 || (total >= 120 && len(targets) <= 8):
 		ss.addAlert(name, "cc", "high", ip, peakTarget, 0,
-			fmt.Sprintf("可疑 CC/HTTP 洪水: Web 端口连接 %d 条，单一目标最高 %d 条，覆盖 %d 个目标", total, peakCount, len(targets)),
+			fmt.Sprintf("Web 端口连接 %d 条，单一目标最高 %d 条，覆盖 %d 个目标", total, peakCount, len(targets)),
 			"")
 	}
 }
@@ -646,7 +853,7 @@ func (ss *SecurityScanner) detectP2P(name, ip string, stats *trafficStats) {
 			severity = "critical"
 		}
 		ss.addAlert(name, "p2p", severity, ip, "*", 0,
-			fmt.Sprintf("疑似 BT/PT 下载: BitTorrent 相关端口连接 %d 条，覆盖 %d 个节点", total, len(peers)),
+			fmt.Sprintf("BitTorrent 相关端口连接 %d 条，覆盖 %d 个节点", total, len(peers)),
 			"")
 		return
 	}
@@ -663,7 +870,7 @@ func (ss *SecurityScanner) detectP2P(name, ip string, stats *trafficStats) {
 	}
 	if highPortPeers >= 50 && stats.total >= 80 {
 		ss.addAlert(name, "p2p", "high", ip, "*", 0,
-			fmt.Sprintf("疑似 P2P/BT 群集: 与 %d 个目标在高位端口建立连接（共 %d 条）", highPortPeers, stats.total),
+			fmt.Sprintf("与 %d 个目标在高位端口建立连接（共 %d 条），呈现 P2P 群集特征", highPortPeers, stats.total),
 			"")
 	}
 }
@@ -685,11 +892,11 @@ func (ss *SecurityScanner) detectReflectionAbuse(name, ip string, stats *traffic
 
 		if targets >= criticalTargets && total >= criticalTotal {
 			ss.addAlert(name, "reflection", "critical", ip, "*", port,
-				fmt.Sprintf("UDP 反射放大: %s(%d) 当前 UDP 连接 %d 条，覆盖 %d 个目标", service, port, total, targets),
+				fmt.Sprintf("%s(%d) UDP 外发 %d 条，覆盖 %d 个目标", service, port, total, targets),
 				"")
 		} else if targets >= highTargets && total >= highTotal {
 			ss.addAlert(name, "reflection", "high", ip, "*", port,
-				fmt.Sprintf("疑似 UDP 反射放大: %s(%d) 当前 UDP 连接 %d 条，覆盖 %d 个目标", service, port, total, targets),
+				fmt.Sprintf("%s(%d) UDP 外发 %d 条，覆盖 %d 个目标", service, port, total, targets),
 				"")
 		}
 	}
@@ -707,7 +914,7 @@ func (ss *SecurityScanner) detectMining(name, ip string, stats *trafficStats) {
 			severity = "critical"
 		}
 		ss.addAlert(name, "mining", severity, ip, "*", port,
-			fmt.Sprintf("疑似挖矿连接: %s/%d 当前连接 %d 条", service, port, total),
+			fmt.Sprintf("连接矿池端口 %s/%d 共 %d 条", service, port, total),
 			"")
 	}
 }
@@ -731,7 +938,7 @@ func (ss *SecurityScanner) detectProxyAndTor(name, ip string, stats *trafficStat
 			severity = "critical"
 		}
 		ss.addAlert(name, "proxy", severity, ip, "*", port,
-			fmt.Sprintf("疑似代理/VPN/Tor 滥用: %s(%d) 当前连接 %d 条，覆盖 %d 个目标", service, port, total, targets),
+			fmt.Sprintf("%s(%d) 连接 %d 条，覆盖 %d 个目标", service, port, total, targets),
 			"")
 	}
 
@@ -739,7 +946,7 @@ func (ss *SecurityScanner) detectProxyAndTor(name, ip string, stats *trafficStat
 	targets8080 := len(stats.portDestCounts[8080])
 	if targets8080 >= 5 || total8080 >= 20 {
 		ss.addAlert(name, "proxy", "high", ip, "*", 8080,
-			fmt.Sprintf("疑似开放代理流量: HTTP 代理常用端口 8080 当前连接 %d 条，覆盖 %d 个目标", total8080, targets8080),
+			fmt.Sprintf("HTTP 代理常用端口 8080 连接 %d 条，覆盖 %d 个目标", total8080, targets8080),
 			"")
 	}
 }
@@ -752,9 +959,220 @@ func (ss *SecurityScanner) detectMalware(name, ip string, stats *trafficStats) {
 		}
 
 		ss.addAlert(name, "malware", "critical", ip, "*", port,
-			fmt.Sprintf("疑似恶意软件/C2 连接: %s 端口 %d 当前连接 %d 条", label, port, total),
+			fmt.Sprintf("与 %s 端口 %d 存在 %d 条连接", label, port, total),
 			"")
 	}
+}
+
+// lateralMovementTargets 返回容器主动连接的内网高价值服务目标与连接总数。
+// 已被入侵的容器常被用作跳板，向内网其它主机的高价值端口发起连接。
+func lateralMovementTargets(stats *trafficStats) (map[string]struct{}, int) {
+	targets := make(map[string]struct{})
+	total := 0
+	for dstIP, portCounts := range stats.destPorts {
+		if !isPrivateIP(dstIP) {
+			continue
+		}
+		for port, count := range portCounts {
+			if _, ok := lateralSensitivePorts[port]; !ok {
+				continue
+			}
+			targets[dstIP] = struct{}{}
+			total += count
+		}
+	}
+	return targets, total
+}
+
+func (ss *SecurityScanner) detectLateralMovement(name, ip string, stats *trafficStats) {
+	targets, total := lateralMovementTargets(stats)
+	if len(targets) < 3 {
+		return
+	}
+	severity := "high"
+	if len(targets) >= 6 || total >= 15 {
+		severity = "critical"
+	}
+	ss.addAlert(name, "lateral_movement", severity, ip, "*", 0,
+		fmt.Sprintf("向内网 %d 个主机的高价值服务端口发起 %d 条连接", len(targets), total),
+		"")
+}
+
+// backdoorInboundPorts 返回容器在哪些后门/远控端口上收到了入站连接。
+func backdoorInboundPorts(in *inboundStats) map[int]int {
+	ports := make(map[int]int)
+	for port, count := range in.portTotals {
+		if count <= 0 {
+			continue
+		}
+		if _, ok := backdoorPorts[port]; ok {
+			ports[port] = count
+		}
+	}
+	return ports
+}
+
+func (ss *SecurityScanner) detectBackdoorListener(name, ip string, in *inboundStats) {
+	for port, count := range backdoorInboundPorts(in) {
+		ss.addAlert(name, "backdoor", "critical", ip, "*", port,
+			fmt.Sprintf("在 %s 端口 %d 上收到 %d 条入站连接", backdoorPorts[port], port, count),
+			"")
+	}
+}
+
+// inboundBruteForceReasons 返回容器正在被暴力破解的服务端口描述。
+func inboundBruteForceReasons(in *inboundStats) []string {
+	var reasons []string
+	for port, peers := range in.portPeers {
+		service, sensitive := bruteForcePorts[port]
+		if !sensitive || len(peers) < 15 {
+			continue
+		}
+		reasons = append(reasons, fmt.Sprintf("%s(%d) 被 %d 个不同来源尝试", service, port, len(peers)))
+	}
+	sort.Strings(reasons)
+	return reasons
+}
+
+func (ss *SecurityScanner) detectInboundBruteForce(name, ip string, in *inboundStats) {
+	for port, peers := range in.portPeers {
+		service, sensitive := bruteForcePorts[port]
+		if !sensitive {
+			continue
+		}
+		n := len(peers)
+		switch {
+		case n >= 40:
+			ss.addAlert(name, "inbound_brute_force", "critical", ip, "*", port,
+				fmt.Sprintf("%s(%d) 被 %d 个不同来源尝试连接", service, port, n),
+				"")
+		case n >= 15:
+			ss.addAlert(name, "inbound_brute_force", "high", ip, "*", port,
+				fmt.Sprintf("%s(%d) 被 %d 个不同来源尝试连接", service, port, n),
+				"")
+		}
+	}
+}
+
+// detectInboundDDoS 检测容器正在遭受的 DDoS：以半开（SYN_RECV）连接为依据，
+// 避免把正常的高并发访问（大量已建立连接）误判为攻击。
+func (ss *SecurityScanner) detectInboundDDoS(name, ip string, in *inboundStats) {
+	for port, synRecv := range in.portSynRecv {
+		peers := len(in.portSynPeers[port])
+		switch {
+		case synRecv >= 200 || peers >= 80:
+			ss.addAlert(name, "inbound_ddos", "critical", ip, "*", port,
+				fmt.Sprintf("服务端口 %d 收到 %d 条半开连接，来自 %d 个不同来源", port, synRecv, peers),
+				"")
+		case synRecv >= 100 || peers >= 30:
+			ss.addAlert(name, "inbound_ddos", "high", ip, "*", port,
+				fmt.Sprintf("服务端口 %d 收到 %d 条半开连接，来自 %d 个不同来源", port, synRecv, peers),
+				"")
+		}
+	}
+}
+
+func (ss *SecurityScanner) detectInboundScan(name, ip string, in *inboundStats) {
+	for peer, ports := range in.peerPorts {
+		if len(ports) < 20 {
+			continue
+		}
+		ss.addAlert(name, "inbound_scan", "high", ip, peer, 0,
+			fmt.Sprintf("来源 %s 探测了 %d 个不同服务端口", peer, len(ports)),
+			"")
+	}
+}
+
+// compromiseReasons 汇总"疑似被入侵"的判定依据；阈值与各专项检测保持一致。
+func compromiseReasons(out *trafficStats, in *inboundStats) []string {
+	var reasons []string
+
+	if ports := backdoorInboundPorts(in); len(ports) > 0 {
+		reasons = append(reasons, fmt.Sprintf("存在后门/远控监听端口（%s）", formatPortList(ports)))
+	}
+	if targets, _ := lateralMovementTargets(out); len(targets) >= 3 {
+		reasons = append(reasons, fmt.Sprintf("向内网 %d 个主机的高价值服务端口发起连接", len(targets)))
+	}
+	if ports := c2OutboundPorts(out); len(ports) > 0 {
+		reasons = append(reasons, fmt.Sprintf("与恶意软件/C2 端口（%s）通信", formatPortList(ports)))
+	}
+	if list := inboundBruteForceReasons(in); len(list) > 0 {
+		reasons = append(reasons, "正被暴力破解："+strings.Join(list, "、"))
+	}
+	return reasons
+}
+
+// detectCompromise 当同一容器同时出现多个入侵指标时，给出"疑似被入侵"总结性告警。
+func (ss *SecurityScanner) detectCompromise(name, ip string, out *trafficStats, in *inboundStats) {
+	reasons := compromiseReasons(out, in)
+	if len(reasons) < 2 {
+		return
+	}
+	ss.addAlert(name, compromiseAlertType, "critical", ip, "*", 0,
+		strings.Join(reasons, "；"),
+		"")
+}
+
+// c2OutboundPorts 返回容器对外通信命中的恶意软件/C2 端口。
+func c2OutboundPorts(stats *trafficStats) map[int]int {
+	ports := make(map[int]int)
+	for port, count := range stats.portTotalCounts {
+		if count <= 0 {
+			continue
+		}
+		if _, ok := malwarePorts[port]; ok {
+			ports[port] = count
+		}
+	}
+	return ports
+}
+
+func formatPortList(ports map[int]int) string {
+	keys := make([]int, 0, len(ports))
+	for port := range ports {
+		keys = append(keys, port)
+	}
+	sort.Ints(keys)
+	parts := make([]string, 0, len(keys))
+	for _, port := range keys {
+		parts = append(parts, strconv.Itoa(port))
+	}
+	return strings.Join(parts, ",")
+}
+
+// 挖矿的 CPU 特征：连续多个采样周期接近满载（可发现使用非标准端口或 TLS 的矿机）。
+const (
+	miningSustainedCPUPct  = 90.0
+	miningSustainedSamples = 6
+)
+
+// detectSustainedCPUMining 基于指标采样判断容器是否长期 CPU 满载。
+// 与端口检测互补：矿机使用非标准端口/TLS 时端口特征会失效，但 CPU 仍会持续满载。
+func (ss *SecurityScanner) detectSustainedCPUMining(c config.Container) {
+	key := containerMetricKey(c)
+	if key == "" {
+		return
+	}
+	containerMetricMu.RLock()
+	points := containerMetricHistory[key]
+	if len(points) < miningSustainedSamples {
+		containerMetricMu.RUnlock()
+		return
+	}
+	tail := append([]ContainerMetricPoint(nil), points[len(points)-miningSustainedSamples:]...)
+	containerMetricMu.RUnlock()
+
+	sum := 0.0
+	for _, p := range tail {
+		if p.CPU < miningSustainedCPUPct {
+			return
+		}
+		sum += p.CPU
+	}
+	avg := sum / float64(len(tail))
+	ss.addAlert(c.Name, "mining", "high", c.IP, "*", 0,
+		fmt.Sprintf("CPU 连续 %d 个采样周期持续满载（均值 %.0f%%），符合挖矿特征", len(tail), avg),
+		"")
 }
 
 // conntrackAvailable 判断主机是否具备连接跟踪数据源。
@@ -772,7 +1190,7 @@ func conntrackAvailable() bool {
 	return false
 }
 
-// readConntrackForContainer 读取某个容器地址的出站连接：
+// readConntrackForContainer 读取与某个容器地址相关的连接记录（出站 + 入站）：
 // 若提供了容器网络命名空间 PID（macvlan 场景），优先在容器 netns 内读取；
 // 读不到时回退到宿主机 conntrack（NAT/桥接/KVM 场景）。
 func readConntrackForContainer(ip, netnsPID string) []string {
@@ -784,6 +1202,27 @@ func readConntrackForContainer(ip, netnsPID string) []string {
 	return readConntrackLines(ip)
 }
 
+// conntrackLineReferencesIP 判断 conntrack 记录是否引用了该 IP（任意方向元组）。
+func conntrackLineReferencesIP(line, ip string) bool {
+	for _, prefix := range []string{"src=", "dst="} {
+		needle := prefix + ip
+		idx := 0
+		for {
+			pos := strings.Index(line[idx:], needle)
+			if pos < 0 {
+				break
+			}
+			end := idx + pos + len(needle)
+			// 必须是完整字段（后接空格或行尾），避免 1.2.3.4 误匹配 1.2.3.40。
+			if end >= len(line) || line[end] == ' ' || line[end] == '\t' {
+				return true
+			}
+			idx = end
+		}
+	}
+	return false
+}
+
 // readConntrackInNetns 进入指定 PID 的网络命名空间读取 conntrack 条目。
 // nsenter 只切换 net namespace，仍使用宿主机的 conntrack/cat 二进制。
 func readConntrackInNetns(pid, ip string) []string {
@@ -793,55 +1232,80 @@ func readConntrackInNetns(pid, ip string) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// 优先用 conntrack 工具按源地址过滤。
-	cmd := exec.CommandContext(ctx, "nsenter", "-t", pid, "-n", "conntrack", "-L", "-s", ip)
-	if output, err := cmd.Output(); err == nil && len(output) > 0 {
-		return splitNonEmptyLines(string(output))
+	// 优先用 conntrack 工具分别按源/目的地址过滤，再合并去重。
+	var lines []string
+	seen := map[string]bool{}
+	for _, filter := range []string{"-s", "-d"} {
+		cmd := exec.CommandContext(ctx, "nsenter", "-t", pid, "-n", "conntrack", "-L", filter, ip)
+		output, err := cmd.Output()
+		if err != nil || len(output) == 0 {
+			continue
+		}
+		for _, line := range splitNonEmptyLines(string(output)) {
+			if seen[line] {
+				continue
+			}
+			seen[line] = true
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > 0 {
+		return lines
 	}
 
 	// 容器内若无 conntrack 工具，则直接读取该 netns 的 conntrack 表。
-	cmd = exec.CommandContext(ctx, "nsenter", "-t", pid, "-n", "cat", "/proc/net/nf_conntrack")
+	cmd := exec.CommandContext(ctx, "nsenter", "-t", pid, "-n", "cat", "/proc/net/nf_conntrack")
 	output, err := cmd.Output()
 	if err != nil {
 		return nil
 	}
-	var lines []string
-	for _, line := range strings.Split(string(output), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if strings.Contains(line, "src="+ip+" ") {
-			lines = append(lines, line)
-		}
-	}
-	return lines
+	return filterConntrackLines(string(output), ip)
 }
 
 func readConntrackLines(ip string) []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "conntrack", "-L", "-s", ip)
-	output, err := cmd.Output()
-	if err == nil && len(output) > 0 {
-		return splitNonEmptyLines(string(output))
+	var lines []string
+	seen := map[string]bool{}
+	for _, filter := range []string{"-s", "-d"} {
+		cmd := exec.CommandContext(ctx, "conntrack", "-L", filter, ip)
+		output, err := cmd.Output()
+		if err != nil || len(output) == 0 {
+			continue
+		}
+		for _, line := range splitNonEmptyLines(string(output)) {
+			if seen[line] {
+				continue
+			}
+			seen[line] = true
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) > 0 {
+		return lines
 	}
 
-	var lines []string
 	for _, path := range []string{"/proc/net/nf_conntrack", "/proc/net/ip_conntrack"} {
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {
 			continue
 		}
-		for _, line := range strings.Split(string(data), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			if strings.Contains(line, "src="+ip+" ") {
-				lines = append(lines, line)
-			}
+		lines = append(lines, filterConntrackLines(string(data), ip)...)
+	}
+	return lines
+}
+
+// filterConntrackLines 从 conntrack 表全量文本中筛出引用该 IP 的记录。
+func filterConntrackLines(raw, ip string) []string {
+	var lines []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if conntrackLineReferencesIP(line, ip) {
+			lines = append(lines, line)
 		}
 	}
 	return lines
@@ -858,22 +1322,88 @@ func splitNonEmptyLines(raw string) []string {
 	return lines
 }
 
-func parseConntrackLine(line, containerIP string) (connEntry, bool) {
-	srcIP := extractField(line, "src=")
-	if srcIP != containerIP {
-		return connEntry{}, false
+// conntrackTuple 是 conntrack 记录中的一个方向元组（原始方向或应答方向）。
+type conntrackTuple struct {
+	src   string
+	dst   string
+	sport int
+	dport int
+}
+
+// connDirection 表示连接相对容器的方向。
+type connDirection int
+
+const (
+	connUnrelated connDirection = 0
+	connOutbound  connDirection = 1 // 容器为发起方
+	connInbound   connDirection = 2 // 容器为目的方
+)
+
+// conntrackPeer 是相对容器的"对端"信息。
+type conntrackPeer struct {
+	ip        string // 对端 IP
+	port      int    // 对端端口
+	localPort int    // 容器侧端口（入站时为容器服务端口）
+	proto     string
+	state     string
+}
+
+// parseConntrackTuples 解析 conntrack 记录中的方向元组。
+// 记录形如：
+//
+//	tcp 6 431999 ESTABLISHED src=A dst=B sport=X dport=Y packets=.. bytes=.. \
+//	    src=C dst=D sport=Z dport=W packets=.. bytes=.. [ASSURED] mark=0 use=1
+//
+// 即原始方向元组后紧跟应答方向元组，每个元组以 src= 开始。
+func parseConntrackTuples(line string) []conntrackTuple {
+	var tuples []conntrackTuple
+	var cur *conntrackTuple
+	for _, tok := range strings.Fields(line) {
+		switch {
+		case strings.HasPrefix(tok, "src="):
+			if cur != nil {
+				tuples = append(tuples, *cur)
+			}
+			cur = &conntrackTuple{src: strings.TrimPrefix(tok, "src=")}
+		case strings.HasPrefix(tok, "dst="):
+			if cur != nil {
+				cur.dst = strings.TrimPrefix(tok, "dst=")
+			}
+		case strings.HasPrefix(tok, "sport="):
+			if cur != nil {
+				cur.sport, _ = strconv.Atoi(strings.TrimPrefix(tok, "sport="))
+			}
+		case strings.HasPrefix(tok, "dport="):
+			if cur != nil {
+				cur.dport, _ = strconv.Atoi(strings.TrimPrefix(tok, "dport="))
+			}
+		}
 	}
+	if cur != nil {
+		tuples = append(tuples, *cur)
+	}
+	return tuples
+}
 
-	dstIP := extractField(line, "dst=")
-	dstPort, _ := strconv.Atoi(extractField(line, "dport="))
-
-	return connEntry{
-		dstIP:   dstIP,
-		dstPort: dstPort,
-		proto:   extractProtocol(line),
-		state:   extractConnState(line),
-		line:    line,
-	}, true
+// classifyConntrackTuples 判断该记录相对 containerIP 的方向，并给出对端信息。
+// 兼容三种形态：
+//   - 原始方向 src 即容器地址（出站，NAT 场景容器 LAN IP 作为源）；
+//   - 应答方向 src 为容器地址（入站，NAT/端口映射后容器地址只出现在应答方向）；
+//   - 原始方向 dst 即容器地址（入站，无 NAT 的 macvlan 场景）。
+func classifyConntrackTuples(tuples []conntrackTuple, containerIP string) (connDirection, conntrackPeer, bool) {
+	if len(tuples) == 0 {
+		return connUnrelated, conntrackPeer{}, false
+	}
+	if tuples[0].src == containerIP {
+		return connOutbound, conntrackPeer{ip: tuples[0].dst, port: tuples[0].dport, localPort: tuples[0].sport}, true
+	}
+	if len(tuples) >= 2 && tuples[1].src == containerIP {
+		return connInbound, conntrackPeer{ip: tuples[0].src, port: tuples[0].sport, localPort: tuples[1].sport}, true
+	}
+	if tuples[0].dst == containerIP {
+		return connInbound, conntrackPeer{ip: tuples[0].src, port: tuples[0].sport, localPort: tuples[0].dport}, true
+	}
+	return connUnrelated, conntrackPeer{}, false
 }
 
 func extractProtocol(line string) string {
@@ -908,19 +1438,19 @@ func countPorts(totalCounts map[int]int, destCounts map[int]map[string]int, port
 	return total, len(targets)
 }
 
-// resolveAbuseOwnership 返回容器所属租户与绑定了该容器的子用户（如有），
-// 用于把滥用行为归因到用户/租户，而不仅是容器。
-func resolveAbuseOwnership(containerName string) (tenant, owner string) {
+// resolveAbuseOwnership 返回容器类型、所属租户与绑定了该容器的子用户（如有），
+// 用于把滥用行为归因到用户/租户，并生成"xxx容器（LXC）"这类可读描述。
+func resolveAbuseOwnership(containerName string) (tenant, owner, kind string) {
 	containerName = strings.TrimSpace(containerName)
 	if containerName == "" {
-		return "", ""
+		return "", "", ""
 	}
 
 	// 一次读锁内完成容器与子用户的归属解析，避免锁外使用共享指针造成数据竞争。
 	config.AppConfigMu.RLock()
 	defer config.AppConfigMu.RUnlock()
 	if config.AppConfig == nil {
-		return "", ""
+		return "", "", ""
 	}
 
 	var containerUUID string
@@ -929,6 +1459,7 @@ func resolveAbuseOwnership(containerName string) (tenant, owner string) {
 		if c.Name == containerName {
 			tenant = strings.TrimSpace(c.Tenant)
 			containerUUID = c.UUID
+			kind = c.Runtime()
 			break
 		}
 	}
@@ -945,7 +1476,7 @@ func resolveAbuseOwnership(containerName string) (tenant, owner string) {
 			tenant = strings.TrimSpace(su.Tenant)
 		}
 	}
-	return tenant, owner
+	return tenant, owner, kind
 }
 
 func subUserBindsContainer(su *config.SubUser, name, uuid string) bool {
@@ -964,9 +1495,11 @@ func subUserBindsContainer(su *config.SubUser, name, uuid string) bool {
 	return false
 }
 
-func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP string, port int, detail, logLine string) {
+func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP string, port int, evidence, logLine string) {
 	// 归属解析在持有扫描器锁之前完成，避免锁嵌套。
-	tenant, owner := resolveAbuseOwnership(name)
+	tenant, owner, kind := resolveAbuseOwnership(name)
+	// 统一文案："xxx（LXC）可能存在挖矿行为：证据" / "xxx（LXC）疑似被入侵：证据"。
+	detail := abuseDetail(name, kind, alertType, evidence)
 
 	ss.mu.Lock()
 
@@ -989,6 +1522,9 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 		a.Timestamp = now.Format("2006-01-02 15:04:05")
 		a.Tenant = tenant
 		a.Owner = owner
+		if kind != "" {
+			a.Kind = kind
+		}
 		if severityRank(severity) > severityRank(a.Severity) {
 			a.Severity = severity
 		}
@@ -1004,6 +1540,7 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 	alert := SecurityAlert{
 		ID:            fmt.Sprintf("alert-%d", ss.nextID),
 		ContainerName: name,
+		Kind:          kind,
 		Tenant:        tenant,
 		Owner:         owner,
 		Type:          alertType,
@@ -1055,20 +1592,33 @@ func securityAutoShutdownEnabled() bool {
 	return config.AppConfig != nil && config.AppConfig.SecurityAutoShutdown
 }
 
+// abuseDetectionEnabled 在读锁下读取滥用行为检测总开关。
+func abuseDetectionEnabled() bool {
+	config.AppConfigMu.RLock()
+	defer config.AppConfigMu.RUnlock()
+	return config.AppConfig == nil || config.AppConfig.AbuseDetectionEnabled
+}
+
+// findContainerSnapshot 返回容器的值拷贝，避免在锁外读取共享切片指针造成数据竞争。
+func findContainerSnapshot(name string) (config.Container, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return config.Container{}, false
+	}
+	for _, c := range config.GetContainers() {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return config.Container{}, false
+}
+
 func autoShutdownAlertContainer(containerName, alertType, severity string) {
 	if !securityAutoShutdownEnabled() {
 		return
 	}
 	// 用快照查找，避免锁外读取共享容器指针。
-	var target config.Container
-	found := false
-	for _, c := range config.GetContainers() {
-		if c.Name == containerName {
-			target = c
-			found = true
-			break
-		}
-	}
+	target, found := findContainerSnapshot(containerName)
 	if !found || target.Status != "running" {
 		return
 	}
@@ -1126,20 +1676,23 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 		autoShutdown := config.AppConfig.SecurityAutoShutdown
 		arpProtection := config.AppConfig.ARPProtectionEnabled
 		ipAntiSpoof := config.AppConfig.IPAntiSpoofEnabled
+		abuseDetection := config.AppConfig.AbuseDetectionEnabled
 		config.AppConfigMu.RUnlock()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]bool{
-			"auto_shutdown":  autoShutdown,
-			"arp_protection": arpProtection,
-			"ip_anti_spoof":  ipAntiSpoof,
+			"auto_shutdown":   autoShutdown,
+			"arp_protection":  arpProtection,
+			"ip_anti_spoof":   ipAntiSpoof,
+			"abuse_detection": abuseDetection,
 		}})
 	case http.MethodPut:
 		if !requireScope(w, r, "security:settings") {
 			return
 		}
 		var req struct {
-			AutoShutdown  *bool `json:"auto_shutdown"`
-			ARPProtection *bool `json:"arp_protection"`
-			IPAntiSpoof   *bool `json:"ip_anti_spoof"`
+			AutoShutdown   *bool `json:"auto_shutdown"`
+			ARPProtection  *bool `json:"arp_protection"`
+			IPAntiSpoof    *bool `json:"ip_anti_spoof"`
+			AbuseDetection *bool `json:"abuse_detection"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -1154,6 +1707,9 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if req.IPAntiSpoof != nil {
 				cfg.IPAntiSpoofEnabled = *req.IPAntiSpoof
+			}
+			if req.AbuseDetection != nil {
+				cfg.AbuseDetectionEnabled = *req.AbuseDetection
 			}
 		})
 		if err := config.SaveConfig(); err != nil {
@@ -1173,13 +1729,15 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 		autoShutdown := config.AppConfig.SecurityAutoShutdown
 		arpProtection := config.AppConfig.ARPProtectionEnabled
 		ipAntiSpoof := config.AppConfig.IPAntiSpoofEnabled
+		abuseDetection := config.AppConfig.AbuseDetectionEnabled
 		config.AppConfigMu.RUnlock()
 		auditRequest(r, "security.settings", "auto_shutdown",
-			fmt.Sprintf("auto_shutdown=%v arp_protection=%v ip_anti_spoof=%v", autoShutdown, arpProtection, ipAntiSpoof), true, "")
+			fmt.Sprintf("auto_shutdown=%v arp_protection=%v ip_anti_spoof=%v abuse_detection=%v", autoShutdown, arpProtection, ipAntiSpoof, abuseDetection), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
 			"auto_shutdown":   autoShutdown,
 			"arp_protection":  arpProtection,
 			"ip_anti_spoof":   ipAntiSpoof,
+			"abuse_detection": abuseDetection,
 			"cancelled_tasks": cancelledTasks,
 			"cleared_blocks":  clearedBlocks,
 		}})
@@ -1207,7 +1765,7 @@ func HandleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := config.FindContainerByName(req.ContainerName)
-	if c == nil || c.IP == "" {
+	if c == nil {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found or not running"})
 		return
 	}
@@ -1215,8 +1773,27 @@ func HandleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
 		return
 	}
+	if !abuseDetectionEnabled() {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "滥用行为检测已关闭，未执行检查"})
+		return
+	}
 
-	ensureScanner().checkContainer(c.Name, c.IP, containerConntrackNetnsPID(*c))
+	target, found := findContainerSnapshot(req.ContainerName)
+	if !found || target.Status != "running" {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found or not running"})
+		return
+	}
+	addresses := containerMonitoredAddresses(target)
+	if len(addresses) == 0 {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container has no monitored address"})
+		return
+	}
+	ss := ensureScanner()
+	netnsPID := containerConntrackNetnsPID(target)
+	for _, address := range addresses {
+		ss.checkContainer(target.Name, address, netnsPID)
+	}
+	ss.detectSustainedCPUMining(target)
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Security check completed"})
 }
 
@@ -1237,7 +1814,7 @@ func HandleSecurityLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	c := config.FindContainerByName(containerName)
-	if c == nil || c.IP == "" {
+	if c == nil {
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: []map[string]interface{}{}})
 		return
 	}
@@ -1245,8 +1822,26 @@ func HandleSecurityLogs(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
 		return
 	}
-
-	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: getConnectionLogs(c.IP, containerConntrackNetnsPID(*c))})
+	target, found := findContainerSnapshot(containerName)
+	if !found {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: []map[string]interface{}{}})
+		return
+	}
+	addresses := containerMonitoredAddresses(target)
+	if len(addresses) == 0 {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: []map[string]interface{}{}})
+		return
+	}
+	netnsPID := containerConntrackNetnsPID(target)
+	logs := make([]map[string]interface{}, 0)
+	for _, address := range addresses {
+		logs = append(logs, getConnectionLogs(address, netnsPID)...)
+		if len(logs) >= 100 {
+			logs = logs[:100]
+			break
+		}
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: logs})
 }
 
 func getConnectionLogs(ip, netnsPID string) []map[string]interface{} {
@@ -1349,6 +1944,8 @@ func HandleContainerSecuritySummary(w http.ResponseWriter, r *http.Request) {
 		"low":          low,
 		// conntrack_available 为 false 时，基于出站连接的滥用检测不会生效，需提示管理员。
 		"conntrack_available": conntrackAvailable(),
+		// abuse_detection_enabled 为 false 时，滥用行为检测被管理员关闭。
+		"abuse_detection_enabled": abuseDetectionEnabled(),
 	}
 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: summary})
@@ -1387,7 +1984,7 @@ func HandleAbuseSummary(w http.ResponseWriter, r *http.Request) {
 	for _, a := range alerts {
 		tenant, owner := a.Tenant, a.Owner
 		if tenant == "" && owner == "" {
-			tenant, owner = resolveAbuseOwnership(a.ContainerName)
+			tenant, owner, _ = resolveAbuseOwnership(a.ContainerName)
 		}
 		key := tenant + "\x1f" + owner
 		entry := byOwner[key]

@@ -656,6 +656,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		SecurityAutoShutdown: atob(meta["security_auto_shutdown"]),
 		ARPProtectionEnabled: atob(meta["arp_protection_enabled"]),
 		IPAntiSpoofEnabled:   atob(meta["ip_anti_spoof_enabled"]),
+		// 滥用检测默认开启：老库没有该键时按开启处理，保证升级后检测不中断；
+		// 管理员显式关闭后会写入 "0"，此后保持关闭。
+		AbuseDetectionEnabled: atobDefault(meta, "abuse_detection_enabled", true),
 		TaskConcurrency:      atoi(meta["task_concurrency"]),
 		Language:             meta["language"],
 		MetricRetentionDays:  atoi(meta["metric_retention_days"]),
@@ -870,6 +873,7 @@ func saveMeta(tx *sql.Tx) error {
 		"security_auto_shutdown": btoa(AppConfig.SecurityAutoShutdown),
 		"arp_protection_enabled": btoa(AppConfig.ARPProtectionEnabled),
 		"ip_anti_spoof_enabled":  btoa(AppConfig.IPAntiSpoofEnabled),
+		"abuse_detection_enabled": btoa(AppConfig.AbuseDetectionEnabled),
 		"task_concurrency":       strconv.Itoa(AppConfig.TaskConcurrency),
 		"language":               NormalizeLanguage(AppConfig.Language),
 		"ssl":                    string(sslJSON),
@@ -1613,7 +1617,9 @@ func loadLegacyJSONConfig(path string) (*EyvescloudConfig, bool, error) {
 	if err != nil {
 		return nil, false, fmt.Errorf("failed to read legacy config: %v", err)
 	}
-	cfg := &EyvescloudConfig{}
+	// 预置默认值：滥用检测默认开启。旧 JSON 配置没有该字段时保持开启，
+	// 若 JSON 中显式写了 false 则以 JSON 为准。
+	cfg := &EyvescloudConfig{AbuseDetectionEnabled: true}
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, false, fmt.Errorf("failed to parse legacy config: %v", err)
 	}
@@ -1662,6 +1668,17 @@ func btoa(value bool) string {
 
 func atob(value string) bool {
 	return value == "1" || strings.EqualFold(value, "true")
+}
+
+// atobDefault parses a boolean meta value, falling back to def when the key is
+// absent or blank. Used for switches whose default is "on" so that existing
+// databases (without the key) keep the feature enabled after an upgrade.
+func atobDefault(meta map[string]string, key string, def bool) bool {
+	raw, ok := meta[key]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return def
+	}
+	return atob(raw)
 }
 
 func atoi(value string) int {
