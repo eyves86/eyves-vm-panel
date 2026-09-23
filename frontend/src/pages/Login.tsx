@@ -1,0 +1,246 @@
+import { FormEvent, useState } from 'react'
+import { Lock, Smartphone, User } from 'lucide-react'
+import AppIcon from '../components/AppIcon'
+import { useAuth } from '../contexts/AuthContext'
+import { useLanguage } from '../contexts/LanguageContext'
+import AutoTranslate from '../components/AutoTranslate'
+import BrowserDialogTranslator from '../components/BrowserDialogTranslator'
+
+function LanguageIcon({ className = '' }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M213.333333 640v85.333333a85.333333 85.333333 0 0 0 78.933334 85.12L298.666667 810.666667h128v85.333333H298.666667a170.666667 170.666667 0 0 1-170.666667-170.666667v-85.333333h85.333333z m554.666667-213.333333l187.733333 469.333333h-91.946666l-51.242667-128h-174.506667l-51.157333 128h-91.904L682.666667 426.666667h85.333333z m-42.666667 123.093333L672.128 682.666667h106.325333L725.333333 549.76zM341.333333 85.333333v85.333334h170.666667v298.666666H341.333333v128H256v-128H85.333333V170.666667h170.666667V85.333333h85.333333z m384 42.666667a170.666667 170.666667 0 0 1 170.666667 170.666667v85.333333h-85.333333V298.666667a85.333333 85.333333 0 0 0-85.333334-85.333334h-128V128h128zM256 256H170.666667v128h85.333333V256z m170.666667 0H341.333333v128h85.333334V256z" fill="currentColor" />
+    </svg>
+  )
+}
+
+export default function Login() {
+  const { login, loginWith2FA, accessCodeLogin } = useAuth()
+  const { language, toggleLanguage, t } = useLanguage()
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [twoFACode, setTwoFACode] = useState('')
+  const [twoFARequired, setTwoFARequired] = useState(false)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  // Check for access code in URL
+  const urlParams = new URLSearchParams(window.location.search)
+  const urlAccessCode = urlParams.get('code') || ''
+
+  const isAccessCodeLogin = !!urlAccessCode
+  // 用户可手动在登录页输入访问码进入「容器管理（子用户）」登录
+  const [inputCodeMode, setInputCodeMode] = useState(isAccessCodeLogin)
+  const [inputCode, setInputCode] = useState(urlAccessCode)
+  const effectiveAccessCode = isAccessCodeLogin ? urlAccessCode : inputCode
+  const effectiveIsAccessCode = isAccessCodeLogin || inputCodeMode
+
+  const handleSubmit = async (event: FormEvent) => {
+    event.preventDefault()
+    setError('')
+    setLoading(true)
+
+    try {
+      if (effectiveIsAccessCode) {
+        await accessCodeLogin(effectiveAccessCode, password)
+      } else if (twoFARequired) {
+        await loginWith2FA(username, password, twoFACode)
+      } else {
+        await login(username, password)
+      }
+    } catch (err: unknown) {
+      const error = err as {
+        response?: {
+          status?: number
+          data?: { message?: string; data?: { twofa_required?: boolean } }
+        }
+      }
+      const data = error.response?.data
+      if (error.response?.status === 401 && data?.data?.twofa_required) {
+        setTwoFARequired(true)
+        setTwoFACode('')
+        setError(t('账户已启用两步验证，请输入 6 位动态口令'))
+      } else if (error.response?.status === 401) {
+        setError(t(effectiveIsAccessCode ? '访问码或密码错误' : '用户名或密码或验证码错误'))
+      } else {
+        setError(data?.message || t('登录失败，请检查用户名和密码'))
+      }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleBackToCredentials = () => {
+    setTwoFARequired(false)
+    setTwoFACode('')
+    setError('')
+  }
+
+  const toggleAccessCodeMode = () => {
+    setInputCodeMode((prev) => !prev)
+    setTwoFARequired(false)
+    setTwoFACode('')
+    setError('')
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+      <AutoTranslate />
+      <BrowserDialogTranslator />
+      <button
+        type="button"
+        onClick={() => { void toggleLanguage() }}
+        className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
+      >
+        <LanguageIcon className="h-3.5 w-3.5" />
+        {language === 'en' ? '中文' : 'English'}
+      </button>
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8">
+            <div className="flex flex-col items-center mb-8">
+              <div className="w-16 h-16 flex items-center justify-center mb-4">
+                <AppIcon className="w-10 h-10" />
+              </div>
+              <h1 className="text-2xl font-bold text-brand-600">EyvesCloud</h1>
+              <p className="text-gray-500 mt-1 text-sm">{effectiveIsAccessCode ? t('容器管理登录（访问码）') : t('云容器管理平台')}</p>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
+                  {error}
+                </div>
+              )}
+
+              {!effectiveIsAccessCode && !twoFARequired && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    {t('用户名')}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <User className="h-4 w-4 text-gray-400" />
+                    </div>
+                    <input
+                      type="text"
+                      value={username}
+                      onChange={(event) => setUsername(event.target.value)}
+                      className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm"
+                      placeholder={t('输入用户名')}
+                      required
+                      autoComplete="username"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {effectiveIsAccessCode && !twoFARequired && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    {t('访问码')}
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <div className="text-gray-400">🔑</div>
+                    </div>
+                    <input
+                      type="text"
+                      value={inputCode}
+                      onChange={(event) => setInputCode(event.target.value)}
+                      className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm"
+                      placeholder={t('输入访问码')}
+                      disabled={isAccessCodeLogin}
+                      required
+                      autoComplete="off"
+                    />
+                  </div>
+                  <p className="mt-1.5 text-xs text-gray-400">{t('访问码由管理员在「管理链接」中提供')}</p>
+                </div>
+              )}
+
+              {twoFARequired && !effectiveIsAccessCode && (
+                <div className="rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-800">
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <Smartphone className="h-3.5 w-3.5" />{t('两步验证')}
+                  </div>
+                  <div className="mt-1">{t('请输入身份验证器中的 6 位动态口令，或一次性备份码')}</div>
+                </div>
+              )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                {t('密码')}
+              </label>
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Lock className="h-4 w-4 text-gray-400" />
+                </div>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm"
+                  placeholder={t('输入密码')}
+                  required
+                  autoComplete="current-password"
+                />
+              </div>
+            </div>
+
+            {twoFARequired && !effectiveIsAccessCode && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                  {t('动态口令 / 备份码')}
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Smartphone className="h-4 w-4 text-gray-400" />
+                  </div>
+                  <input
+                    type="text"
+                    value={twoFACode}
+                    onChange={(event) => setTwoFACode(event.target.value.replace(/\s+/g, ''))}
+                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm tracking-widest"
+                    placeholder={t('6 位动态口令或备份码')}
+                    required
+                    maxLength={32}
+                    autoComplete="one-time-code"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleBackToCredentials}
+                  className="mt-1.5 text-xs text-gray-500 hover:text-black underline"
+                >
+                  {t('返回重新输入密码')}
+                </button>
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-black text-white py-2.5 rounded-md hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+            >
+              {loading ? t('登录中...') : t('登录')}
+            </button>
+
+            {!isAccessCodeLogin && (
+              <button
+                type="button"
+                onClick={toggleAccessCodeMode}
+                className="w-full text-center text-xs text-gray-500 hover:text-black underline"
+              >
+                {inputCodeMode
+                  ? t('使用管理员账号登录')
+                  : t('使用访问码登录已授权的容器')}
+              </button>
+            )}
+          </form>
+        </div>
+
+        <p className="text-center text-xs text-gray-400 mt-6">EyvesCloud v1.1.29</p>
+      </div>
+    </div>
+  )
+}

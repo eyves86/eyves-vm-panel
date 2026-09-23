@@ -1,0 +1,1120 @@
+<style>
+    .eyvescloud-fw-panel {
+        font-size: 14px;
+        color: #1f2937
+    }
+
+    .eyvescloud-fw-section {
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        background: #fff;
+        padding: 12px;
+        margin-top: 8px
+    }
+
+    .eyvescloud-fw-title {
+        font-weight: 600;
+        margin: 18px 0 8px
+    }
+
+    .eyvescloud-fw-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin: 18px 0 8px
+    }
+
+    .eyvescloud-fw-title-row .eyvescloud-fw-title {
+        margin: 0
+    }
+
+    .eyvescloud-fw-muted {
+        color: #6b7280
+    }
+
+    .eyvescloud-fw-settings {
+        margin-bottom: 22px
+    }
+
+    .eyvescloud-fw-settings-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 26px
+    }
+
+    .eyvescloud-fw-settings-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #111827;
+        line-height: 1.35
+    }
+
+    .eyvescloud-fw-settings-actions {
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 10px;
+        margin-top: 12px
+    }
+
+    .eyvescloud-fw-save-hint {
+        color: #6b7280;
+        font-size: 13px
+    }
+
+    .eyvescloud-fw-toggle {
+        position: relative;
+        display: inline-flex;
+        width: 56px;
+        height: 30px;
+        flex: 0 0 auto;
+        cursor: pointer
+    }
+
+    .eyvescloud-fw-toggle input {
+        opacity: 0;
+        width: 0;
+        height: 0
+    }
+
+    .eyvescloud-fw-toggle-slider {
+        position: absolute;
+        inset: 0;
+        background: #cfd5df;
+        border-radius: 999px;
+        transition: .25s
+    }
+
+    .eyvescloud-fw-toggle-slider:before {
+        content: "";
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        background: #fff;
+        top: 4px;
+        left: 4px;
+        transition: .25s;
+        box-shadow: 0 1px 3px rgba(15, 23, 42, .18)
+    }
+
+    .eyvescloud-fw-toggle input:checked+.eyvescloud-fw-toggle-slider {
+        background: #10b981
+    }
+
+    .eyvescloud-fw-toggle input:checked+.eyvescloud-fw-toggle-slider:before {
+        transform: translateX(26px)
+    }
+
+    .eyvescloud-fw-toggle-sm {
+        width: 36px;
+        height: 20px
+    }
+
+    .eyvescloud-fw-toggle-sm .eyvescloud-fw-toggle-slider:before {
+        width: 16px;
+        height: 16px;
+        top: 2px;
+        left: 2px
+    }
+
+    .eyvescloud-fw-toggle-sm input:checked+.eyvescloud-fw-toggle-slider:before {
+        transform: translateX(16px)
+    }
+
+    .eyvescloud-fw-status {
+        font-size: 13px;
+        color: #6b7280;
+        line-height: 1.5
+    }
+
+    .eyvescloud-fw-field label {
+        display: block;
+        color: #6b7280;
+        font-size: 12px;
+        margin-bottom: 4px
+    }
+
+    .eyvescloud-fw-input,
+    .eyvescloud-fw-select {
+        width: 100%;
+        height: 34px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        padding: 6px 8px;
+        box-sizing: border-box
+    }
+
+    .eyvescloud-fw-input:focus,
+    .eyvescloud-fw-select:focus {
+        border-color: #2563eb;
+        outline: none
+    }
+
+    .eyvescloud-fw-field-help {
+        color: #9ca3af;
+        font-size: 12px;
+        line-height: 1.5;
+        margin-top: 6px
+    }
+
+    .eyvescloud-fw-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+        align-items: end
+    }
+
+    .eyvescloud-fw-btn {
+        height: 34px;
+        border: 1px solid #2563eb;
+        background: #2563eb;
+        color: #fff;
+        border-radius: 4px;
+        padding: 0 12px;
+        cursor: pointer;
+        font-size: 13px
+    }
+
+    .eyvescloud-fw-btn[disabled] {
+        opacity: .6;
+        cursor: not-allowed
+    }
+
+    .eyvescloud-fw-btn-secondary {
+        border-color: #d1d5db;
+        background: #fff;
+        color: #374151
+    }
+
+    .eyvescloud-fw-btn-danger {
+        border-color: #dc2626;
+        background: #dc2626;
+        color: #fff
+    }
+
+    .eyvescloud-fw-btn-dark {
+        border-color: #000;
+        background: #000;
+        color: #fff
+    }
+
+    .eyvescloud-fw-btn-sm {
+        height: 30px;
+        padding: 0 10px;
+        font-size: 12px
+    }
+
+    .eyvescloud-fw-rules {
+        margin-top: 8px;
+        overflow-x: auto;
+        background: #fff
+    }
+
+    .eyvescloud-fw-table {
+        width: 100%;
+        min-width: 920px;
+        border-collapse: collapse;
+        table-layout: fixed
+    }
+
+    .eyvescloud-fw-table th,
+    .eyvescloud-fw-table td {
+        padding: 13px 14px;
+        border-bottom: 1px solid #e5e7eb;
+        text-align: left;
+        vertical-align: middle;
+        color: #111827;
+        font-size: 14px;
+        white-space: nowrap
+    }
+
+    .eyvescloud-fw-table th {
+        background: #f8fafc;
+        color: #6b7280;
+        font-weight: 600
+    }
+
+    .eyvescloud-fw-table tbody tr:hover {
+        background: #f9fafb
+    }
+
+    .eyvescloud-fw-table td:nth-child(8) {
+        white-space: normal;
+        word-break: break-word
+    }
+
+    .eyvescloud-fw-table th:last-child,
+    .eyvescloud-fw-table td:last-child {
+        text-align: right
+    }
+
+    .eyvescloud-fw-rule-direction {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600
+    }
+
+    .eyvescloud-fw-direction-in {
+        background: #dbeafe;
+        color: #1d4ed8
+    }
+
+    .eyvescloud-fw-direction-out {
+        background: #fef3c7;
+        color: #92400e
+    }
+
+    .eyvescloud-fw-rule-action {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 12px;
+        font-weight: 600
+    }
+
+    .eyvescloud-fw-action-ACCEPT {
+        background: #d1fae5;
+        color: #065f46
+    }
+
+    .eyvescloud-fw-action-DROP {
+        background: #fee2e2;
+        color: #991b1b
+    }
+
+    .eyvescloud-fw-rule-network {
+        display: inline-flex;
+        align-items: center;
+        padding: 3px 8px;
+        border-radius: 4px;
+        background: #f3f4f6;
+        color: #374151;
+        font-size: 12px;
+        font-weight: 600
+    }
+
+    .eyvescloud-fw-rule-ops {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        justify-content: flex-end
+    }
+
+    .eyvescloud-fw-icon-btn {
+        width: 30px;
+        height: 30px;
+        border: 0;
+        border-radius: 4px;
+        background: transparent;
+        color: #9ca3af;
+        cursor: pointer;
+        font-size: 17px;
+        line-height: 30px;
+        padding: 0;
+        text-align: center
+    }
+
+    .eyvescloud-fw-icon-btn:hover {
+        background: #f3f4f6;
+        color: #374151
+    }
+
+    .eyvescloud-fw-message {
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border-radius: 6px;
+        padding: 10px 12px;
+        margin-bottom: 12px;
+        display: none
+    }
+
+    .eyvescloud-fw-message.error {
+        border-color: #fecaca;
+        background: #fef2f2;
+        color: #b91c1c
+    }
+
+    .eyvescloud-fw-debug {
+        margin-top: 12px;
+        border: 1px dashed #d1d5db;
+        border-radius: 6px;
+        background: #f9fafb;
+        padding: 10px;
+        color: #374151;
+        white-space: pre-wrap;
+        font-size: 12px;
+        display: none
+    }
+
+    .eyvescloud-fw-modal-mask {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, .42);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        padding: 16px
+    }
+
+    .eyvescloud-fw-modal {
+        width: min(420px, 100%);
+        background: #fff;
+        border-radius: 6px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 18px 48px rgba(15, 23, 42, .22);
+        padding: 16px
+    }
+
+    .eyvescloud-fw-rule-modal {
+        width: min(560px, 100%);
+        max-height: calc(100vh - 48px);
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden
+    }
+
+    .eyvescloud-fw-modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 20px 26px;
+        border-bottom: 1px solid #e5e7eb
+    }
+
+    .eyvescloud-fw-modal-close {
+        width: 28px;
+        height: 28px;
+        border: 0;
+        background: transparent;
+        color: #6b7280;
+        cursor: pointer;
+        font-size: 28px;
+        line-height: 24px;
+        padding: 0
+    }
+
+    .eyvescloud-fw-rule-modal-body {
+        padding: 24px 26px 8px;
+        overflow-y: auto
+    }
+
+    .eyvescloud-fw-rule-modal-body .eyvescloud-fw-field {
+        margin-bottom: 16px
+    }
+
+    .eyvescloud-fw-rule-modal-body .eyvescloud-fw-input,
+    .eyvescloud-fw-rule-modal-body .eyvescloud-fw-select {
+        height: 48px;
+        border-radius: 6px;
+        padding: 0 14px;
+        font-size: 15px
+    }
+
+    .eyvescloud-fw-rule-modal-body .eyvescloud-fw-field label {
+        color: #4b5563;
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 8px
+    }
+
+    .eyvescloud-fw-modal-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: #111827;
+        margin-bottom: 8px
+    }
+
+    .eyvescloud-fw-modal-header .eyvescloud-fw-modal-title {
+        margin-bottom: 0
+    }
+
+    .eyvescloud-fw-modal-body {
+        font-size: 14px;
+        color: #4b5563;
+        line-height: 1.6;
+        margin-bottom: 14px
+    }
+
+    .eyvescloud-fw-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px
+    }
+
+    .eyvescloud-fw-rule-modal .eyvescloud-fw-modal-actions {
+        padding: 6px 26px 24px
+    }
+
+    .eyvescloud-fw-rule-modal .eyvescloud-fw-modal-actions .eyvescloud-fw-btn {
+        height: 44px;
+        min-width: 76px;
+        font-size: 14px
+    }
+
+    .eyvescloud-fw-default-action-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        background: #fff;
+        padding: 12px 16px
+    }
+
+    .eyvescloud-fw-default-title {
+        font-size: 15px;
+        font-weight: 700;
+        color: #111827;
+        line-height: 1.35
+    }
+
+    .eyvescloud-fw-default-desc {
+        color: #6b7280;
+        font-size: 13px;
+        line-height: 1.5
+    }
+
+    .eyvescloud-fw-default-action-row select {
+        width: auto;
+        min-width: 126px;
+        height: 38px;
+        border: 1px solid #d1d5db;
+        border-radius: 4px;
+        padding: 0 12px;
+        font-size: 14px;
+        color: #111827;
+        background: #fff
+    }
+
+    .eyvescloud-fw-network-note {
+        margin-top: 14px;
+        border: 1px solid #bfdbfe;
+        border-radius: 6px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        padding: 12px 16px;
+        line-height: 1.6
+    }
+
+    .eyvescloud-fw-network-note-title {
+        font-weight: 700;
+        margin-bottom: 2px
+    }
+
+    @media (max-width: 640px) {
+        .eyvescloud-fw-default-action-row,
+        .eyvescloud-fw-settings-actions {
+            align-items: stretch;
+            flex-direction: column
+        }
+
+        .eyvescloud-fw-default-action-row select,
+        .eyvescloud-fw-settings-actions .eyvescloud-fw-btn {
+            width: 100%
+        }
+
+        .eyvescloud-fw-title-row {
+            align-items: stretch;
+            flex-direction: column
+        }
+
+        .eyvescloud-fw-title-row .eyvescloud-fw-btn {
+            width: 100%
+        }
+
+        .eyvescloud-fw-modal-header,
+        .eyvescloud-fw-rule-modal-body,
+        .eyvescloud-fw-rule-modal .eyvescloud-fw-modal-actions {
+            padding-left: 18px;
+            padding-right: 18px
+        }
+    }
+</style>
+
+<div class="eyvescloud-fw-panel" id="eyvescloud-fw-panel" data-service-id="{$service_id}" data-area-key="{$area_key}">
+    <div class="eyvescloud-fw-message" id="eyvescloud-fw-message"></div>
+
+    <div class="eyvescloud-fw-settings">
+        <div class="eyvescloud-fw-settings-head">
+            <div>
+                <div class="eyvescloud-fw-settings-title">防火墙</div>
+                <div class="eyvescloud-fw-status" id="eyvescloud-fw-status-text">加载中...</div>
+            </div>
+            <label class="eyvescloud-fw-toggle">
+                <input type="checkbox" id="eyvescloud-fw-enabled">
+                <span class="eyvescloud-fw-toggle-slider"></span>
+            </label>
+        </div>
+        <div class="eyvescloud-fw-default-action-row">
+            <div>
+                <div class="eyvescloud-fw-default-title">默认动作</div>
+                <div class="eyvescloud-fw-default-desc">没有命中下方规则时如何处理</div>
+            </div>
+            <select class="eyvescloud-fw-select" id="eyvescloud-fw-default-action">
+                <option value="DROP">未匹配拒绝</option>
+                <option value="ACCEPT">未匹配放行</option>
+            </select>
+        </div>
+        <div class="eyvescloud-fw-network-note">
+            <div class="eyvescloud-fw-network-note-title">网络范围</div>
+            <div>可配置：IPv4（NAT）。 IPv4 规则覆盖 IPv4 NAT 端口映射。 NAT 入站端口按容器内部端口匹配，不是宿主机公网端口。</div>
+        </div>
+        <div class="eyvescloud-fw-settings-actions">
+            <span class="eyvescloud-fw-save-hint" id="eyvescloud-fw-save-hint">当前设置已保存</span>
+            <button class="eyvescloud-fw-btn" type="button" id="eyvescloud-fw-save-settings" disabled>保存设置</button>
+        </div>
+    </div>
+
+    <div class="eyvescloud-fw-title-row">
+        <div class="eyvescloud-fw-title">防火墙规则</div>
+        <button class="eyvescloud-fw-btn eyvescloud-fw-btn-dark" type="button" data-eyvescloud-fw-action="open-add-rule">+ 添加规则</button>
+    </div>
+    <div id="eyvescloud-fw-rules" class="eyvescloud-fw-rules">
+        <div class="eyvescloud-fw-section eyvescloud-fw-muted">加载中...</div>
+    </div>
+
+    <pre class="eyvescloud-fw-debug" id="eyvescloud-fw-debug"></pre>
+
+    <div class="eyvescloud-fw-modal-mask" id="eyvescloud-fw-add-modal">
+        <div class="eyvescloud-fw-modal eyvescloud-fw-rule-modal">
+            <div class="eyvescloud-fw-modal-header">
+                <div class="eyvescloud-fw-modal-title" id="eyvescloud-fw-rule-modal-title">添加规则</div>
+                <button class="eyvescloud-fw-modal-close" type="button" id="eyvescloud-fw-add-close" aria-label="关闭">×</button>
+            </div>
+            <div class="eyvescloud-fw-rule-modal-body">
+                <div class="eyvescloud-fw-field">
+                    <label>网络</label>
+                    <select class="eyvescloud-fw-select" id="eyvescloud-fw-add-network">
+                        <option value="ipv4">IPv4（NAT）</option>
+                        <option value="ipv6">IPv6</option>
+                        <option value="all">全部</option>
+                    </select>
+                </div>
+                <div class="eyvescloud-fw-field">
+                    <label>方向</label>
+                    <select class="eyvescloud-fw-select" id="eyvescloud-fw-add-direction">
+                        <option value="in">入站 (Inbound)</option>
+                        <option value="out">出站 (Outbound)</option>
+                    </select>
+                </div>
+                <div class="eyvescloud-fw-field">
+                    <label>协议</label>
+                    <select class="eyvescloud-fw-select" id="eyvescloud-fw-add-protocol">
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                    </select>
+                </div>
+                <div class="eyvescloud-fw-field">
+                    <label>端口</label>
+                    <input class="eyvescloud-fw-input" id="eyvescloud-fw-add-port" type="text" placeholder="如: 22 或 80,443 或 8000-9000">
+                    <div class="eyvescloud-fw-field-help">NAT 入站填容器内部端口，例如公网 22023 -> 容器 22，这里填 22</div>
+                </div>
+                <div class="eyvescloud-fw-field">
+                    <label>来源 IP</label>
+                    <input class="eyvescloud-fw-input" id="eyvescloud-fw-add-source-ip" type="text" placeholder="如: 192.168.1.0/24">
+                    <div class="eyvescloud-fw-field-help">留空为任意 IPv4，支持 CIDR: 192.168.1.0/24</div>
+                </div>
+                <div class="eyvescloud-fw-field">
+                    <label>动作</label>
+                    <select class="eyvescloud-fw-select" id="eyvescloud-fw-add-action">
+                        <option value="DROP">拒绝 (DROP)</option>
+                        <option value="ACCEPT">放行 (ACCEPT)</option>
+                    </select>
+                </div>
+                <div class="eyvescloud-fw-field">
+                    <label>描述</label>
+                    <input class="eyvescloud-fw-input" id="eyvescloud-fw-add-desc" type="text" placeholder="规则描述">
+                </div>
+            </div>
+            <div class="eyvescloud-fw-modal-actions">
+                <button class="eyvescloud-fw-btn eyvescloud-fw-btn-secondary" type="button" id="eyvescloud-fw-add-cancel">取消</button>
+                <button class="eyvescloud-fw-btn eyvescloud-fw-btn-dark" type="button" id="eyvescloud-fw-add-confirm">确定</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="eyvescloud-fw-modal-mask" id="eyvescloud-fw-delete-modal">
+        <div class="eyvescloud-fw-modal">
+            <div class="eyvescloud-fw-modal-title">确认删除</div>
+            <div class="eyvescloud-fw-modal-body" id="eyvescloud-fw-delete-text">确认删除该规则？</div>
+            <div class="eyvescloud-fw-modal-actions">
+                <button class="eyvescloud-fw-btn eyvescloud-fw-btn-secondary" type="button"
+                    id="eyvescloud-fw-delete-cancel">取消</button>
+                <button class="eyvescloud-fw-btn eyvescloud-fw-btn-danger" type="button" id="eyvescloud-fw-delete-confirm">删除</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    (function () {
+        var panel = document.getElementById('eyvescloud-fw-panel');
+        if (!panel || panel.getAttribute('data-bound') === '1') return;
+        panel.setAttribute('data-bound', '1');
+
+        var message = document.getElementById('eyvescloud-fw-message');
+        var debugBox = document.getElementById('eyvescloud-fw-debug');
+        var rulesContainer = document.getElementById('eyvescloud-fw-rules');
+        var enabledCheckbox = document.getElementById('eyvescloud-fw-enabled');
+        var defaultActionSelect = document.getElementById('eyvescloud-fw-default-action');
+        var statusText = document.getElementById('eyvescloud-fw-status-text');
+        var saveSettingsButton = document.getElementById('eyvescloud-fw-save-settings');
+        var saveHint = document.getElementById('eyvescloud-fw-save-hint');
+        var addModal = document.getElementById('eyvescloud-fw-add-modal');
+        var addClose = document.getElementById('eyvescloud-fw-add-close');
+        var addCancel = document.getElementById('eyvescloud-fw-add-cancel');
+        var addConfirm = document.getElementById('eyvescloud-fw-add-confirm');
+        var ruleModalTitle = document.getElementById('eyvescloud-fw-rule-modal-title');
+        var deleteModal = document.getElementById('eyvescloud-fw-delete-modal');
+        var deleteText = document.getElementById('eyvescloud-fw-delete-text');
+        var deleteCancel = document.getElementById('eyvescloud-fw-delete-cancel');
+        var deleteConfirm = document.getElementById('eyvescloud-fw-delete-confirm');
+        var pendingDeleteRule = null;
+        var currentRules = [];
+        var ruleModalMode = 'add';
+        var editingRuleIndex = null;
+        var settingsDirty = false;
+        var busy = false;
+
+        function showMessage(type, text) {
+            message.className = 'eyvescloud-fw-message' + (type === 'error' ? ' error' : '');
+            message.style.display = 'block';
+            message.textContent = text || '';
+        }
+
+        function showDebug(data) {
+            debugBox.style.display = 'block';
+            debugBox.textContent = JSON.stringify(data || {}, null, 2);
+        }
+
+        function endpoint() {
+            return "{$MODULE_CUSTOM_API}";
+        }
+
+        function serviceId() {
+            return panel.getAttribute('data-service-id') || '';
+        }
+
+        function updateSaveState() {
+            if (saveSettingsButton) {
+                saveSettingsButton.disabled = busy || !settingsDirty;
+            }
+            if (saveHint) {
+                saveHint.textContent = settingsDirty ? '有未保存更改，点击保存设置后生效' : '当前设置已保存';
+            }
+        }
+
+        function setBusy(value) {
+            busy = !!value;
+            panel.querySelectorAll('button, input, select').forEach(function (el) { el.disabled = busy; });
+            updateSaveState();
+        }
+
+        function markDirty(text) {
+            settingsDirty = true;
+            updateStatusText();
+            updateSaveState();
+            showMessage('success', text || '设置已修改，点击保存设置后生效');
+        }
+
+        function clearDirty() {
+            settingsDirty = false;
+            updateSaveState();
+        }
+
+        function escapeHtml(value) {
+            return String(value)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function portDisplay(port) { return port || '所有'; }
+        function sourceIpDisplay(ip) { return ip || '任意'; }
+        function networkLabel(net) {
+            return net === 'ipv6' ? 'IPv6' : net === 'all' ? 'ALL' : 'IPv4';
+        }
+
+        function renderRules(rules) {
+            currentRules = Array.isArray(rules) ? rules : [];
+            if (currentRules.length === 0) {
+                rulesContainer.innerHTML = '<div class="eyvescloud-fw-section eyvescloud-fw-muted">暂无防火墙规则</div>';
+                return;
+            }
+            var rows = currentRules.map(function (rule, idx) {
+                var dir = (rule.direction || 'in').toLowerCase();
+                var proto = (rule.protocol || 'tcp').toLowerCase();
+                var rawAction = (rule.action || 'ACCEPT').toUpperCase();
+                var action = rawAction === 'ACCEPT' ? 'ACCEPT' : 'DROP';
+                var network = (rule.network || 'ipv4').toLowerCase();
+                var port = escapeHtml(portDisplay(rule.port));
+                var srcIp = escapeHtml(sourceIpDisplay(rule.source_ip));
+                var desc = escapeHtml(rule.description || '');
+                var enabled = rule.enabled !== false;
+                var enabledChecked = enabled ? 'checked' : '';
+                var dirClass = dir === 'in' ? 'eyvescloud-fw-direction-in' : 'eyvescloud-fw-direction-out';
+                var actionClass = 'eyvescloud-fw-action-' + action;
+                return '<tr data-rule-index="' + idx + '">' +
+                    '<td><label class="eyvescloud-fw-toggle eyvescloud-fw-toggle-sm"><input type="checkbox" class="eyvescloud-fw-rule-enabled" ' + enabledChecked + '><span class="eyvescloud-fw-toggle-slider"></span></label></td>' +
+                    '<td><span class="eyvescloud-fw-rule-network">' + networkLabel(network) + '</span></td>' +
+                    '<td><span class="eyvescloud-fw-rule-direction ' + dirClass + '">' + (dir === 'in' ? '入站' : '出站') + '</span></td>' +
+                    '<td>' + escapeHtml(proto.toUpperCase()) + '</td>' +
+                    '<td>' + port + '</td>' +
+                    '<td>' + srcIp + '</td>' +
+                    '<td><span class="eyvescloud-fw-rule-action ' + actionClass + '">' + (action === 'ACCEPT' ? '放行' : '拒绝') + '</span></td>' +
+                    '<td>' + (desc || '-') + '</td>' +
+                    '<td><div class="eyvescloud-fw-rule-ops">' +
+                    '<button class="eyvescloud-fw-icon-btn" type="button" data-eyvescloud-fw-action="edit-rule" title="编辑" aria-label="编辑">&#9998;</button>' +
+                    '<button class="eyvescloud-fw-icon-btn" type="button" data-eyvescloud-fw-action="delete-rule" title="删除" aria-label="删除">&#9003;</button>' +
+                    '</div></td>' +
+                    '</tr>';
+            }).join('');
+
+            rulesContainer.innerHTML = '<table class="eyvescloud-fw-table">' +
+                '<thead><tr>' +
+                '<th style="width:88px">状态</th>' +
+                '<th style="width:120px">网络</th>' +
+                '<th style="width:120px">方向</th>' +
+                '<th style="width:110px">协议</th>' +
+                '<th style="width:110px">端口</th>' +
+                '<th>来源/目标 IP</th>' +
+                '<th style="width:120px">动作</th>' +
+                '<th>描述</th>' +
+                '<th style="width:110px;text-align:right">操作</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+
+            rulesContainer.querySelectorAll('.eyvescloud-fw-rule-enabled').forEach(function (toggle, idx) {
+                toggle.addEventListener('change', function () {
+                    var rule = currentRules[idx];
+                    if (!rule) return;
+                    rule.enabled = toggle.checked;
+                    markDirty('规则开关已修改，点击保存设置后生效');
+                });
+            });
+        }
+
+        function setRuleField(id, value) {
+            var field = document.getElementById(id);
+            if (field) {
+                field.value = value == null ? '' : value;
+            }
+        }
+
+        function getRuleField(id, fallback) {
+            var field = document.getElementById(id);
+            if (!field) return fallback || '';
+            return field.value;
+        }
+
+        function getRuleFormPayload(baseRule) {
+            var base = baseRule || {};
+            return {
+                id: base.id || '',
+                network: getRuleField('eyvescloud-fw-add-network', 'ipv4'),
+                direction: getRuleField('eyvescloud-fw-add-direction', 'in'),
+                protocol: getRuleField('eyvescloud-fw-add-protocol', 'tcp'),
+                port: getRuleField('eyvescloud-fw-add-port', ''),
+                source_ip: getRuleField('eyvescloud-fw-add-source-ip', ''),
+                action: getRuleField('eyvescloud-fw-add-action', 'DROP'),
+                description: getRuleField('eyvescloud-fw-add-desc', ''),
+                enabled: baseRule ? base.enabled !== false : true
+            };
+        }
+
+        function clearAddForm() {
+            setRuleField('eyvescloud-fw-add-network', 'ipv4');
+            setRuleField('eyvescloud-fw-add-direction', 'in');
+            setRuleField('eyvescloud-fw-add-protocol', 'tcp');
+            setRuleField('eyvescloud-fw-add-port', '');
+            setRuleField('eyvescloud-fw-add-source-ip', '');
+            setRuleField('eyvescloud-fw-add-action', 'DROP');
+            setRuleField('eyvescloud-fw-add-desc', '');
+        }
+
+        function fillRuleForm(rule) {
+            var item = rule || {};
+            setRuleField('eyvescloud-fw-add-network', item.network || 'ipv4');
+            setRuleField('eyvescloud-fw-add-direction', item.direction || 'in');
+            setRuleField('eyvescloud-fw-add-protocol', item.protocol || 'tcp');
+            setRuleField('eyvescloud-fw-add-port', item.port || '');
+            setRuleField('eyvescloud-fw-add-source-ip', item.source_ip || '');
+            setRuleField('eyvescloud-fw-add-action', item.action || 'DROP');
+            setRuleField('eyvescloud-fw-add-desc', item.description || '');
+        }
+
+        function saveFirewall() {
+            var enabled = enabledCheckbox.checked;
+            var defaultAction = defaultActionSelect.value;
+            var rules = currentRules.map(function (r) {
+                return {
+                    id: r.id || '',
+                    network: r.network || 'ipv4',
+                    direction: r.direction || 'in',
+                    protocol: r.protocol || 'tcp',
+                    port: r.port || '',
+                    source_ip: r.source_ip || '',
+                    action: r.action || 'ACCEPT',
+                    description: r.description || '',
+                    enabled: r.enabled !== false
+                };
+            });
+
+            var body = new URLSearchParams();
+            body.set('id', serviceId());
+            body.set('func', 'firewallUpdate');
+            body.set('enabled', enabled ? 'true' : 'false');
+            body.set('default_action', defaultAction);
+            body.set('rules', JSON.stringify(rules));
+
+            setBusy(true);
+            fetch(endpoint(), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Authorization': 'JWT {$Think.get.jwt}'
+                },
+                credentials: 'same-origin',
+                body: body.toString()
+            })
+                .then(function (res) { return res.text(); })
+                .then(function (text) {
+                    var data;
+                    try { data = JSON.parse(text); } catch (e) { data = { status: 'error', msg: '非 JSON 响应: ' + text }; }
+                    showDebug((data.data && data.data.debug) || data.debug || data);
+                    if (data.status === 200 || data.status === 'success') {
+                        showMessage('success', data.msg || '防火墙设置已更新');
+                        if (data.data && Object.prototype.hasOwnProperty.call(data.data, 'enabled')) {
+                            enabledCheckbox.checked = data.data.enabled === true || data.data.enabled === 'true' || data.data.enabled === 1;
+                        }
+                        if (data.data && data.data.default_action && defaultActionSelect) {
+                            defaultActionSelect.value = data.data.default_action;
+                        }
+                        if (data.data && Array.isArray(data.data.rules)) {
+                            currentRules = data.data.rules;
+                            renderRules(currentRules);
+                        }
+                        clearDirty();
+                        updateStatusText();
+                    } else {
+                        showMessage('error', data.msg || '更新失败');
+                    }
+                })
+                .catch(function (e) {
+                    showMessage('error', e.message || '请求失败');
+                    showDebug({ error: String(e) });
+                })
+                .finally(function () {
+                    setBusy(false);
+                });
+        }
+
+        function loadFirewall() {
+            var body = new URLSearchParams();
+            body.set('id', serviceId());
+            body.set('func', 'firewallList');
+
+            setBusy(true);
+            fetch(endpoint(), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Authorization': 'JWT {$Think.get.jwt}'
+                },
+                credentials: 'same-origin',
+                body: body.toString()
+            })
+                .then(function (res) { return res.text(); })
+                .then(function (text) {
+                    var data;
+                    try { data = JSON.parse(text); } catch (e) { data = { status: 'error', msg: '非 JSON 响应: ' + text }; }
+                    showDebug((data.data && data.data.debug) || data.debug || data);
+                    if (data.status === 200 || data.status === 'success') {
+                        if (data.data) {
+                            enabledCheckbox.checked = data.data.enabled === true || data.data.enabled === 'true' || data.data.enabled === 1;
+                            if (data.data.default_action && defaultActionSelect) {
+                                defaultActionSelect.value = data.data.default_action;
+                            }
+                            currentRules = Array.isArray(data.data.rules) ? data.data.rules : [];
+                            renderRules(currentRules);
+                            clearDirty();
+                            updateStatusText();
+                        }
+                    } else {
+                        showMessage('error', data.msg || '获取防火墙设置失败');
+                        rulesContainer.innerHTML = '<div class="eyvescloud-fw-section eyvescloud-fw-muted">加载失败</div>';
+                    }
+                })
+                .catch(function (e) {
+                    showMessage('error', e.message || '请求失败');
+                    showDebug({ error: String(e) });
+                    rulesContainer.innerHTML = '<div class="eyvescloud-fw-section eyvescloud-fw-muted">加载失败</div>';
+                })
+                .finally(function () {
+                    setBusy(false);
+                });
+        }
+
+        function updateStatusText() {
+            if (enabledCheckbox.checked) {
+                statusText.textContent = '已启用，未匹配规则的流量将被' + (defaultActionSelect.value === 'DROP' ? '拒绝' : '放行');
+            } else {
+                statusText.textContent = '未启用时不接管该容器流量';
+            }
+        }
+
+        function openDeleteModal(idx, desc) {
+            pendingDeleteRule = idx;
+            if (deleteText) {
+                deleteText.textContent = '确认删除规则: ' + (desc || '未命名规则') + ' ?';
+            }
+            if (deleteModal) {
+                deleteModal.style.display = 'flex';
+            }
+        }
+
+        function closeDeleteModal() {
+            pendingDeleteRule = null;
+            if (deleteModal) {
+                deleteModal.style.display = 'none';
+            }
+        }
+
+        function openRuleModal(mode, idx) {
+            ruleModalMode = mode === 'edit' ? 'edit' : 'add';
+            editingRuleIndex = ruleModalMode === 'edit' ? idx : null;
+            if (ruleModalTitle) {
+                ruleModalTitle.textContent = ruleModalMode === 'edit' ? '编辑规则' : '添加规则';
+            }
+            if (ruleModalMode === 'edit' && currentRules[idx]) {
+                fillRuleForm(currentRules[idx]);
+            } else {
+                clearAddForm();
+            }
+            if (addModal) {
+                addModal.style.display = 'flex';
+            }
+            var portInput = document.getElementById('eyvescloud-fw-add-port');
+            if (portInput) {
+                setTimeout(function () { portInput.focus(); }, 0);
+            }
+        }
+
+        function closeAddModal() {
+            ruleModalMode = 'add';
+            editingRuleIndex = null;
+            if (addModal) {
+                addModal.style.display = 'none';
+            }
+        }
+
+        panel.addEventListener('click', function (event) {
+            var button = event.target.closest('[data-eyvescloud-fw-action]');
+            if (!button) return;
+            var action = button.getAttribute('data-eyvescloud-fw-action');
+
+            if (action === 'open-add-rule') {
+                openRuleModal('add');
+                return;
+            }
+
+            var item = button.closest('[data-rule-index]');
+            if (!item) return;
+            var idx = parseInt(item.getAttribute('data-rule-index'), 10);
+            if (isNaN(idx) || !currentRules[idx]) return;
+
+            if (action === 'edit-rule') {
+                openRuleModal('edit', idx);
+                return;
+            }
+
+            if (action === 'delete-rule') {
+                var desc = currentRules[idx].description || (currentRules[idx].protocol + '/' + (currentRules[idx].port || 'all'));
+                openDeleteModal(idx, desc);
+                return;
+            }
+        });
+
+        enabledCheckbox.addEventListener('change', function () {
+            updateStatusText();
+            markDirty('防火墙开关已修改，点击保存设置后生效');
+        });
+
+        defaultActionSelect.addEventListener('change', function () {
+            updateStatusText();
+            markDirty('默认动作已修改，点击保存设置后生效');
+        });
+
+        if (saveSettingsButton) {
+            saveSettingsButton.addEventListener('click', saveFirewall);
+        }
+
+        if (addClose) {
+            addClose.addEventListener('click', closeAddModal);
+        }
+        if (addCancel) {
+            addCancel.addEventListener('click', closeAddModal);
+        }
+        if (addModal) {
+            addModal.addEventListener('click', function (event) {
+                if (event.target === addModal) closeAddModal();
+            });
+        }
+        if (addConfirm) {
+            addConfirm.addEventListener('click', function () {
+                if (ruleModalMode === 'edit' && editingRuleIndex !== null && currentRules[editingRuleIndex]) {
+                    currentRules[editingRuleIndex] = getRuleFormPayload(currentRules[editingRuleIndex]);
+                    renderRules(currentRules);
+                    closeAddModal();
+                    markDirty('规则已更新，点击保存设置后生效');
+                    return;
+                }
+                currentRules.push(getRuleFormPayload(null));
+                renderRules(currentRules);
+                closeAddModal();
+                clearAddForm();
+                markDirty('规则已添加，点击保存设置后生效');
+            });
+        }
+
+        if (deleteCancel) {
+            deleteCancel.addEventListener('click', closeDeleteModal);
+        }
+        if (deleteModal) {
+            deleteModal.addEventListener('click', function (event) {
+                if (event.target === deleteModal) closeDeleteModal();
+            });
+        }
+        if (deleteConfirm) {
+            deleteConfirm.addEventListener('click', function () {
+                if (pendingDeleteRule === null) return;
+                var idx = pendingDeleteRule;
+                closeDeleteModal();
+                if (idx >= 0 && idx < currentRules.length) {
+                    currentRules.splice(idx, 1);
+                    renderRules(currentRules);
+                    markDirty('规则已删除，点击保存设置后生效');
+                }
+            });
+        }
+
+        updateSaveState();
+        loadFirewall();
+    })();
+</script>
