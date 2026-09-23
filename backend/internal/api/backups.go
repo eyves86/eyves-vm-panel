@@ -59,7 +59,8 @@ func snapshotRestoreBase() (string, error) {
 
 // createInstanceBackup 为容器创建一份完整备份并做 keep-N 轮换。
 // keep <= 0 表示不自动清理（手工备份全量保留），keep > 0 表示仅保留最新 keep 份。
-func createInstanceBackup(containerID int, createdBy string, keep int) (*config.InstanceBackup, error) {
+// scheduled 标记该备份是否由定时任务触发，便于前端区分。
+func createInstanceBackup(containerID int, createdBy string, keep int, scheduled bool) (*config.InstanceBackup, error) {
 	instanceBackupMu.Lock()
 	defer instanceBackupMu.Unlock()
 
@@ -114,6 +115,7 @@ func createInstanceBackup(containerID int, createdBy string, keep int) (*config.
 		Kind:          kind,
 		CreatedAt:     time.Now().Format("2006-01-02 15:04:05"),
 		CreatedBy:     createdBy,
+		Scheduled:     scheduled,
 		Path:          archive,
 		SizeBytes:     info.Size(),
 	}
@@ -325,7 +327,7 @@ func createContainerBackup(w http.ResponseWriter, r *http.Request, containerID i
 		}
 	}
 	user := requestUser(r)
-	backup, err := createInstanceBackup(containerID, user, req.Keep)
+	backup, err := createInstanceBackup(containerID, user, req.Keep, false)
 	if err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return

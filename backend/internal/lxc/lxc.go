@@ -271,6 +271,9 @@ type ContainerConfig struct {
 	SSHAuthMode          string                     `json:"ssh_auth_mode,omitempty"`
 	SSHPassword          string                     `json:"ssh_password,omitempty"`
 	SSHPublicKey         string                     `json:"ssh_public_key,omitempty"`
+	// ReinstallMode 控制重装范围："system" 只重装系统盘（保留数据盘），
+	// "full" 全盘重装（系统盘与数据盘一起重建）。空值按运行时默认处理。
+	ReinstallMode        string                     `json:"reinstall_mode,omitempty"`
 	CloudInitUserData    string                     `json:"cloud_init_user_data,omitempty"`
 	Tenant               string                     `json:"tenant,omitempty"`
 	ExpiresAt            string                     `json:"expires_at"`
@@ -1696,6 +1699,20 @@ func (m *Manager) applyDataDisk(lxcName string, cfg ContainerConfig) error {
 		return fmt.Errorf("failed to add data disk bind mount: %v", err)
 	}
 	return nil
+}
+
+// wipeDataDisk 卸载并删除容器数据盘镜像，供全盘重装时重建空数据盘。
+// 与 applyDataDisk 配合使用：先 wipe 再 apply，即可得到干净的数据盘。
+func (m *Manager) wipeDataDisk(lxcName string) {
+	containerDir := filepath.Join(m.LxcPath, lxcName)
+	dataImg := filepath.Join(containerDir, "data.img")
+	dataMount := filepath.Join(containerDir, "data")
+	if _, err := os.Stat(dataImg); err != nil {
+		return
+	}
+	_ = exec.Command("umount", "-l", dataMount).Run()
+	m.detachLoopImage(dataImg)
+	_ = os.Remove(dataImg)
 }
 
 // ensureDataDiskMounted mounts the container data disk image after a host
@@ -3298,6 +3315,10 @@ func safeRootfsCommandArgs(args []string) ([]string, error) {
 		"rc-update": true,
 		"sh":        true,
 		"systemctl": true,
+		// 账号管理：参数经严格校验（用户名须匹配固定形态），且以 argv 方式执行，不经 shell。
+		"useradd": true,
+		"usermod": true,
+		"id":      true,
 	}
 	if !allowed[args[0]] || strings.HasPrefix(args[0], "-") || strings.Contains(args[0], "/") {
 		return nil, fmt.Errorf("rootfs command is not allowed: %s", args[0])
@@ -3791,7 +3812,24 @@ func copyRootfsContents(src, dst string) error {
 	return nil
 }
 
-// ReinstallContainer reinstalls the container OS
+// 重装范围：system 只重装系统盘（保留数据盘），full 全盘重装。
+const (
+	ReinstallModeSystem = "system"
+	ReinstallModeFull   = "full"
+)
+
+// NormalizeReinstallMode 归一化重装模式；空值或未知值返回空字符串（按运行时默认处理）。
+func NormalizeReinstallMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case ReinstallModeSystem:
+		return ReinstallModeSystem
+	case ReinstallModeFull:
+		return ReinstallModeFull
+	default:
+		return ""
+	}
+}
+
 func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...ContainerConfig) error {
 	c := config.FindContainer(id)
 	if c == nil {
@@ -3831,6 +3869,17 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 
 	if err := m.applyDiskLimit(lxcName, c.DiskGB); err != nil {
 		return err
+	}
+
+	// full 模式：连同数据盘一起重建。system 模式（默认）保留数据盘。
+	if NormalizeReinstallMode(authCfg.ReinstallMode) == ReinstallModeFull && c.DataDiskGB > 0 {
+		m.wipeDataDisk(lxcName)
+		if err := m.applyDataDisk(lxcName, ContainerConfig{
+			DataDiskGB:        c.DataDiskGB,
+			DataDiskMountPath: c.DataDiskMountPath,
+		}); err != nil {
+			return fmt.Errorf("failed to rebuild data disk on full reinstall: %w", err)
+		}
 	}
 
 	// Re-apply resource limits and mandatory security hardening.

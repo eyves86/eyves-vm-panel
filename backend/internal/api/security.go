@@ -20,15 +20,19 @@ import (
 type SecurityAlert struct {
 	ID            string `json:"id"`
 	ContainerName string `json:"container_name"`
-	Type          string `json:"type"`     // port_scan, horizontal_scan, brute_force, ddos, spam, malware, mining, proxy, reflection
-	Severity      string `json:"severity"` // low, medium, high, critical
-	SourceIP      string `json:"source_ip"`
-	TargetIP      string `json:"target_ip"`
-	TargetPort    int    `json:"target_port"`
-	Detail        string `json:"detail"`
-	LogLine       string `json:"log_line"`
-	Timestamp     string `json:"timestamp"`
-	Count         int    `json:"count"`
+	// Tenant / Owner 记录滥用行为的归属：Tenant 为容器所属租户，Owner 为绑定了该容器的
+	// 子用户（若存在）。便于管理端按用户/租户归因与统计，而不只是按容器。
+	Tenant     string `json:"tenant,omitempty"`
+	Owner      string `json:"owner,omitempty"`
+	Type       string `json:"type"`     // port_scan, horizontal_scan, brute_force, ddos, cc, spam, malware, mining, proxy, reflection
+	Severity   string `json:"severity"` // low, medium, high, critical
+	SourceIP   string `json:"source_ip"`
+	TargetIP   string `json:"target_ip"`
+	TargetPort int    `json:"target_port"`
+	Detail     string `json:"detail"`
+	LogLine    string `json:"log_line"`
+	Timestamp  string `json:"timestamp"`
+	Count      int    `json:"count"`
 }
 
 // SecurityScanner monitors container network activity for abuse patterns.
@@ -146,6 +150,18 @@ var malwarePorts = map[int]string{
 	9050:  "Tor/C2 proxy",
 }
 
+// webPorts 是 CC / HTTP 洪水检测关注的常见 Web 服务端口。
+var webPorts = map[int]string{
+	80:   "HTTP",
+	443:  "HTTPS",
+	8000: "HTTP alt",
+	8080: "HTTP alt",
+	8443: "HTTPS alt",
+	8888: "HTTP alt",
+	9000: "HTTP alt",
+	9443: "HTTPS alt",
+}
+
 func InitScanner() {
 	if scannerStarted {
 		return
@@ -180,6 +196,8 @@ func (ss *SecurityScanner) monitorLoop() {
 			return
 		case <-ticker.C:
 			ss.checkAllContainers()
+			// 同步维护 IP 防伪规则（仅在开启时生效；关闭时清理自有链）。
+			reconcileIPAntiSpoof()
 		}
 	}
 }
@@ -275,6 +293,7 @@ func (ss *SecurityScanner) checkContainer(name, ip string) {
 	ss.detectBruteForce(name, ip, stats)
 	ss.detectSpam(name, ip, stats)
 	ss.detectMassAbuse(name, ip, stats)
+	ss.detectCC(name, ip, stats)
 	ss.detectReflectionAbuse(name, ip, stats)
 	ss.detectMining(name, ip, stats)
 	ss.detectProxyAndTor(name, ip, stats)
@@ -491,6 +510,39 @@ func (ss *SecurityScanner) detectMassAbuse(name, ip string, stats *trafficStats)
 	}
 }
 
+// detectCC 检测 CC / HTTP 洪水：来自同一容器的大量 Web 端口连接，且高度集中在少数目标。
+func (ss *SecurityScanner) detectCC(name, ip string, stats *trafficStats) {
+	total := 0
+	targets := make(map[string]int)
+	for port := range webPorts {
+		total += stats.portTotalCounts[port]
+		for dstIP, count := range stats.portDestCounts[port] {
+			targets[dstIP] += count
+		}
+	}
+	if total == 0 {
+		return
+	}
+
+	peakTarget, peakCount := "", 0
+	for dstIP, count := range targets {
+		if count > peakCount {
+			peakTarget, peakCount = dstIP, count
+		}
+	}
+
+	switch {
+	case peakCount >= 150 || (total >= 300 && len(targets) <= 3):
+		ss.addAlert(name, "cc", "critical", ip, peakTarget, 0,
+			fmt.Sprintf("疑似 CC/HTTP 洪水: Web 端口连接 %d 条，单一目标最高 %d 条，覆盖 %d 个目标", total, peakCount, len(targets)),
+			"")
+	case peakCount >= 60 || (total >= 120 && len(targets) <= 8):
+		ss.addAlert(name, "cc", "high", ip, peakTarget, 0,
+			fmt.Sprintf("可疑 CC/HTTP 洪水: Web 端口连接 %d 条，单一目标最高 %d 条，覆盖 %d 个目标", total, peakCount, len(targets)),
+			"")
+	}
+}
+
 func (ss *SecurityScanner) detectReflectionAbuse(name, ip string, stats *trafficStats) {
 	for port, service := range reflectionPorts {
 		total := stats.udpTotalCounts[port]
@@ -670,7 +722,60 @@ func countPorts(totalCounts map[int]int, destCounts map[int]map[string]int, port
 	return total, len(targets)
 }
 
+// resolveAbuseOwnership 返回容器所属租户与绑定了该容器的子用户（如有），
+// 用于把滥用行为归因到用户/租户，而不仅是容器。
+func resolveAbuseOwnership(containerName string) (tenant, owner string) {
+	containerName = strings.TrimSpace(containerName)
+	if containerName == "" {
+		return "", ""
+	}
+
+	var containerUUID string
+	if c := config.FindContainerByName(containerName); c != nil {
+		tenant = strings.TrimSpace(c.Tenant)
+		containerUUID = c.UUID
+	}
+
+	config.AppConfigMu.RLock()
+	defer config.AppConfigMu.RUnlock()
+	if config.AppConfig == nil {
+		return tenant, ""
+	}
+	for i := range config.AppConfig.SubUsers {
+		su := &config.AppConfig.SubUsers[i]
+		if !subUserBindsContainer(su, containerName, containerUUID) {
+			continue
+		}
+		if owner == "" {
+			owner = strings.TrimSpace(su.Username)
+		}
+		if tenant == "" {
+			tenant = strings.TrimSpace(su.Tenant)
+		}
+	}
+	return tenant, owner
+}
+
+func subUserBindsContainer(su *config.SubUser, name, uuid string) bool {
+	for _, n := range su.ContainerNames {
+		if strings.EqualFold(strings.TrimSpace(n), name) {
+			return true
+		}
+	}
+	if uuid != "" {
+		for _, u := range su.ContainerUUIDs {
+			if strings.TrimSpace(u) == uuid {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP string, port int, detail, logLine string) {
+	// 归属解析在持有扫描器锁之前完成，避免锁嵌套。
+	tenant, owner := resolveAbuseOwnership(name)
+
 	ss.mu.Lock()
 
 	now := time.Now()
@@ -691,6 +796,8 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 		a.Detail = detail
 		a.LogLine = logLine
 		a.Timestamp = now.Format("2006-01-02 15:04:05")
+		a.Tenant = tenant
+		a.Owner = owner
 		if severityRank(severity) > severityRank(a.Severity) {
 			a.Severity = severity
 		}
@@ -706,6 +813,8 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 	alert := SecurityAlert{
 		ID:            fmt.Sprintf("alert-%d", ss.nextID),
 		ContainerName: name,
+		Tenant:        tenant,
+		Owner:         owner,
 		Type:          alertType,
 		Severity:      severity,
 		SourceIP:      srcIP,
@@ -809,10 +918,12 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 		config.AppConfigMu.RLock()
 		autoShutdown := config.AppConfig.SecurityAutoShutdown
 		arpProtection := config.AppConfig.ARPProtectionEnabled
+		ipAntiSpoof := config.AppConfig.IPAntiSpoofEnabled
 		config.AppConfigMu.RUnlock()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]bool{
 			"auto_shutdown":  autoShutdown,
 			"arp_protection": arpProtection,
+			"ip_anti_spoof":  ipAntiSpoof,
 		}})
 	case http.MethodPut:
 		if !requireScope(w, r, "security:settings") {
@@ -821,6 +932,7 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			AutoShutdown  *bool `json:"auto_shutdown"`
 			ARPProtection *bool `json:"arp_protection"`
+			IPAntiSpoof   *bool `json:"ip_anti_spoof"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -833,11 +945,16 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 			if req.ARPProtection != nil {
 				cfg.ARPProtectionEnabled = *req.ARPProtection
 			}
+			if req.IPAntiSpoof != nil {
+				cfg.IPAntiSpoofEnabled = *req.IPAntiSpoof
+			}
 		})
 		if err := config.SaveConfig(); err != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 			return
 		}
+		// 开关变更后立即生效：开启则下发规则，关闭则清理自有链。
+		reconcileIPAntiSpoof()
 		cancelledTasks := 0
 		clearedBlocks := 0
 		if req.AutoShutdown != nil && !*req.AutoShutdown {
@@ -845,10 +962,11 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 			clearedBlocks = clearSecurityPolicyBlocks()
 		}
 		auditRequest(r, "security.settings", "auto_shutdown",
-			fmt.Sprintf("auto_shutdown=%v arp_protection=%v", config.AppConfig.SecurityAutoShutdown, config.AppConfig.ARPProtectionEnabled), true, "")
+			fmt.Sprintf("auto_shutdown=%v arp_protection=%v ip_anti_spoof=%v", config.AppConfig.SecurityAutoShutdown, config.AppConfig.ARPProtectionEnabled, config.AppConfig.IPAntiSpoofEnabled), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
 			"auto_shutdown":   config.AppConfig.SecurityAutoShutdown,
 			"arp_protection":  config.AppConfig.ARPProtectionEnabled,
+			"ip_anti_spoof":   config.AppConfig.IPAntiSpoofEnabled,
 			"cancelled_tasks": cancelledTasks,
 			"cleared_blocks":  clearedBlocks,
 		}})
@@ -1019,6 +1137,87 @@ func HandleContainerSecuritySummary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: summary})
+}
+
+// AbuseOwnerSummary 是按用户/租户聚合的滥用统计。
+type AbuseOwnerSummary struct {
+	Owner      string         `json:"owner"`
+	Tenant     string         `json:"tenant,omitempty"`
+	Alerts     int            `json:"alerts"`
+	Containers []string       `json:"containers"`
+	Types      map[string]int `json:"types"`
+	Severity   string         `json:"severity"`
+	LastSeen   string         `json:"last_seen"`
+}
+
+// HandleAbuseSummary 返回按用户/租户与类型聚合的滥用记录，供管理端归因查看。
+// 滥用类型包括挖矿(mining)、代理/VPN(proxy)、DDoS(ddos)、CC/HTTP 洪水(cc)、
+// 端口扫描(port_scan)、爆破(brute_force)、垃圾邮件(spam)、反射放大(reflection)、
+// 恶意软件(malware)、ARP 欺骗(arp_spoof) 等。
+func HandleAbuseSummary(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	if !requireScope(w, r, "security:read") {
+		return
+	}
+
+	alerts := filterSecurityAlertsForRequest(r, mergedSecurityAlerts())
+
+	byOwner := make(map[string]*AbuseOwnerSummary)
+	containersByOwner := make(map[string]map[string]struct{})
+	byType := make(map[string]int)
+
+	for _, a := range alerts {
+		tenant, owner := a.Tenant, a.Owner
+		if tenant == "" && owner == "" {
+			tenant, owner = resolveAbuseOwnership(a.ContainerName)
+		}
+		key := tenant + "\x1f" + owner
+		entry := byOwner[key]
+		if entry == nil {
+			entry = &AbuseOwnerSummary{Owner: owner, Tenant: tenant, Types: make(map[string]int)}
+			byOwner[key] = entry
+			containersByOwner[key] = make(map[string]struct{})
+		}
+
+		count := a.Count
+		if count < 1 {
+			count = 1
+		}
+		entry.Alerts += count
+		entry.Types[a.Type] += count
+		byType[a.Type] += count
+		containersByOwner[key][a.ContainerName] = struct{}{}
+		if severityRank(a.Severity) > severityRank(entry.Severity) {
+			entry.Severity = a.Severity
+		}
+		if a.Timestamp > entry.LastSeen {
+			entry.LastSeen = a.Timestamp
+		}
+	}
+
+	result := make([]AbuseOwnerSummary, 0, len(byOwner))
+	for key, entry := range byOwner {
+		for name := range containersByOwner[key] {
+			entry.Containers = append(entry.Containers, name)
+		}
+		sort.Strings(entry.Containers)
+		result = append(result, *entry)
+	}
+	sort.SliceStable(result, func(i, j int) bool {
+		if result[i].Alerts != result[j].Alerts {
+			return result[i].Alerts > result[j].Alerts
+		}
+		return result[i].LastSeen > result[j].LastSeen
+	})
+
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+		"total_alerts": len(alerts),
+		"by_owner":     result,
+		"by_type":      byType,
+	}})
 }
 
 func filterSecurityAlertsForRequest(r *http.Request, alerts []SecurityAlert) []SecurityAlert {

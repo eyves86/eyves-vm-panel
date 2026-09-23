@@ -135,6 +135,11 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resetSSHPassword(w, r, id)
+	case action == "create-account" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:account") {
+			return
+		}
+		createContainerAccount(w, r, id)
 	case action == "tenant" && r.Method == http.MethodPut:
 		if !requireScope(w, r, "container:resize") {
 			return
@@ -811,6 +816,50 @@ func resetSSHPassword(w http.ResponseWriter, r *http.Request, id int) {
 
 func validateSSHPassword(password string) error {
 	return lxc.ValidateCustomSSHPassword(password)
+}
+
+// createContainerAccount 在容器内创建新的登录账号（LXC 走 chroot，KVM 走 guest-agent/SSH）。
+func createContainerAccount(w http.ResponseWriter, r *http.Request, id int) {
+	c := config.FindContainer(id)
+	if c != nil && lxc.IsExpired(*c) {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已到期，不允许此操作"})
+		return
+	}
+	var req struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Sudo     bool   `json:"sudo"`
+	}
+	if r.Body != nil {
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&req); err != nil && err.Error() != "EOF" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+			return
+		}
+	}
+	if err := lxc.ValidateAccountUsername(req.Username); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	if err := lxc.ValidateAccountPassword(req.Password); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	if err := createAccountByRuntime(id, req.Username, req.Password, req.Sudo); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	name := ""
+	if c != nil {
+		name = c.Name
+	}
+	auditRequest(r, "container.create_account", name,
+		fmt.Sprintf("user=%s sudo=%v", strings.TrimSpace(req.Username), req.Sudo), true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Account created successfully",
+		Data:    map[string]interface{}{"username": strings.TrimSpace(req.Username), "sudo": req.Sudo},
+	})
 }
 
 func addPortMapping(w http.ResponseWriter, r *http.Request, id int) {

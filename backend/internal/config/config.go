@@ -843,6 +843,15 @@ type BackupSettings struct {
 	LastBackupFile string `json:"last_backup_file,omitempty"`
 }
 
+// InstanceBackupSettings controls automatic instance (disk) backups.
+// 开启后按 IntervalHours 周期为所有运行中的容器创建磁盘备份，并保留最新 Keep 份。
+type InstanceBackupSettings struct {
+	Enabled       bool   `json:"enabled"`
+	IntervalHours int    `json:"interval_hours"`
+	Keep          int    `json:"keep"`
+	LastRunAt     string `json:"last_run_at,omitempty"`
+}
+
 // APIRateLimitConfig controls per-client rate limiting on the versioned API.
 type APIRateLimitConfig struct {
 	Enabled   bool `json:"enabled"`
@@ -962,6 +971,9 @@ type EyvescloudConfig struct {
 	PanelAccessPolicy    PanelAccessPolicy      `json:"panel_access_policy"`
 	SecurityAutoShutdown bool                   `json:"security_auto_shutdown"`
 	ARPProtectionEnabled bool                   `json:"arp_protection_enabled"`
+	// IPAntiSpoofEnabled 开启后，平台会把分配给容器的公网 IPv4 与其 MAC 绑定，
+	// 阻止容器盗用其它 IP（IP 防盗 / 防 ARP 冒充）。默认关闭。
+	IPAntiSpoofEnabled bool `json:"ip_anti_spoof_enabled"`
 	Notifications        NotificationConfig     `json:"notifications"`
 	TaskConcurrency      int                    `json:"task_concurrency"`
 	Language             string                 `json:"language"`
@@ -977,6 +989,7 @@ type EyvescloudConfig struct {
 	MetricRetentionDays  int                    `json:"metric_retention_days"`
 	AuditRetentionDays   int                    `json:"audit_retention_days"`
 	BackupSettings       BackupSettings         `json:"backup_settings"`
+	InstanceBackupSettings InstanceBackupSettings `json:"instance_backup_settings"`
 	Backups              []BackupRecord         `json:"backups,omitempty"`
 	InstanceBackups      []InstanceBackup       `json:"instance_backups,omitempty"`
 	APIRateLimit         APIRateLimitConfig     `json:"api_rate_limit"`
@@ -2059,6 +2072,30 @@ func GetBackupSettings() BackupSettings {
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
 	return AppConfig.BackupSettings
+}
+
+// GetInstanceBackupSettings returns a snapshot of the automatic instance-backup settings.
+func GetInstanceBackupSettings() InstanceBackupSettings {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return InstanceBackupSettings{}
+	}
+	return AppConfig.InstanceBackupSettings
+}
+
+// UpdateInstanceBackupSettings replaces the automatic instance-backup settings.
+func UpdateInstanceBackupSettings(settings InstanceBackupSettings) {
+	MutateGlobal(func(cfg *EyvescloudConfig) {
+		cfg.InstanceBackupSettings = settings
+	})
+}
+
+// UpdateInstanceBackupLastRun records the last scheduled instance-backup run time.
+func UpdateInstanceBackupLastRun(at string) {
+	MutateGlobal(func(cfg *EyvescloudConfig) {
+		cfg.InstanceBackupSettings.LastRunAt = at
+	})
 }
 
 // GetAuditLogCount returns the current number of retained audit logs.

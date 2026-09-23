@@ -954,9 +954,29 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 		return fmt.Errorf("KVM image is not downloaded: %s", templateID)
 	}
 	name := c.VirshName()
+	mode := ""
+	if len(authConfig) > 0 {
+		mode = lxc.NormalizeReinstallMode(authConfig[0].ReinstallMode)
+	}
 	_ = m.StopContainer(id)
+
+	// system 模式：先把数据盘移出实例目录，重建系统盘后再放回并重新挂载；
+	// full 模式（默认）：整机实例目录一并重建。
+	instanceDir := m.instanceDir(name)
+	dataDiskPath := filepath.Join(instanceDir, "data.qcow2")
+	preservedDataDisk := ""
+	if mode == lxc.ReinstallModeSystem {
+		if _, err := os.Stat(dataDiskPath); err == nil {
+			preservePath := filepath.Join(filepath.Dir(instanceDir), filepath.Base(instanceDir)+".data-preserve.qcow2")
+			_ = os.Remove(preservePath)
+			if err := os.Rename(dataDiskPath, preservePath); err == nil {
+				preservedDataDisk = preservePath
+			}
+		}
+	}
+
 	_ = undefineDomain(name)
-	_ = os.RemoveAll(m.instanceDir(name))
+	_ = os.RemoveAll(instanceDir)
 	cfg := lxc.ContainerConfig{
 		Name:             c.Name,
 		TemplateID:       templateID,
@@ -1004,6 +1024,25 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 	normalizeKVMManagementPortMapping(c)
 	c.Status = "stopped"
 	config.SaveConfig()
+
+	// system 模式：把保留的数据盘放回并重新挂载到新域。
+	if preservedDataDisk != "" {
+		restored := false
+		if err := os.MkdirAll(instanceDir, 0755); err == nil {
+			if err := os.Rename(preservedDataDisk, dataDiskPath); err == nil {
+				restored = true
+			}
+		}
+		if restored {
+			if err := m.redefineContainer(c); err != nil {
+				fmt.Printf("Warning: failed to re-attach preserved data disk for %s: %v\n", name, err)
+			}
+		} else {
+			// 放回失败则清理临时文件，避免遗留孤儿磁盘。
+			_ = os.Remove(preservedDataDisk)
+		}
+	}
+
 	if IsWindowsImage(templateID) {
 		return nil
 	}
@@ -1063,6 +1102,82 @@ func (m *Manager) ResetSSHPassword(id int, password string) (string, error) {
 	c.SSHHostKey = ""
 	config.SaveConfig()
 	return password, nil
+}
+
+// CreateAccount 在 KVM 客户机内创建新的登录账号。
+// 优先走 qemu-guest-agent，失败时回退到 SSH（与改密码一致的策略）。
+func (m *Manager) CreateAccount(id int, username, password string, sudo bool) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if err := lxc.ValidateAccountUsername(username); err != nil {
+		return err
+	}
+	if err := lxc.ValidateAccountPassword(password); err != nil {
+		return err
+	}
+	if IsWindowsImage(c.Template) {
+		return fmt.Errorf("Windows KVM account creation is not supported yet")
+	}
+	if c.Status != "running" {
+		return fmt.Errorf("KVM VM must be running to create an account")
+	}
+	username = strings.TrimSpace(username)
+
+	script := kvmAccountCreationScript(username, password, sudo)
+	if err := qemuGuestPing(c.VirshName()); err == nil {
+		if err := qemuGuestExec(c.VirshName(), script, 120*time.Second); err == nil {
+			return nil
+		}
+	}
+
+	// 回退：通过 SSH 执行同一脚本。
+	if c.IP == "" || c.SSHPassword == "" {
+		return fmt.Errorf("KVM guest agent is not ready and saved SSH credentials are unavailable")
+	}
+	if err := m.EnsureSSH(id); err != nil {
+		return err
+	}
+	client, err := ssh.Dial("tcp", net.JoinHostPort(c.IP, "22"), &ssh.ClientConfig{
+		User:            "root",
+		Auth:            []ssh.AuthMethod{ssh.Password(c.SSHPassword)},
+		HostKeyCallback: kvmHostKeyCallback(c),
+		Timeout:         8 * time.Second,
+	})
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return err
+	}
+	defer session.Close()
+	session.Stdin = strings.NewReader(script)
+	if output, err := session.CombinedOutput("sh -s"); err != nil {
+		return fmt.Errorf("failed to create account: %v, output: %s", err, string(output))
+	}
+	return nil
+}
+
+// kvmAccountCreationScript 生成客户机内的建号脚本。密码经 base64 编码后传入，
+// 避免特殊字符破坏脚本或泄露到进程命令行。
+func kvmAccountCreationScript(username, password string, sudo bool) string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+	sudoPart := ""
+	if sudo {
+		sudoPart = `
+if getent group sudo >/dev/null 2>&1; then usermod -aG sudo ` + username + ` || true; fi
+if getent group wheel >/dev/null 2>&1; then usermod -aG wheel ` + username + ` || true; fi
+`
+	}
+	return `set -e
+if ! id ` + username + ` >/dev/null 2>&1; then
+  useradd -m -s /bin/bash ` + username + ` 2>/dev/null || adduser -D -s /bin/bash ` + username + `
+fi
+echo ` + encoded + ` | base64 -d | chpasswd
+` + sudoPart
 }
 
 func (m *Manager) ApplyContainerLimits(c *config.Container) error {

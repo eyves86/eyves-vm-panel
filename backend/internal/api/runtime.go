@@ -123,6 +123,14 @@ func resetPasswordByRuntime(id int, password string) (string, error) {
 	return lxcManager.ResetSSHPassword(id, password)
 }
 
+func createAccountByRuntime(id int, username, password string, sudo bool) error {
+	c := config.FindContainer(id)
+	if c != nil && c.IsKVM() {
+		return kvmManager.CreateAccount(id, username, password, sudo)
+	}
+	return lxcManager.CreateAccount(id, username, password, sudo)
+}
+
 func assignIPv6ByRuntime(id int) (*config.Container, error) {
 	c := config.FindContainer(id)
 	if c != nil && c.IsKVM() {

@@ -202,7 +202,7 @@ func HandleAgentNodeBackup(w http.ResponseWriter, r *http.Request) {
 	var totalBytes int64
 	for i := range containers {
 		c := &containers[i]
-		b, err := createInstanceBackup(c.ID, "node-cold", 0)
+		b, err := createInstanceBackup(c.ID, "node-cold", 0, false)
 		if err != nil {
 			failed = append(failed, c.Name+": "+err.Error())
 			continue

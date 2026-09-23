@@ -654,6 +654,8 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		KVMNATSubnet:         meta["kvm_nat_subnet"],
 		SetupComplete:        atob(meta["setup_complete"]),
 		SecurityAutoShutdown: atob(meta["security_auto_shutdown"]),
+		ARPProtectionEnabled: atob(meta["arp_protection_enabled"]),
+		IPAntiSpoofEnabled:   atob(meta["ip_anti_spoof_enabled"]),
 		TaskConcurrency:      atoi(meta["task_concurrency"]),
 		Language:             meta["language"],
 		MetricRetentionDays:  atoi(meta["metric_retention_days"]),
@@ -677,6 +679,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	}
 	if raw := strings.TrimSpace(meta["backup_settings"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.BackupSettings)
+	}
+	if raw := strings.TrimSpace(meta["instance_backup_settings"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.InstanceBackupSettings)
 	}
 	if raw := strings.TrimSpace(meta["backups"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Backups)
@@ -839,6 +844,7 @@ func saveMeta(tx *sql.Tx) error {
 	isoFilesJSON, _ := json.Marshal(AppConfig.ISOFiles)
 	nCIbackup, _ := json.Marshal(AppConfig.AdminBackupCodes)
 	backupSettingsJSON, _ := json.Marshal(AppConfig.BackupSettings)
+	instanceBackupSettingsJSON, _ := json.Marshal(AppConfig.InstanceBackupSettings)
 	backupsJSON, _ := json.Marshal(AppConfig.Backups)
 	instanceBackupsJSON, _ := json.Marshal(AppConfig.InstanceBackups)
 	rateLimitJSON, _ := json.Marshal(AppConfig.APIRateLimit)
@@ -863,6 +869,7 @@ func saveMeta(tx *sql.Tx) error {
 		"setup_complete":         btoa(AppConfig.SetupComplete),
 		"security_auto_shutdown": btoa(AppConfig.SecurityAutoShutdown),
 		"arp_protection_enabled": btoa(AppConfig.ARPProtectionEnabled),
+		"ip_anti_spoof_enabled":  btoa(AppConfig.IPAntiSpoofEnabled),
 		"task_concurrency":       strconv.Itoa(AppConfig.TaskConcurrency),
 		"language":               NormalizeLanguage(AppConfig.Language),
 		"ssl":                    string(sslJSON),
@@ -883,6 +890,7 @@ func saveMeta(tx *sql.Tx) error {
 		"metric_retention_days":  strconv.Itoa(AppConfig.MetricRetentionDays),
 		"audit_retention_days":   strconv.Itoa(AppConfig.AuditRetentionDays),
 		"backup_settings":        string(backupSettingsJSON),
+		"instance_backup_settings": string(instanceBackupSettingsJSON),
 		"backups":                string(backupsJSON),
 		"instance_backups":       string(instanceBackupsJSON),
 		"api_rate_limit":          string(rateLimitJSON),

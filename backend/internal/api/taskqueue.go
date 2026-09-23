@@ -720,12 +720,18 @@ func HandleSingleTaskAction(w http.ResponseWriter, r *http.Request, id int, acti
 		taskType = TaskDelete
 	case "reinstall":
 		var req struct {
-			TemplateID   string `json:"template_id"`
-			SSHAuthMode  string `json:"ssh_auth_mode,omitempty"`
-			SSHPassword  string `json:"ssh_password,omitempty"`
-			SSHPublicKey string `json:"ssh_public_key,omitempty"`
+			TemplateID    string `json:"template_id"`
+			SSHAuthMode   string `json:"ssh_auth_mode,omitempty"`
+			SSHPassword   string `json:"ssh_password,omitempty"`
+			SSHPublicKey  string `json:"ssh_public_key,omitempty"`
+			ReinstallMode string `json:"reinstall_mode,omitempty"`
 		}
 		json.NewDecoder(r.Body).Decode(&req)
+		reinstallMode := lxc.NormalizeReinstallMode(req.ReinstallMode)
+		if strings.TrimSpace(req.ReinstallMode) != "" && reinstallMode == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid reinstall_mode, expected \"system\" or \"full\""})
+			return
+		}
 		templateID = req.TemplateID
 		if templateID == "" {
 			c := config.FindContainer(id)
@@ -746,16 +752,20 @@ func HandleSingleTaskAction(w http.ResponseWriter, r *http.Request, id int, acti
 			return
 		}
 		authCfg := lxc.ContainerConfig{
-			TemplateID:   templateID,
-			SSHAuthMode:  req.SSHAuthMode,
-			SSHPassword:  req.SSHPassword,
-			SSHPublicKey: req.SSHPublicKey,
+			TemplateID:    templateID,
+			SSHAuthMode:   req.SSHAuthMode,
+			SSHPassword:   req.SSHPassword,
+			SSHPublicKey:  req.SSHPublicKey,
+			ReinstallMode: reinstallMode,
 		}
 		if lxc.HasSSHAuthOptions(authCfg) {
 			if err := validateReinstallSSHAuth(c, templateID, authCfg); err != nil {
 				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 				return
 			}
+		}
+		// 只要有登录方式或重装范围任一项，就把配置传给执行层。
+		if lxc.HasSSHAuthOptions(authCfg) || reinstallMode != "" {
 			taskConfig = &authCfg
 		}
 		taskType = TaskReinstall

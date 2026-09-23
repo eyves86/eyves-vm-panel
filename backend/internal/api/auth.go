@@ -105,7 +105,7 @@ func subUserScopeAllowed(scope string, role string) bool {
 	case "container:read", "dashboard:read", "image:read", "task:read", "snapshot:read",
 		"terminal:ssh", "terminal:vnc":
 		return true
-	case "container:power", "container:reinstall", "container:password", "container:network",
+	case "container:power", "container:reinstall", "container:password", "container:account", "container:network",
 		"snapshot:create", "snapshot:delete", "snapshot:restore", "snapshot:schedule":
 		return !viewer
 	default:
@@ -447,7 +447,7 @@ func defaultScopesForType(ctx AuthContext) []string {
 		case "viewer":
 			return []string{"container:read", "dashboard:read", "image:read", "snapshot:read", "terminal:ssh", "terminal:vnc"}
 		default: // operator
-			return []string{"container:read", "container:power", "container:reinstall", "container:password", "container:network", "dashboard:read", "image:read", "snapshot:read", "snapshot:create", "snapshot:delete", "snapshot:restore", "snapshot:schedule", "terminal:ssh", "terminal:vnc"}
+			return []string{"container:read", "container:power", "container:reinstall", "container:password", "container:account", "container:network", "dashboard:read", "image:read", "snapshot:read", "snapshot:create", "snapshot:delete", "snapshot:restore", "snapshot:schedule", "terminal:ssh", "terminal:vnc"}
 		}
 	default:
 		return append([]string(nil), ctx.Scopes...)
