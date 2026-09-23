@@ -1,0 +1,82 @@
+name: build-release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build linux/${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build frontend (embeds into Go binary)
+        run: |
+          cd frontend
+          npm ci
+          npm run build
+          cp -r dist/* ../backend/internal/server/web/
+
+      - name: Build backend (${{ matrix.arch }})
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd backend
+          go mod download
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} \
+            go build -trimpath -ldflags="-s -w -X eyvescloud/internal/version.Version=${VERSION}" \
+            -o ../dist/eyvescloud-linux-${{ matrix.arch }} .
+
+      - name: Package release assets
+        run: |
+          set -e
+          ASSET_DIR="eyvescloud-linux-${{ matrix.arch }}"
+          PKG="dist/package-${{ matrix.arch }}"
+          mkdir -p "$PKG/$ASSET_DIR"
+          cp "dist/$ASSET_DIR" "$PKG/$ASSET_DIR/eyvescloud"
+          cp install.sh "$PKG/$ASSET_DIR/install.sh" 2>/dev/null || true
+          chmod +x "$PKG/$ASSET_DIR/eyvescloud"
+          tar -C "$PKG" -czf "dist/$ASSET_DIR.tar.gz" "$ASSET_DIR"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: eyvescloud-linux-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/eyvescloud-linux-${{ matrix.arch }}
+            dist/eyvescloud-linux-${{ matrix.arch }}.tar.gz
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate_release_notes: true
