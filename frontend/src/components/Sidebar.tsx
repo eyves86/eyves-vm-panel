@@ -77,6 +77,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
   const [latestVersion, setLatestVersion] = useState('')
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeMsg, setUpgradeMsg] = useState('')
+  // 升级会下载→备份→就地替换→重启面板（期间连接会断开），属于不可逆的破坏性操作，
+  // 必须二次确认后才触发，避免误点。
+  const [confirmUpdate, setConfirmUpdate] = useState(false)
 
   useEffect(() => {
     getVersion()
@@ -102,10 +105,11 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
       .catch(() => {})
   }, [isSubUser])
 
-  // 面板内直接升级：点击后触发后端升级（下载→解压→备份→替换→重启）。
-  // 升级期间免确认由用户交互承担；重复点击由后端以 409 拒绝。
+  // 面板内直接升级：确认后触发后端升级（下载→解压→备份→替换→重启）。
+  // 重复点击由后端以 409 拒绝。
   const handleUpdate = async () => {
     if (upgrading) return
+    setConfirmUpdate(false)
     setUpgrading(true)
     setUpgradeMsg('')
     try {
@@ -143,6 +147,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
   const isPolicyPage = location.pathname.startsWith('/policies')
 
   return (
+    <>
     <aside
       className={`fixed left-0 top-0 z-30 flex h-full flex-col border-r border-gray-200 bg-white transition-all duration-300 dark:border-gray-700 dark:bg-gray-900 ${
         collapsed ? 'w-16' : 'w-60'
@@ -510,9 +515,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
                 <span className="shrink-0">v{version}</span>
                 {hasUpdate && (
                   <button
-                    onClick={handleUpdate}
+                    onClick={() => setConfirmUpdate(true)}
                     disabled={upgrading}
-                    title={`有可用更新：${latestVersion}（点击在面板内升级）`}
+                    title={`有可用更新：${latestVersion}（点击查看升级详情）`}
                     className="shrink-0 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/70"
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
@@ -537,5 +542,40 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
         </button>
       </div>
     </aside>
+
+    {confirmUpdate && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl dark:bg-gray-900">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('确认升级面板？')}</h3>
+          <div className="mt-3 space-y-2 text-xs text-gray-600 dark:text-gray-300">
+            <div className="rounded-md bg-gray-50 px-3 py-2 dark:bg-gray-800">
+              <div>{t('当前版本')}：v{version}</div>
+              <div>{t('目标版本')}：v{latestVersion || '-'}</div>
+            </div>
+            <p>{t('升级将执行：下载新版本 → 解压 → 备份当前版本 → 就地替换 → 重启面板服务。')}</p>
+            <p className="text-amber-700 dark:text-amber-400">
+              {t('升级期间面板会短暂断开，正在运行的任务可能中断。请确认已完成必要备份后再继续。')}
+            </p>
+          </div>
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmUpdate(false)}
+              className="rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              {t('取消')}
+            </button>
+            <button
+              type="button"
+              onClick={() => { void handleUpdate() }}
+              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+            >
+              {t('确认升级')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+    </>
   )
 }
