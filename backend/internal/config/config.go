@@ -2,6 +2,7 @@ package config
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -96,6 +97,10 @@ type AuditLog struct {
 	UserAgent string `json:"user_agent,omitempty"`
 	Success   *bool  `json:"success,omitempty"`
 	Error     string `json:"error,omitempty"`
+	// PrevHash / Hash 哈希链字段（P8-3）：PrevHash 等于上一条 AuditLog 的 Hash；
+	// 首条 PrevHash 为空。任一记录被改写 Verify 即可定位。
+	PrevHash string `json:"prev_hash,omitempty"`
+	Hash     string `json:"hash,omitempty"`
 }
 
 type VMReadinessCheck struct {
@@ -2886,12 +2891,33 @@ func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success
 		Error:     errMsg,
 	}
 	AppConfigMu.Lock()
+	if n := len(AppConfig.AuditLogs); n > 0 {
+		log.PrevHash = AppConfig.AuditLogs[n-1].Hash
+	}
+	log.Hash = auditLogHash(log)
 	AppConfig.AuditLogs = append(AppConfig.AuditLogs, log)
 	if len(AppConfig.AuditLogs) > 500 {
 		AppConfig.AuditLogs = AppConfig.AuditLogs[len(AppConfig.AuditLogs)-500:]
 	}
 	AppConfigMu.Unlock()
 	SaveConfig()
+}
+
+// auditLogHash 用 P8-3 auditchain 包相同的 canonical 字段顺序计算 SHA-256。
+// 在 config 包内嵌一份实现以避免循环依赖；与 auditchain.Entry.canonical 字段
+// 顺序必须保持一致。
+func auditLogHash(log AuditLog) string {
+	success := "0"
+	if log.Success != nil && *log.Success {
+		success = "1"
+	}
+	canonical := strings.Join([]string{
+		log.Time, log.Action, log.Target, log.Detail,
+		log.User, log.IP, log.UserAgent, success, log.Error,
+		log.PrevHash,
+	}, "\n")
+	sum := sha256.Sum256([]byte(canonical))
+	return hex.EncodeToString(sum[:])
 }
 
 // SaveTasks persists the task queue to config

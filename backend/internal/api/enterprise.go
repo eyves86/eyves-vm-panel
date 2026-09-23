@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"eyvescloud/internal/auditchain"
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/version"
 )
@@ -41,6 +42,17 @@ func HandleAuditLogExport(w http.ResponseWriter, r *http.Request) {
 	if format == "" {
 		format = "csv"
 	}
+	// 支持 cef / syslog 走 SIEM 通道（P8-3）
+	if format == "cef" || format == "syslog" {
+		exportSIEM(w, format == "cef")
+		return
+	}
+	// 支持 chain=verify 走哈希链校验通道
+	if r.URL.Query().Get("chain") == "verify" {
+		verifyAuditChain(w)
+		return
+	}
+
 	config.AppConfigMu.RLock()
 	logs := append([]config.AuditLog(nil), config.AppConfig.AuditLogs...)
 	config.AppConfigMu.RUnlock()
@@ -62,14 +74,91 @@ func HandleAuditLogExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `attachment; filename="audit-logs.csv"`)
 	cw := csv.NewWriter(w)
 	defer cw.Flush()
-	_ = cw.Write([]string{"time", "action", "target", "detail", "user", "ip", "user_agent", "success", "error"})
+	_ = cw.Write([]string{"time", "action", "target", "detail", "user", "ip", "user_agent", "success", "error", "prev_hash", "hash"})
 	for _, l := range reversed {
 		success := ""
 		if l.Success != nil {
 			success = strconv.FormatBool(*l.Success)
 		}
-		_ = cw.Write([]string{l.Time, l.Action, l.Target, l.Detail, l.User, l.IP, l.UserAgent, success, l.Error})
+		_ = cw.Write([]string{l.Time, l.Action, l.Target, l.Detail, l.User, l.IP, l.UserAgent, success, l.Error, l.PrevHash, l.Hash})
 	}
+}
+
+// exportSIEM 走 CEF 或 syslog 格式流式输出审计日志，供 SIEM（Elastic/Wazuh）
+// 直接解析入库。
+func exportSIEM(w http.ResponseWriter, useCEF bool) {
+	config.AppConfigMu.RLock()
+	logs := append([]config.AuditLog(nil), config.AppConfig.AuditLogs...)
+	config.AppConfigMu.RUnlock()
+
+	if useCEF {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="audit-logs.cef"`)
+	} else {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="audit-logs.syslog"`)
+	}
+	for i := len(logs) - 1; i >= 0; i-- {
+		l := logs[i]
+		success := false
+		if l.Success != nil && *l.Success {
+			success = true
+		}
+		entry := auditchain.Entry{
+			Time:      l.Time,
+			Action:    l.Action,
+			Target:    l.Target,
+			Detail:    l.Detail,
+			User:      l.User,
+			IP:        l.IP,
+			UserAgent: l.UserAgent,
+			Success:   success,
+			Error:     l.Error,
+			PrevHash:  l.PrevHash,
+			Hash:      l.Hash,
+		}
+		var line string
+		if useCEF {
+			line = auditchain.CEF(entry)
+		} else {
+			line = auditchain.SyslogRFC5424(entry)
+		}
+		_, _ = w.Write([]byte(line))
+		_, _ = w.Write([]byte{'\n'})
+	}
+}
+
+// verifyAuditChain 校验内存中审计日志的哈希链完整性（P8-3）。
+func verifyAuditChain(w http.ResponseWriter) {
+	config.AppConfigMu.RLock()
+	logs := append([]config.AuditLog(nil), config.AppConfig.AuditLogs...)
+	config.AppConfigMu.RUnlock()
+	entries := make([]auditchain.Entry, len(logs))
+	for i, l := range logs {
+		success := false
+		if l.Success != nil && *l.Success {
+			success = true
+		}
+		entries[i] = auditchain.Entry{
+			Time:      l.Time,
+			Action:    l.Action,
+			Target:    l.Target,
+			Detail:    l.Detail,
+			User:      l.User,
+			IP:        l.IP,
+			UserAgent: l.UserAgent,
+			Success:   success,
+			Error:     l.Error,
+			PrevHash:  l.PrevHash,
+			Hash:      l.Hash,
+		}
+	}
+	err := auditchain.Verify(entries)
+	if err != nil {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "chain verified", Data: map[string]int{"entries": len(entries)}})
 }
 
 // HandleAuditSettings 获取/更新审计保留期等设置。
