@@ -704,6 +704,10 @@ type ApiKeyConfig struct {
 	Disabled       bool     `json:"disabled,omitempty"`
 	ContainerUUIDs []string `json:"container_uuids,omitempty"`
 	LastUsedIP     string   `json:"last_used_ip,omitempty"`
+	// RateLimitPerMinute 单 key 每分钟请求上限（0 = 使用全局默认）
+	RateLimitPerMinute int `json:"rate_limit_per_minute,omitempty"`
+	// RevokedAt 撤销时间；非空即视为已撤销（与 Disabled 互为冗余，撤销是不可逆动作）
+	RevokedAt string `json:"revoked_at,omitempty"`
 }
 
 // DeleteApiKey removes an API key by ID

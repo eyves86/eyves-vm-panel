@@ -201,3 +201,58 @@ func TestApiKeyFingerprintPreScreensInvalidKeys(t *testing.T) {
 		t.Fatalf("valid key should match at index 0, got %d", idx)
 	}
 }
+
+// TestApiKeyRateLimitMiddlewareReturns429 验证单 key 超过 RateLimitPerMinute
+// 时 ApiKeyMiddleware 直接返回 429 + Retry-After，不进入下游 handler。
+func TestApiKeyRateLimitMiddlewareReturns429(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+
+	raw := "eyvescloud_sk_0123456789abcdef0123456789abcdef"
+	hash, err := hashAPIKey(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.AppConfig = &config.EyvescloudConfig{ApiKeys: []config.ApiKeyConfig{{
+		ID:                 "key-rl",
+		Name:               "rate-limited",
+		KeyHash:            hash,
+		KeyFingerprint:     apiKeyFingerprint(raw),
+		RateLimitPerMinute: 2,
+	}}}
+
+	// 重置全局限流器，避免被其他测试污染
+	prevLimiter := apiKeyLimiter
+	t.Cleanup(func() { apiKeyLimiter = prevLimiter })
+	apiKeyLimiter = newFreshLimiter()
+
+	var downstreamCalled int
+	downstream := func(w http.ResponseWriter, r *http.Request) {
+		downstreamCalled++
+		w.WriteHeader(http.StatusOK)
+	}
+	mw := ApiKeyMiddleware(downstream)
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/containers", nil)
+		req.Header.Set("X-API-Key", raw)
+		rr := httptest.NewRecorder()
+		mw(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("request %d code = %d, want 200", i+1, rr.Code)
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/containers", nil)
+	req.Header.Set("X-API-Key", raw)
+	rr := httptest.NewRecorder()
+	mw(rr, req)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("3rd request code = %d, want 429", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Fatal("Retry-After header must be set on 429")
+	}
+	if downstreamCalled != 2 {
+		t.Fatalf("downstream called %d times, want 2", downstreamCalled)
+	}
+}

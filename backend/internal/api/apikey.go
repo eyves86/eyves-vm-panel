@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"eyvescloud/internal/apiratelimit"
 	"eyvescloud/internal/config"
 
 	"golang.org/x/crypto/argon2"
@@ -507,9 +508,20 @@ func ApiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid API key or IP not in whitelist"})
 			return
 		}
+		if key.RateLimitPerMinute > 0 && !apiKeyLimiter.AllowKey(key.ID, key.RateLimitPerMinute) {
+			w.Header().Set("Retry-After", "60")
+			jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "API key rate limit exceeded"})
+			return
+		}
 		next(w, withAuthContext(r, authContextFromAPIKey(key)))
 	}
 }
+
+// apiKeyLimiter 是单进程限流器；进程重启时窗口重置（可接受）。
+var apiKeyLimiter = apiratelimit.New()
+
+// newFreshLimiter 是测试辅助：构造新的限流器，避免全局变量被其他测试污染。
+func newFreshLimiter() *apiratelimit.Limiter { return apiratelimit.New() }
 
 func normalizeApiKeyScopes(scopes []string) []string {
 	return normalizeRequestedScopes(scopes, []string{"*"})

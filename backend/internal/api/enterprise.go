@@ -597,6 +597,33 @@ func HandleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			"securitySchemes": map[string]interface{}{
 				"bearerAuth": map[string]string{"type": "http", "scheme": "bearer"},
 			},
+			"schemas": map[string]interface{}{
+				"Container": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"uuid":     map[string]interface{}{"type": "string"},
+						"name":     map[string]interface{}{"type": "string"},
+						"vcpu":     map[string]interface{}{"type": "number"},
+						"ram_mb":   map[string]interface{}{"type": "integer"},
+						"disk_gb":  map[string]interface{}{"type": "number"},
+						"status":   map[string]interface{}{"type": "string"},
+						"template": map[string]interface{}{"type": "string"},
+						"ipv4":     map[string]interface{}{"type": "string"},
+					},
+				},
+				"ApiKey": map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"id":                    map[string]interface{}{"type": "string"},
+						"name":                  map[string]interface{}{"type": "string"},
+						"prefix":                map[string]interface{}{"type": "string"},
+						"scopes":                map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
+						"rate_limit_per_minute": map[string]interface{}{"type": "integer"},
+						"revoked_at":            map[string]interface{}{"type": "string"},
+						"created_at":            map[string]interface{}{"type": "string"},
+					},
+				},
+			},
 		},
 		"paths": map[string]interface{}{
 			"/containers": map[string]interface{}{
@@ -604,6 +631,18 @@ func HandleOpenAPI(w http.ResponseWriter, r *http.Request) {
 					"summary":     "列出容器",
 					"security":    []map[string][]string{{"bearerAuth": []string{}}},
 					"responses":   map[string]interface{}{"200": map[string]string{"description": "OK"}},
+				},
+			},
+			"/containers/{uuid}": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":     "获取容器详情",
+					"security":    []map[string][]string{{"bearerAuth": []string{}}},
+					"responses":   map[string]interface{}{"200": map[string]string{"description": "OK"}},
+				},
+				"delete": map[string]interface{}{
+					"summary":     "删除容器",
+					"security":    []map[string][]string{{"bearerAuth": []string{}}},
+					"responses":   map[string]interface{}{"204": map[string]string{"description": "No Content"}},
 				},
 			},
 			"/tasks": map[string]interface{}{
@@ -616,6 +655,38 @@ func HandleOpenAPI(w http.ResponseWriter, r *http.Request) {
 				"get": map[string]interface{}{
 					"summary":   "面板概览",
 					"responses": map[string]interface{}{"200": map[string]string{"description": "OK"}},
+				},
+			},
+			"/audit-logs/export": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":   "导出审计日志",
+					"responses": map[string]interface{}{"200": map[string]string{"description": "CSV/JSON 流"}},
+				},
+			},
+			"/health": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":   "健康检查",
+					"responses": map[string]interface{}{"200": map[string]string{"description": "OK"}},
+				},
+			},
+			"/tenants": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":   "列出租户",
+					"responses": map[string]interface{}{"200": map[string]string{"description": "OK"}},
+				},
+				"post": map[string]interface{}{
+					"summary":   "创建租户",
+					"responses": map[string]interface{}{"201": map[string]string{"description": "Created"}},
+				},
+			},
+			"/api-keys": map[string]interface{}{
+				"get": map[string]interface{}{
+					"summary":   "列出 API Key",
+					"responses": map[string]interface{}{"200": map[string]string{"description": "OK"}},
+				},
+				"post": map[string]interface{}{
+					"summary":   "创建 API Key",
+					"responses": map[string]interface{}{"201": map[string]string{"description": "Created (明文 key 仅返回一次)"}},
 				},
 			},
 		},
