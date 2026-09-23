@@ -663,8 +663,9 @@ func HandleTenants(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		config.AppConfigMu.RLock()
 		tenants := append([]config.Tenant(nil), config.AppConfig.Tenants...)
-		containers := config.GetContainers()
 		config.AppConfigMu.RUnlock()
+		// GetContainers 自带读锁，须在释放读锁后调用，避免递归读锁死锁。
+		containers := config.GetContainers()
 		if tenants == nil {
 			tenants = []config.Tenant{}
 		}
@@ -790,9 +791,8 @@ func HandleTenantItem(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "租户已更新"})
 	case http.MethodDelete:
 		// 仅允许删除空租户（未绑定任何容器）。
-		config.AppConfigMu.RLock()
+		// GetContainers 自带读锁，不能在上面的读锁内调用，否则构成递归读锁死锁。
 		containers := config.GetContainers()
-		config.AppConfigMu.RUnlock()
 		for _, c := range containers {
 			if c.Tenant == id {
 				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "租户下仍有容器，无法删除"})
@@ -862,8 +862,9 @@ func checkTenantQuota(tenantID string, vcpu float64, ramMB int, diskGB float64) 
 			break
 		}
 	}
-	containers := config.GetContainers()
 	config.AppConfigMu.RUnlock()
+	// GetContainers 自带读锁，须在释放上面的读锁之后再调用，避免递归读锁死锁。
+	containers := config.GetContainers()
 	if !found {
 		return fmt.Errorf("租户 %q 不存在", tenantID)
 	}

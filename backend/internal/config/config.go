@@ -1762,7 +1762,9 @@ func migrateSubUsers() bool {
 		}
 		if len(su.ContainerUUIDs) == 0 && len(su.ContainerNames) > 0 {
 			for _, name := range su.ContainerNames {
-				if c := FindContainerByName(name); c != nil && c.UUID != "" {
+				// 使用不加锁的查找：migrateLoadedConfig 也可能在 ReconcileConfig 持有写锁时被调用，
+				// 若此处再取 AppConfigMu.RLock 会构成递归锁并死锁。
+				if c := findContainerByNameUnlocked(name); c != nil && c.UUID != "" {
 					su.ContainerUUIDs = appendUniqueString(su.ContainerUUIDs, c.UUID)
 				}
 			}
@@ -2411,6 +2413,19 @@ func findContainerUnlocked(id int) *Container {
 	return nil
 }
 
+// findContainerByNameUnlocked looks up a container by name without taking the
+// config lock. Callers MUST already hold AppConfigMu (read or write). It exists
+// so migration helpers that run under the write lock (ReconcileConfig) do not
+// re-acquire AppConfigMu.RLock, which would deadlock the RWMutex.
+func findContainerByNameUnlocked(name string) *Container {
+	for i, c := range AppConfig.Containers {
+		if c.Name == name {
+			return &AppConfig.Containers[i]
+		}
+	}
+	return nil
+}
+
 // FindContainer finds a container by ID
 func FindContainer(id int) *Container {
 	AppConfigMu.RLock()
@@ -2434,12 +2449,7 @@ func FindContainerByUUID(uuid string) *Container {
 func FindContainerByName(name string) *Container {
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
-	for i, c := range AppConfig.Containers {
-		if c.Name == name {
-			return &AppConfig.Containers[i]
-		}
-	}
-	return nil
+	return findContainerByNameUnlocked(name)
 }
 
 // FindContainerByIdentifier finds a container by ID, UUID, or name.

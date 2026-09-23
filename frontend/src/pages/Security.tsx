@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { FileText, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from 'lucide-react'
-import { getAbuseSummary, getSecurityAlerts, getSecurityLogs, getSecuritySettings, AbuseSummary, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
+import { getAbuseSummary, getSecurityAlerts, getSecurityLogs, getSecuritySettings, getSecuritySummary, AbuseSummary, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
 
 const typeLabels: Record<string, string> = {
   port_scan: '端口扫描',
@@ -8,6 +8,7 @@ const typeLabels: Record<string, string> = {
   brute_force: '暴力破解',
   ddos: 'DDoS/大规模扫描',
   cc: 'CC/HTTP洪水',
+  p2p: 'BT/PT下载',
   spam: '垃圾邮件',
   malware: '恶意软件',
   mining: '挖矿连接',
@@ -29,6 +30,7 @@ export default function Security() {
   const [arpProtection, setArpProtection] = useState(false)
   const [ipAntiSpoof, setIpAntiSpoof] = useState(false)
   const [abuse, setAbuse] = useState<AbuseSummary | null>(null)
+  const [conntrackAvailable, setConntrackAvailable] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(true)
   const [savingSettings, setSavingSettings] = useState(false)
   const [logAlert, setLogAlert] = useState<SecurityAlert | null>(null)
@@ -37,10 +39,11 @@ export default function Security() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [alertRes, settingsRes, abuseRes] = await Promise.all([
+      const [alertRes, settingsRes, abuseRes, summaryRes] = await Promise.all([
         getSecurityAlerts(),
         getSecuritySettings(),
         getAbuseSummary().catch(() => null),
+        getSecuritySummary().catch(() => null),
       ])
       if (alertRes.data.data) setAlerts(alertRes.data.data)
       if (settingsRes.data.data) {
@@ -49,6 +52,7 @@ export default function Security() {
         setIpAntiSpoof(settingsRes.data.data.ip_anti_spoof ?? false)
       }
       if (abuseRes?.data.data) setAbuse(abuseRes.data.data)
+      if (summaryRes?.data.data) setConntrackAvailable(summaryRes.data.data.conntrack_available ?? null)
     } catch (err) {
       console.error(err)
     } finally {
@@ -192,6 +196,14 @@ export default function Security() {
           </button>
         </div>
       </div>
+
+      {conntrackAvailable === false && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          未检测到连接跟踪数据源（conntrack / <span className="font-mono">/proc/net/nf_conntrack</span>）。
+          基于出站连接的滥用检测（挖矿、VPN/代理、BT/PT、CC、25 端口等）<strong>当前不会生效</strong>，
+          请安装 <span className="font-mono">conntrack</span> 工具或启用内核 nf_conntrack 模块。
+        </div>
+      )}
 
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">

@@ -1402,6 +1402,7 @@ export interface SecuritySummary {
   high: number
   medium: number
   low: number
+  conntrack_available?: boolean
 }
 
 export interface SecuritySettings {

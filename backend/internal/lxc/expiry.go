@@ -14,9 +14,8 @@ func IsExpired(c config.Container) bool {
 
 // StopExpiredContainers stops running containers whose expiration date has passed.
 func (m *Manager) StopExpiredContainers(now time.Time) {
-	config.AppConfigMu.RLock()
+	// GetContainers 自带读锁，此处不再额外加锁（避免递归读锁死锁）。
 	containers := config.GetContainers()
-	config.AppConfigMu.RUnlock()
 	for _, container := range containers {
 		if container.IsKVM() || !isContainerExpired(container, now) {
 			continue
@@ -53,9 +52,8 @@ func (m *Manager) StartExpiryScanner() {
 // StopTrafficExceededContainers stops running containers that have exceeded their monthly traffic limit
 func (m *Manager) StopTrafficExceededContainers(now time.Time) {
 	currentMonth := now.Format("2006-01")
-	config.AppConfigMu.RLock()
+	// GetContainers 自带读锁，此处不再额外加锁（避免递归读锁死锁）。
 	containers := config.GetContainers()
-	config.AppConfigMu.RUnlock()
 	saved := false
 	for _, c := range containers {
 		if c.IsKVM() || c.Status != "running" {

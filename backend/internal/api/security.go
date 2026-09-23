@@ -162,6 +162,25 @@ var webPorts = map[int]string{
 	9443: "HTTPS alt",
 }
 
+// btPorts 是 BitTorrent / PT 客户端、DHT 与 Tracker 的常用端口。
+// 命中这些端口的持续连接通常意味着容器在跑 BT/PT（含私有 Tracker）下载或做种。
+var btPorts = map[int]string{
+	6881:  "BitTorrent",
+	6882:  "BitTorrent",
+	6883:  "BitTorrent",
+	6884:  "BitTorrent",
+	6885:  "BitTorrent",
+	6886:  "BitTorrent",
+	6887:  "BitTorrent",
+	6888:  "BitTorrent",
+	6889:  "BitTorrent",
+	6890:  "BitTorrent",
+	6969:  "BT tracker",
+	2710:  "BitTorrent",
+	51413: "Transmission",
+	16881: "BitComet",
+}
+
 func InitScanner() {
 	if scannerStarted {
 		return
@@ -210,18 +229,70 @@ func (ss *SecurityScanner) alertCount() int {
 
 func (ss *SecurityScanner) checkAllContainers() {
 	config.AppConfigMu.RLock()
-	containers := config.GetContainers()
 	arpEnabled := config.AppConfig.ARPProtectionEnabled
 	config.AppConfigMu.RUnlock()
+
+	// GetContainers 自带读锁，必须在释放上面的读锁之后再调用，
+	// 否则与写者并发时构成递归读锁（Go RWMutex 会死锁）。
+	containers := config.GetContainers()
 	for _, c := range containers {
-		if c.Status != "running" || c.IP == "" {
+		if c.Status != "running" {
 			continue
 		}
-		ss.checkContainer(c.Name, c.IP)
 		if arpEnabled {
 			ss.checkARPConflicts(c)
 		}
+		// macvlan（LAN IPv4 模式）容器的出站流量不经过宿主机协议栈，
+		// 需要进入容器网络命名空间读取 conntrack；NAT/桥接容器仍用宿主机 conntrack。
+		netnsPID := containerConntrackNetnsPID(c)
+		// 逐一对容器的所有地址检查出站连接：容器可能只持有公网 IP（macvlan），
+		// 只监控 c.IP 会漏掉这类容器的滥用行为。
+		for _, address := range containerMonitoredAddresses(c) {
+			ss.checkContainer(c.Name, address, netnsPID)
+		}
 	}
+}
+
+// containerConntrackNetnsPID 返回应当用于读取 conntrack 的容器网络命名空间 init PID。
+//   - KVM 客户机经由宿主机网桥/tap 出站，宿主机 conntrack 可见，无需 netns；
+//   - LXC 的 NAT 模式（lxcbr0）同样经过宿主机协议栈；
+//   - LXC 的 LAN IPv4 模式使用 macvlan，出站绕过宿主机，必须进入容器 netns 才能看到连接。
+func containerConntrackNetnsPID(c config.Container) string {
+	if c.IsKVM() || !c.UsesLANIPv4() {
+		return ""
+	}
+	out, err := exec.Command("lxc-info", "-n", c.LxcName(), "-pH").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// containerMonitoredAddresses 汇总需要监控出站连接的地址：LAN IP、公网 IPv4、IPv6。
+func containerMonitoredAddresses(c config.Container) []string {
+	seen := make(map[string]struct{}, 4)
+	addresses := make([]string, 0, 4)
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		addresses = append(addresses, value)
+	}
+
+	add(c.IP)
+	for _, ip := range c.PublicIPv4s {
+		add(ip.Address)
+	}
+	add(c.IPv6)
+	for _, address := range c.IPv6AddressStrings() {
+		add(address)
+	}
+	return addresses
 }
 
 // checkARPConflicts detects IP-MAC mismatches for public/独立 IP containers
@@ -269,8 +340,8 @@ func readNeighLines(address, iface string) []string {
 	return splitNonEmptyLines(string(out))
 }
 
-func (ss *SecurityScanner) checkContainer(name, ip string) {
-	lines := readConntrackLines(ip)
+func (ss *SecurityScanner) checkContainer(name, ip, netnsPID string) {
+	lines := readConntrackForContainer(ip, netnsPID)
 	if len(lines) == 0 {
 		return
 	}
@@ -294,6 +365,7 @@ func (ss *SecurityScanner) checkContainer(name, ip string) {
 	ss.detectSpam(name, ip, stats)
 	ss.detectMassAbuse(name, ip, stats)
 	ss.detectCC(name, ip, stats)
+	ss.detectP2P(name, ip, stats)
 	ss.detectReflectionAbuse(name, ip, stats)
 	ss.detectMining(name, ip, stats)
 	ss.detectProxyAndTor(name, ip, stats)
@@ -440,6 +512,20 @@ func (ss *SecurityScanner) detectBruteForce(name, ip string, stats *trafficStats
 }
 
 func (ss *SecurityScanner) detectSpam(name, ip string, stats *trafficStats) {
+	// 25 端口对外连接是 VPS 滥用的强信号（垃圾邮件 / 开放中继），单独从严判定。
+	port25 := stats.portTotalCounts[25]
+	port25Targets := len(stats.portDestCounts[25])
+	switch {
+	case port25 >= 10 || port25Targets >= 5:
+		ss.addAlert(name, "spam", "critical", ip, "*", 25,
+			fmt.Sprintf("SMTP(25) 对外连接异常: 连接 %d 条，覆盖 %d 个目标", port25, port25Targets),
+			"")
+	case port25 >= 3:
+		ss.addAlert(name, "spam", "high", ip, "*", 25,
+			fmt.Sprintf("SMTP(25) 对外连接: 连接 %d 条，覆盖 %d 个目标", port25, port25Targets),
+			"")
+	}
+
 	total, targets := countPorts(stats.portTotalCounts, stats.portDestCounts, smtpPorts)
 	if total == 0 {
 		return
@@ -543,6 +629,45 @@ func (ss *SecurityScanner) detectCC(name, ip string, stats *trafficStats) {
 	}
 }
 
+// detectP2P 检测 BT / PT（BitTorrent、私有 Tracker）滥用：
+// 命中 BT/DHT/Tracker 常用端口，或呈现"大量高位端口对端"的群集特征。
+func (ss *SecurityScanner) detectP2P(name, ip string, stats *trafficStats) {
+	total := 0
+	peers := make(map[string]struct{})
+	for port := range btPorts {
+		total += stats.portTotalCounts[port]
+		for dstIP := range stats.portDestCounts[port] {
+			peers[dstIP] = struct{}{}
+		}
+	}
+	if total > 0 {
+		severity := "high"
+		if total >= 20 || len(peers) >= 10 {
+			severity = "critical"
+		}
+		ss.addAlert(name, "p2p", severity, ip, "*", 0,
+			fmt.Sprintf("疑似 BT/PT 下载: BitTorrent 相关端口连接 %d 条，覆盖 %d 个节点", total, len(peers)),
+			"")
+		return
+	}
+
+	// 群集特征：与大量目标在高位端口（>=1024）建立连接，是 P2P 节点群的典型形态。
+	highPortPeers := 0
+	for _, portCounts := range stats.destPorts {
+		for port := range portCounts {
+			if port >= 1024 {
+				highPortPeers++
+				break
+			}
+		}
+	}
+	if highPortPeers >= 50 && stats.total >= 80 {
+		ss.addAlert(name, "p2p", "high", ip, "*", 0,
+			fmt.Sprintf("疑似 P2P/BT 群集: 与 %d 个目标在高位端口建立连接（共 %d 条）", highPortPeers, stats.total),
+			"")
+	}
+}
+
 func (ss *SecurityScanner) detectReflectionAbuse(name, ip string, stats *trafficStats) {
 	for port, service := range reflectionPorts {
 		total := stats.udpTotalCounts[port]
@@ -630,6 +755,67 @@ func (ss *SecurityScanner) detectMalware(name, ip string, stats *trafficStats) {
 			fmt.Sprintf("疑似恶意软件/C2 连接: %s 端口 %d 当前连接 %d 条", label, port, total),
 			"")
 	}
+}
+
+// conntrackAvailable 判断主机是否具备连接跟踪数据源。
+// 滥用检测依赖 conntrack：若既无 conntrack 工具、也无 /proc/net/nf_conntrack，
+// 则所有基于出站连接的检测（挖矿/VPN/BT/CC/25端口等）都不会生效，需要显式提示管理员。
+func conntrackAvailable() bool {
+	if _, err := exec.LookPath("conntrack"); err == nil {
+		return true
+	}
+	for _, path := range []string{"/proc/net/nf_conntrack", "/proc/net/ip_conntrack"} {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// readConntrackForContainer 读取某个容器地址的出站连接：
+// 若提供了容器网络命名空间 PID（macvlan 场景），优先在容器 netns 内读取；
+// 读不到时回退到宿主机 conntrack（NAT/桥接/KVM 场景）。
+func readConntrackForContainer(ip, netnsPID string) []string {
+	if netnsPID != "" {
+		if lines := readConntrackInNetns(netnsPID, ip); len(lines) > 0 {
+			return lines
+		}
+	}
+	return readConntrackLines(ip)
+}
+
+// readConntrackInNetns 进入指定 PID 的网络命名空间读取 conntrack 条目。
+// nsenter 只切换 net namespace，仍使用宿主机的 conntrack/cat 二进制。
+func readConntrackInNetns(pid, ip string) []string {
+	if _, err := exec.LookPath("nsenter"); err != nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// 优先用 conntrack 工具按源地址过滤。
+	cmd := exec.CommandContext(ctx, "nsenter", "-t", pid, "-n", "conntrack", "-L", "-s", ip)
+	if output, err := cmd.Output(); err == nil && len(output) > 0 {
+		return splitNonEmptyLines(string(output))
+	}
+
+	// 容器内若无 conntrack 工具，则直接读取该 netns 的 conntrack 表。
+	cmd = exec.CommandContext(ctx, "nsenter", "-t", pid, "-n", "cat", "/proc/net/nf_conntrack")
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var lines []string
+	for _, line := range strings.Split(string(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "src="+ip+" ") {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
 
 func readConntrackLines(ip string) []string {
@@ -730,17 +916,23 @@ func resolveAbuseOwnership(containerName string) (tenant, owner string) {
 		return "", ""
 	}
 
-	var containerUUID string
-	if c := config.FindContainerByName(containerName); c != nil {
-		tenant = strings.TrimSpace(c.Tenant)
-		containerUUID = c.UUID
-	}
-
+	// 一次读锁内完成容器与子用户的归属解析，避免锁外使用共享指针造成数据竞争。
 	config.AppConfigMu.RLock()
 	defer config.AppConfigMu.RUnlock()
 	if config.AppConfig == nil {
-		return tenant, ""
+		return "", ""
 	}
+
+	var containerUUID string
+	for i := range config.AppConfig.Containers {
+		c := &config.AppConfig.Containers[i]
+		if c.Name == containerName {
+			tenant = strings.TrimSpace(c.Tenant)
+			containerUUID = c.UUID
+			break
+		}
+	}
+
 	for i := range config.AppConfig.SubUsers {
 		su := &config.AppConfig.SubUsers[i]
 		if !subUserBindsContainer(su, containerName, containerUUID) {
@@ -780,7 +972,6 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 
 	now := time.Now()
 	cutoff := now.Add(-5 * time.Minute)
-	shouldShutdown := false
 
 	for i := range ss.alerts {
 		a := &ss.alerts[i]
@@ -801,9 +992,9 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 		if severityRank(severity) > severityRank(a.Severity) {
 			a.Severity = severity
 		}
-		shouldShutdown = config.AppConfig.SecurityAutoShutdown
 		ss.mu.Unlock()
-		if shouldShutdown {
+		// 关机开关在扫描器锁之外读取（自带读锁），避免锁嵌套与数据竞争。
+		if securityAutoShutdownEnabled() {
 			autoShutdownAlertContainer(name, alertType, severity)
 		}
 		return
@@ -828,7 +1019,6 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 
 	ss.alerts = append(ss.alerts, alert)
 	config.AddAuditLog("security_"+alertType, name, fmt.Sprintf("[%s] %s", severity, detail), "system")
-	shouldShutdown = config.AppConfig.SecurityAutoShutdown
 
 	if len(ss.alerts) > 200 {
 		ss.alerts = ss.alerts[len(ss.alerts)-200:]
@@ -838,7 +1028,7 @@ func (ss *SecurityScanner) addAlert(name, alertType, severity, srcIP, dstIP stri
 	// 新告警推送到外部通道（webhook / 邮件）
 	NotifySecurityAlert(alert)
 
-	if shouldShutdown {
+	if securityAutoShutdownEnabled() {
 		autoShutdownAlertContainer(name, alertType, severity)
 	}
 }
@@ -858,29 +1048,46 @@ func severityRank(severity string) int {
 	}
 }
 
+// securityAutoShutdownEnabled 在读锁下读取自动关机开关，避免与设置写入并发竞争。
+func securityAutoShutdownEnabled() bool {
+	config.AppConfigMu.RLock()
+	defer config.AppConfigMu.RUnlock()
+	return config.AppConfig != nil && config.AppConfig.SecurityAutoShutdown
+}
+
 func autoShutdownAlertContainer(containerName, alertType, severity string) {
-	if !config.AppConfig.SecurityAutoShutdown {
+	if !securityAutoShutdownEnabled() {
 		return
 	}
-	c := config.FindContainerByName(containerName)
-	if c == nil || c.Status != "running" {
+	// 用快照查找，避免锁外读取共享容器指针。
+	var target config.Container
+	found := false
+	for _, c := range config.GetContainers() {
+		if c.Name == containerName {
+			target = c
+			found = true
+			break
+		}
+	}
+	if !found || target.Status != "running" {
 		return
 	}
 	reason := fmt.Sprintf("%s 告警触发策略临时封禁", alertType)
 	if severity != "" {
 		reason = fmt.Sprintf("[%s] %s", severity, reason)
 	}
-	config.SetContainerPolicyBlock(c.ID, true, reason)
-	taskID, queued := globalQueue.EnqueueSecurityStop(c.ID, c.Name)
+	config.SetContainerPolicyBlock(target.ID, true, reason)
+	taskID, queued := globalQueue.EnqueueSecurityStop(target.ID, target.Name)
 	if queued {
-		config.AddAuditLog("security_auto_shutdown", c.Name, fmt.Sprintf("[%s] %s 告警触发自动关机任务 %s", severity, alertType, taskID), "system")
+		config.AddAuditLog("security_auto_shutdown", target.Name, fmt.Sprintf("[%s] %s 告警触发自动关机任务 %s", severity, alertType, taskID), "system")
 	}
 }
 
 func clearSecurityPolicyBlocks() int {
 	cleared := 0
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	// 先取容器快照，避免直接遍历共享切片造成数据竞争；
+	// SetContainerPolicyBlock 内部会再取写锁，因此不能在持有 AppConfigMu 时调用它。
+	for _, c := range config.GetContainers() {
 		if !c.PolicyBlocked || !isSecurityPolicyBlockReason(c.PolicyBlockedReason) {
 			continue
 		}
@@ -961,12 +1168,18 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 			cancelledTasks = globalQueue.CancelPendingSecurityStops()
 			clearedBlocks = clearSecurityPolicyBlocks()
 		}
+		// 读取最新设置用于回显：在读锁下快照，避免与其它写入并发竞争。
+		config.AppConfigMu.RLock()
+		autoShutdown := config.AppConfig.SecurityAutoShutdown
+		arpProtection := config.AppConfig.ARPProtectionEnabled
+		ipAntiSpoof := config.AppConfig.IPAntiSpoofEnabled
+		config.AppConfigMu.RUnlock()
 		auditRequest(r, "security.settings", "auto_shutdown",
-			fmt.Sprintf("auto_shutdown=%v arp_protection=%v ip_anti_spoof=%v", config.AppConfig.SecurityAutoShutdown, config.AppConfig.ARPProtectionEnabled, config.AppConfig.IPAntiSpoofEnabled), true, "")
+			fmt.Sprintf("auto_shutdown=%v arp_protection=%v ip_anti_spoof=%v", autoShutdown, arpProtection, ipAntiSpoof), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
-			"auto_shutdown":   config.AppConfig.SecurityAutoShutdown,
-			"arp_protection":  config.AppConfig.ARPProtectionEnabled,
-			"ip_anti_spoof":   config.AppConfig.IPAntiSpoofEnabled,
+			"auto_shutdown":   autoShutdown,
+			"arp_protection":  arpProtection,
+			"ip_anti_spoof":   ipAntiSpoof,
 			"cancelled_tasks": cancelledTasks,
 			"cleared_blocks":  clearedBlocks,
 		}})
@@ -1003,7 +1216,7 @@ func HandleSecurityCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ensureScanner().checkContainer(c.Name, c.IP)
+	ensureScanner().checkContainer(c.Name, c.IP, containerConntrackNetnsPID(*c))
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Security check completed"})
 }
 
@@ -1033,10 +1246,10 @@ func HandleSecurityLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: getConnectionLogs(c.IP)})
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: getConnectionLogs(c.IP, containerConntrackNetnsPID(*c))})
 }
 
-func getConnectionLogs(ip string) []map[string]interface{} {
+func getConnectionLogs(ip, netnsPID string) []map[string]interface{} {
 	logs := make([]map[string]interface{}, 0)
 	seen := map[string]bool{}
 
@@ -1071,7 +1284,7 @@ func getConnectionLogs(ip string) []map[string]interface{} {
 	}
 
 	// Then, merge live conntrack data (deduplicated).
-	for _, line := range readConntrackLines(ip) {
+	for _, line := range readConntrackForContainer(ip, netnsPID) {
 		if len(logs) >= 100 {
 			break
 		}
@@ -1134,6 +1347,8 @@ func HandleContainerSecuritySummary(w http.ResponseWriter, r *http.Request) {
 		"high":         high,
 		"medium":       medium,
 		"low":          low,
+		// conntrack_available 为 false 时，基于出站连接的滥用检测不会生效，需提示管理员。
+		"conntrack_available": conntrackAvailable(),
 	}
 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: summary})
@@ -1246,7 +1461,13 @@ func mergedSecurityAlerts() []SecurityAlert {
 		seen[securityAlertKey(alert)] = true
 	}
 
-	for i, log := range config.AppConfig.AuditLogs {
+	// 快照审计日志：AddAuditLog 会在其它 goroutine 并发 append，直接遍历
+	// AppConfig.AuditLogs 会与写入竞争（切片头撕裂/越界），必须先加读锁拷贝。
+	config.AppConfigMu.RLock()
+	auditLogs := append([]config.AuditLog(nil), config.AppConfig.AuditLogs...)
+	config.AppConfigMu.RUnlock()
+
+	for i, log := range auditLogs {
 		alert, ok := alertFromSecurityAuditLog(log, i)
 		if !ok {
 			continue

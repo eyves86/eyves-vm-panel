@@ -3612,12 +3612,11 @@ func (m *Manager) AccumulateTraffic() {
 	trafficMu.Lock()
 	defer trafficMu.Unlock()
 
-	// Snapshot the container list under the config read lock, then apply every
+	// Snapshot the container list, then apply every
 	// counter update through MutateContainerNoSave so the mutation is serialized
 	// with the expiry scanner, policy engine and HTTP handlers.
-	config.AppConfigMu.RLock()
+	// GetContainers 自带读锁，此处不再额外加锁（避免递归读锁死锁）。
 	containers := config.GetContainers()
-	config.AppConfigMu.RUnlock()
 
 	for _, c := range containers {
 		if !c.IsKVM() {

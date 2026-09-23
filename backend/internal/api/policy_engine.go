@@ -40,8 +40,10 @@ func seedPolicyLastTrigger() {
 	}
 	config.AppConfigMu.RLock()
 	rules := append([]config.PolicyRule(nil), config.AppConfig.PolicyRules...)
-	containers := config.GetContainers()
 	config.AppConfigMu.RUnlock()
+	// GetContainers 自身会加读锁；必须在释放上面的读锁之后再调用，
+	// 否则与写者并发时构成递归读锁（Go RWMutex 会死锁）。
+	containers := config.GetContainers()
 	policyTriggerMu.Lock()
 	defer policyTriggerMu.Unlock()
 	for i := range rules {
@@ -75,8 +77,9 @@ func evaluatePolicyRules() {
 	// (HTTP handlers, metric samplers) cannot tear the slices being evaluated.
 	config.AppConfigMu.RLock()
 	rules := append([]config.PolicyRule(nil), config.AppConfig.PolicyRules...)
-	containers := config.GetContainers()
 	config.AppConfigMu.RUnlock()
+	// 同上：GetContainers 自带读锁，须在释放读锁后调用，避免递归读锁。
+	containers := config.GetContainers()
 	now := time.Now()
 
 	for i := range rules {

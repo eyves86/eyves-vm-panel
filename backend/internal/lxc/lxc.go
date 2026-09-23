@@ -3630,8 +3630,9 @@ func (m *Manager) ImportExistingEyvescloudContainers() ([]config.Container, erro
 	existingLXCNames := make(map[string]bool)
 	config.AppConfigMu.RLock()
 	maxID := config.AppConfig.NextContainerID - 1
-	containersSnapshot := config.GetContainers()
 	config.AppConfigMu.RUnlock()
+	// GetContainers 自带读锁，必须在释放上面的读锁之后再调用，避免递归读锁死锁。
+	containersSnapshot := config.GetContainers()
 	for _, c := range containersSnapshot {
 		existingIDs[c.ID] = true
 		existingNames[c.Name] = true
@@ -4340,9 +4341,8 @@ func (m *Manager) AccumulateTraffic() {
 	lastTrafficSnapshotMu.Lock()
 	defer lastTrafficSnapshotMu.Unlock()
 
-	config.AppConfigMu.RLock()
+	// GetContainers 自带读锁，此处不再额外加锁（避免递归读锁死锁）。
 	containers := config.GetContainers()
-	config.AppConfigMu.RUnlock()
 
 	changed := false
 	for _, c := range containers {
