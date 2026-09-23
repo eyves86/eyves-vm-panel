@@ -12,6 +12,8 @@ import (
 	"time"
 
 	_ "modernc.org/sqlite"
+
+	"eyvescloud/internal/storage"
 )
 
 var (
@@ -450,6 +452,19 @@ func ensureSchema() error {
 			PRIMARY KEY (container_key, hour)
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_metrics_hourly_hour ON container_metrics_hourly (hour)`,
+		// P0-1 存储抽象层：卷表，把卷与容器/池解耦。
+		// 卷记录独立于 saveConfigToDB 的全量快照流程（不在其 DELETE 列表中），
+		// 采用即时 CRUD，与 security_conntrack_snapshots 的直写模式一致。
+		`CREATE TABLE IF NOT EXISTS volumes (
+			id TEXT PRIMARY KEY,
+			pool_id TEXT NOT NULL,
+			kind TEXT NOT NULL,
+			size_mb INTEGER NOT NULL DEFAULT 0,
+			attached_to_container_id INTEGER NOT NULL DEFAULT 0,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_volumes_container ON volumes (attached_to_container_id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -526,6 +541,9 @@ func ensureSchemaMigrations() error {
 		{"containers", "rescue_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"containers", "rescue_iso_id", "TEXT"},
 		{"containers", "rescue_iso_path", "TEXT"},
+		// P0-1 存储抽象层：容器与卷解耦（旧数据为空 = 直连路径模式，不迁移）。
+		{"containers", "root_volume_id", "TEXT"},
+		{"containers", "data_volume_ids", "TEXT"},
 	} {
 		wasAdded, err := ensureColumn(column.table, column.name, column.def)
 		if err != nil {
@@ -933,8 +951,8 @@ func saveContainers(tx *sql.Tx) error {
 			policy_blocked, policy_blocked_reason, policy_blocked_at,
 			firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 			tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
-			rescue_enabled, rescue_iso_id, rescue_iso_path
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.ID, c.UUID, c.Name, c.Virtualization, c.LXCName, c.KVMName, c.DiskImage, c.StoragePoolID, c.StoragePath, c.MACAddress, c.Template,
 			c.VCPU, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
 			c.MonthlyTrafficGB, c.TrafficMode, c.TrafficInGB,
@@ -949,6 +967,7 @@ func saveContainers(tx *sql.Tx) error {
 			boolInt(c.FirewallEnabled), normalizeFirewallDefaultAction(c.FirewallDefaultAction), marshalFirewallRules(c.FirewallRules), allowedImageIDs, boolInt(c.ImageLimitConfigured),
 			c.Tenant, c.CloudInitUserData, c.DataDiskGB, c.DataDiskMountPath,
 			boolInt(c.RescueEnabled), c.RescueISOID, c.RescueISOPath,
+			c.RootVolumeID, encodeStringSlice(c.DataVolumeIDs),
 		); err != nil {
 			return err
 		}
@@ -1060,6 +1079,148 @@ func GetConntrackSnapshotLines(containerIP string) []string {
 	return lines
 }
 
+// ---- P0-1 存储卷记录（volumes 表）----
+// 卷记录独立于 saveConfigToDB 的全量快照流程：增删改即时落库，
+// 保证容器创建中途崩溃后不丢失/不残留半状态。读取走即时查询，无内存副本，
+// 因此也不会与 AppConfigMu 产生锁交互（dbMu 是叶子锁）。
+
+// CreateVolumeRecord 写入一条卷记录（status=creating 阶段调用），ID 冲突显式报错。
+func CreateVolumeRecord(v storage.Volume) error {
+	v.ID = strings.TrimSpace(v.ID)
+	if v.ID == "" {
+		return fmt.Errorf("volume id is required")
+	}
+	if v.CreatedAt == "" {
+		v.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
+	}
+	if db == nil {
+		return fmt.Errorf("sqlite database is not initialized")
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if volumeRecordExistsLocked(v.ID) {
+		return fmt.Errorf("%w: %s", storage.ErrVolumeExists, v.ID)
+	}
+	_, err := db.Exec(`INSERT INTO volumes (id, pool_id, kind, size_mb, attached_to_container_id, status, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		v.ID, v.PoolID, v.Kind, v.SizeMB, v.AttachedToContainerID, v.Status, v.CreatedAt)
+	return err
+}
+
+// UpdateVolumeRecord 按 ID 全量更新卷记录（状态机流转、挂载绑定）。
+func UpdateVolumeRecord(v storage.Volume) error {
+	v.ID = strings.TrimSpace(v.ID)
+	if v.ID == "" {
+		return fmt.Errorf("volume id is required")
+	}
+	if db == nil {
+		return fmt.Errorf("sqlite database is not initialized")
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	res, err := db.Exec(`UPDATE volumes SET pool_id = ?, kind = ?, size_mb = ?, attached_to_container_id = ?, status = ?
+		WHERE id = ?`,
+		v.PoolID, v.Kind, v.SizeMB, v.AttachedToContainerID, v.Status, v.ID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("%w: %s", storage.ErrVolumeNotFound, v.ID)
+	}
+	return nil
+}
+
+// DeleteVolumeRecord 删除卷记录（幂等：记录不存在时返回 nil）。
+func DeleteVolumeRecord(id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" || db == nil {
+		return nil
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	_, err := db.Exec(`DELETE FROM volumes WHERE id = ?`, id)
+	return err
+}
+
+// DeleteContainerVolumes 删除挂载在指定容器上的全部卷记录（根卷+数据卷），
+// 返回被删除的卷 ID 列表，供调用方写审计日志。
+func DeleteContainerVolumes(containerID int) []string {
+	if containerID <= 0 || db == nil {
+		return nil
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	rows, err := db.Query(`SELECT id FROM volumes WHERE attached_to_container_id = ?`, containerID)
+	if err != nil {
+		return nil
+	}
+	ids := []string{}
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := db.Exec(`DELETE FROM volumes WHERE id = ?`, id); err != nil {
+			return ids
+		}
+	}
+	return ids
+}
+
+// GetVolume 按 ID 读取卷记录。数据库未初始化（单元测试环境）时返回不存在。
+func GetVolume(id string) (storage.Volume, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" || db == nil {
+		return storage.Volume{}, false
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	return getVolumeLocked(id)
+}
+
+// ListVolumes 返回全部卷记录（按创建时间升序）。
+func ListVolumes() []storage.Volume {
+	if db == nil {
+		return nil
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	rows, err := db.Query(`SELECT id, pool_id, kind, size_mb, attached_to_container_id, status, created_at
+		FROM volumes ORDER BY created_at, id`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := []storage.Volume{}
+	for rows.Next() {
+		var v storage.Volume
+		if err := rows.Scan(&v.ID, &v.PoolID, &v.Kind, &v.SizeMB, &v.AttachedToContainerID, &v.Status, &v.CreatedAt); err != nil {
+			return nil
+		}
+		result = append(result, v)
+	}
+	return result
+}
+
+func volumeRecordExistsLocked(id string) bool {
+	_, ok := getVolumeLocked(id)
+	return ok
+}
+
+func getVolumeLocked(id string) (storage.Volume, bool) {
+	var v storage.Volume
+	err := db.QueryRow(`SELECT id, pool_id, kind, size_mb, attached_to_container_id, status, created_at
+		FROM volumes WHERE id = ?`, id).Scan(
+		&v.ID, &v.PoolID, &v.Kind, &v.SizeMB, &v.AttachedToContainerID, &v.Status, &v.CreatedAt)
+	if err != nil {
+		return storage.Volume{}, false
+	}
+	return v, true
+}
+
 func saveAuditLogs(tx *sql.Tx) error {
 	for _, log := range AppConfig.AuditLogs {
 		successSet := 0
@@ -1166,7 +1327,7 @@ func loadContainers() ([]Container, error) {
 		policy_blocked, policy_blocked_reason, policy_blocked_at,
 		firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 		tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
-		rescue_enabled, rescue_iso_id, rescue_iso_path
+		rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids
 		FROM containers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1188,6 +1349,7 @@ func loadContainers() ([]Container, error) {
 		var dataDiskMountPath sql.NullString
 		var rescueEnabled int
 		var rescueISOID, rescueISOPath sql.NullString
+		var rootVolumeID, dataVolumeIDs sql.NullString
 		if err := rows.Scan(
 			&c.ID, &c.UUID, &c.Name, &c.Virtualization, &c.LXCName, &c.KVMName, &c.DiskImage, &storagePoolID, &storagePath, &c.MACAddress, &c.Template,
 			&c.VCPU, &c.RAMMB, &c.DiskGB, &c.NetworkBWMbps, &c.NetworkDownMbps, &c.NetworkUpMbps,
@@ -1203,6 +1365,7 @@ func loadContainers() ([]Container, error) {
 			&firewallEnabled, &firewallDefaultAction, &firewallRulesJSON, &allowedImageIDs, &imageLimitConfigured,
 			&tenant, &cloudInitUserData, &c.DataDiskGB, &dataDiskMountPath,
 			&rescueEnabled, &rescueISOID, &rescueISOPath,
+			&rootVolumeID, &dataVolumeIDs,
 		); err != nil {
 			return nil, err
 		}
@@ -1211,6 +1374,8 @@ func loadContainers() ([]Container, error) {
 		c.RescueEnabled = rescueEnabled != 0
 		c.RescueISOID = rescueISOID.String
 		c.RescueISOPath = rescueISOPath.String
+		c.RootVolumeID = rootVolumeID.String
+		c.DataVolumeIDs = decodeStringSlice(dataVolumeIDs.String)
 		c.Tenant = tenant.String
 		c.StoragePoolID = storagePoolID.String
 		c.StoragePath = storagePath.String

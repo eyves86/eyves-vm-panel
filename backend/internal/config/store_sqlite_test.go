@@ -2,10 +2,14 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"eyvescloud/internal/storage"
 )
 
 func TestSQLiteConfigMigratesLegacyJSONAndPersists(t *testing.T) {
@@ -182,4 +186,175 @@ func resetConfigStoreForTest(t *testing.T) {
 	}
 	AppConfig = nil
 	configPath = ""
+}
+
+// TestP0xStorageMigrationIdempotent 验证 P0-1 表结构迁移幂等：
+// 同一数据库连续两次执行完整迁移（InitConfig 内含 createSchema +
+// ensureSchemaMigrations），第二次不报错、不产生重复数据。
+func TestP0xStorageMigrationIdempotent(t *testing.T) {
+	resetConfigStoreForTest(t)
+	t.Cleanup(func() { resetConfigStoreForTest(t) })
+	dir := t.TempDir()
+	SetConfigPath(filepath.Join(dir, "config.json"))
+
+	for round := 1; round <= 2; round++ {
+		cfg, err := InitConfig()
+		if err != nil {
+			t.Fatalf("migration round %d failed: %v", round, err)
+		}
+		if len(cfg.Containers) != 0 {
+			t.Fatalf("round %d: unexpected containers %+v", round, cfg.Containers)
+		}
+		// 每轮结束手工注册一个卷与一个池字段，下一轮加载必须原样读回
+		//（第二轮同时证明第一轮数据未因重复迁移丢失）。
+		vol := storage.Volume{
+			ID:                    fmt.Sprintf("vol-idem-%d", round),
+			PoolID:                "disk-root",
+			Kind:                  storage.VolumeKindDir,
+			SizeMB:                1024,
+			AttachedToContainerID: round,
+			Status:                storage.VolumeStatusAttached,
+			CreatedAt:             "2026-09-24 12:00:00",
+		}
+		if err := CreateVolumeRecord(vol); err != nil {
+			t.Fatalf("round %d: CreateVolumeRecord failed: %v", round, err)
+		}
+	}
+
+	if _, err := InitConfig(); err != nil {
+		t.Fatal(err)
+	}
+	volumes := ListVolumes()
+	if len(volumes) != 2 {
+		t.Fatalf("expected 2 persisted volumes after two migration rounds, got %d: %+v", len(volumes), volumes)
+	}
+	for _, vol := range volumes {
+		if got, ok := GetVolume(vol.ID); !ok || got.AttachedToContainerID != vol.AttachedToContainerID {
+			t.Fatalf("volume %s did not round-trip: got=%+v ok=%v", vol.ID, got, ok)
+		}
+	}
+}
+
+// TestP0xVolumeRecordCRUD 覆盖卷记录完整生命周期（creating→available→
+// attached→deleting）与删除语义（按容器批量清理、幂等删除）。
+func TestP0xVolumeRecordCRUD(t *testing.T) {
+	resetConfigStoreForTest(t)
+	t.Cleanup(func() { resetConfigStoreForTest(t) })
+	dir := t.TempDir()
+	SetConfigPath(filepath.Join(dir, "config.json"))
+	if _, err := InitConfig(); err != nil {
+		t.Fatal(err)
+	}
+
+	vol := storage.Volume{
+		ID:        "vol-crud",
+		PoolID:    "disk-root",
+		Kind:      storage.VolumeKindDir,
+		SizeMB:    2048,
+		Status:    storage.VolumeStatusCreating,
+		CreatedAt: "2026-09-24 12:00:00",
+	}
+	if err := CreateVolumeRecord(vol); err != nil {
+		t.Fatal(err)
+	}
+	if err := CreateVolumeRecord(vol); !errors.Is(err, storage.ErrVolumeExists) {
+		t.Fatalf("duplicate record error = %v, want ErrVolumeExists", err)
+	}
+
+	// creating → available → attached：全量更新生效。
+	vol.Status = storage.VolumeStatusAvailable
+	if err := UpdateVolumeRecord(vol); err != nil {
+		t.Fatal(err)
+	}
+	vol.Status = storage.VolumeStatusAttached
+	vol.AttachedToContainerID = 42
+	if err := UpdateVolumeRecord(vol); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := GetVolume("vol-crud")
+	if !ok || got.Status != storage.VolumeStatusAttached || got.AttachedToContainerID != 42 || got.SizeMB != 2048 {
+		t.Fatalf("attached volume did not round-trip: %+v ok=%v", got, ok)
+	}
+
+	// attached → deleting：状态落库后按容器清理。
+	vol.Status = storage.VolumeStatusDeleting
+	if err := UpdateVolumeRecord(vol); err != nil {
+		t.Fatal(err)
+	}
+	removed := DeleteContainerVolumes(42)
+	if len(removed) != 1 || removed[0] != "vol-crud" {
+		t.Fatalf("DeleteContainerVolumes(42) = %v, want [vol-crud]", removed)
+	}
+	if _, ok := GetVolume("vol-crud"); ok {
+		t.Fatal("volume record still exists after DeleteContainerVolumes")
+	}
+	if removed := DeleteContainerVolumes(42); len(removed) != 0 {
+		t.Fatalf("DeleteContainerVolumes must be idempotent, got %v", removed)
+	}
+
+	missing := storage.Volume{ID: "vol-missing", Kind: storage.VolumeKindDir, Status: storage.VolumeStatusAvailable}
+	if err := UpdateVolumeRecord(missing); !errors.Is(err, storage.ErrVolumeNotFound) {
+		t.Fatalf("update missing record error = %v, want ErrVolumeNotFound", err)
+	}
+	if err := DeleteVolumeRecord("vol-crud"); err != nil {
+		t.Fatalf("DeleteVolumeRecord of missing id must be nil, got %v", err)
+	}
+}
+
+// TestP0xStoragePoolAndContainerVolumeFieldsPersist 覆盖 P0-1 新字段双向持久化：
+// 池的 Backend/Shared/Watermark、容器的 RootVolumeID/DataVolumeIDs 均需
+// 保存后原样读回；旧数据（空 Backend）加载时自动补 dir。
+func TestP0xStoragePoolAndContainerVolumeFieldsPersist(t *testing.T) {
+	resetConfigStoreForTest(t)
+	t.Cleanup(func() { resetConfigStoreForTest(t) })
+	dir := t.TempDir()
+	SetConfigPath(filepath.Join(dir, "config.json"))
+	cfg, err := InitConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg.StoragePools = []StoragePool{{
+		ID:                "disk-data",
+		Name:              "data",
+		Path:              "/mnt/data/eyvescloud",
+		MountPoint:        "/mnt/data",
+		ContentTypes:      []string{StorageContentLXC},
+		DefaultContents:   []string{StorageContentLXC},
+		Enabled:           true,
+		Shared:            true,
+		WatermarkWarn:     75,
+		WatermarkCritical: 85,
+	}}
+	cfg.Containers = []Container{{
+		ID:             1,
+		UUID:           "uuid-vol",
+		Name:           "ct-vol",
+		Virtualization: VirtualizationLXC,
+		LXCName:        "ct-1",
+		Status:         "stopped",
+		RootVolumeID:   "vol-root-1",
+		DataVolumeIDs:  []string{"vol-data-1", "vol-data-2"},
+	}}
+	if err := SaveConfig(); err != nil {
+		t.Fatal(err)
+	}
+
+	resetConfigStoreForTest(t)
+	SetConfigPath(filepath.Join(dir, "config.json"))
+	cfg, err = InitConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool := cfg.StoragePools[0]
+	if pool.Backend != storage.BackendDir {
+		t.Fatalf("pool backend = %q, want %q (empty must normalize to dir)", pool.Backend, storage.BackendDir)
+	}
+	if !pool.Shared || pool.WatermarkWarn != 75 || pool.WatermarkCritical != 85 {
+		t.Fatalf("P0-1 pool fields did not round-trip: %+v", pool)
+	}
+	c := cfg.Containers[0]
+	if c.RootVolumeID != "vol-root-1" || len(c.DataVolumeIDs) != 2 || c.DataVolumeIDs[1] != "vol-data-2" {
+		t.Fatalf("container volume fields did not round-trip: %+v", c)
+	}
 }

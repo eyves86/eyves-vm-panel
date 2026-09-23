@@ -75,6 +75,11 @@ func HandleStorage(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// P0-1：与 config 加载归一化路径保持一致（NormalizeStoragePoolDefaults），
+		// 使 PUT 落库的池立即携带 Backend=dir 与默认水位线，而非等下次加载补齐。
+		for i := range pools {
+			config.NormalizeStoragePoolDefaults(&pools[i])
+		}
 		config.AppConfig.StoragePools = pools
 		if err := config.SaveConfig(); err != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save storage pools"})
@@ -90,6 +95,14 @@ func buildStorageInfo() storageInfoResponse {
 	disks := detectStorageDisks()
 	pools := make([]storagePoolInfo, 0, len(config.AppConfig.StoragePools))
 	for _, pool := range config.AppConfig.StoragePools {
+		// P0-1 存储抽象层新增字段（backend/shared/watermark_*）刻意不随
+		// /api/storage 响应暴露：当前唯一后端是 dir，暴露无调度意义；
+		// P0-2 引入 ZFS 后端时再一并开放（届时前端需要展示与选择后端）。
+		// 此处显式清零，保证 GET 响应结构与字段和 P0-1 之前完全一致。
+		pool.Backend = ""
+		pool.Shared = false
+		pool.WatermarkWarn = 0
+		pool.WatermarkCritical = 0
 		info := storagePoolInfo{StoragePool: pool}
 		if filepath.Clean(pool.MountPoint) == string(os.PathSeparator) {
 			_ = os.MkdirAll(pool.Path, 0755)

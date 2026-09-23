@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/storage"
 )
 
 func TestRootfsCommandAddsSeparatorForAllowedCommand(t *testing.T) {
@@ -559,5 +560,158 @@ func TestAppendMissingSeccompRulesAddsFutexMitigationOnce(t *testing.T) {
 		if strings.Count(twice, want) != 1 {
 			t.Fatalf("rule %q duplicated in\n%s", want, twice)
 		}
+	}
+}
+
+// setupVolumeTestConfig 把 config 数据目录与 SQLite 重定向到临时目录并
+// 初始化配置，供 P0-1 卷链路测试使用（lxc 包测试与 config 包测试分属不同
+// 进程，互不影响；包内本测试独占全局 config，无需额外串行化）。
+func setupVolumeTestConfig(t *testing.T) {
+	t.Helper()
+	dataDir := t.TempDir()
+	previousDataDir := os.Getenv("EYVESCLOUD_DATA_DIR")
+	previousAppConfig := config.AppConfig
+	os.Setenv("EYVESCLOUD_DATA_DIR", dataDir)
+	config.SetConfigPath(filepath.Join(dataDir, "config.json"))
+	t.Cleanup(func() {
+		if previousDataDir == "" {
+			os.Unsetenv("EYVESCLOUD_DATA_DIR")
+		} else {
+			os.Setenv("EYVESCLOUD_DATA_DIR", previousDataDir)
+		}
+		config.SetConfigPath("")
+		config.AppConfig = previousAppConfig
+	})
+	if _, err := config.InitConfig(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestMoveContainerToStoragePoolRecordsRootVolume 验证 P0-1 验收链路：
+// 新建 dir 池 → 容器目录迁入池 → 在卷目录（vol-<uuid>）落位 →
+// 卷记录 status=attached 并绑定容器 → 卷路径仍在删除白名单内 →
+// 按容器清理卷记录。
+func TestMoveContainerToStoragePoolRecordsRootVolume(t *testing.T) {
+	setupVolumeTestConfig(t)
+
+	base := t.TempDir()
+	lxcPath := filepath.Join(base, "lxc")
+	poolPath := filepath.Join(base, "pool")
+	sourceRootfs := filepath.Join(lxcPath, "ct-7", "rootfs")
+	if err := os.MkdirAll(sourceRootfs, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRootfs, "seed.txt"), []byte("boot"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	config.AppConfig.StoragePools = []config.StoragePool{{
+		ID:              "pool-vol",
+		Name:            "pool-vol",
+		Path:            poolPath,
+		ContentTypes:    []string{config.StorageContentLXC},
+		DefaultContents: []string{config.StorageContentLXC},
+		Enabled:         true,
+	}}
+	// 池选择器通过真实 df/stat 探测可用性，路径必须先存在。
+	if err := os.MkdirAll(poolPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{LxcPath: lxcPath}
+	poolID, storagePath, rootVolumeID, err := m.moveContainerToStoragePool("ct-7", 7, "pool-vol", 5.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.HasPrefix(rootVolumeID, "vol-") {
+		t.Fatalf("rootVolumeID = %q, want vol- prefix", rootVolumeID)
+	}
+	wantPath := filepath.Join(poolPath, "lxc", rootVolumeID)
+	if storagePath != wantPath {
+		t.Fatalf("storagePath = %q, want %q", storagePath, wantPath)
+	}
+	if poolID != "pool-vol" {
+		t.Fatalf("poolID = %q, want pool-vol", poolID)
+	}
+	if _, err := os.Stat(filepath.Join(wantPath, "rootfs", "seed.txt")); err != nil {
+		t.Fatalf("container content missing in volume directory: %v", err)
+	}
+	if link, err := os.Readlink(filepath.Join(lxcPath, "ct-7")); err != nil || link != wantPath {
+		t.Fatalf("LXC symlink = %q (%v), want %q", link, err, wantPath)
+	}
+
+	vol, ok := config.GetVolume(rootVolumeID)
+	if !ok {
+		t.Fatalf("volume record %s not persisted", rootVolumeID)
+	}
+	if vol.Status != storage.VolumeStatusAttached {
+		t.Fatalf("volume status = %q, want attached", vol.Status)
+	}
+	if vol.AttachedToContainerID != 7 || vol.PoolID != "pool-vol" || vol.Kind != storage.VolumeKindDir {
+		t.Fatalf("volume record = %+v", vol)
+	}
+	if vol.SizeMB != 5120 {
+		t.Fatalf("volume SizeMB = %d, want 5120 (5GB)", vol.SizeMB)
+	}
+
+	// 卷目录必须在容器清理白名单内：DeleteContainer 走 cleanupContainerStorage
+	// 的符号链接解析路径删除物理卷目录，逃出白名单会留下孤儿目录。
+	if !lxcStorageTargetAllowed(wantPath) {
+		t.Fatal("volume path escaped the lxc storage cleanup whitelist")
+	}
+
+	// 删除链路：按容器清理卷记录（DeleteContainer 尾部调用同一函数）。
+	removed := config.DeleteContainerVolumes(7)
+	if len(removed) != 1 || removed[0] != rootVolumeID {
+		t.Fatalf("DeleteContainerVolumes(7) = %v, want [%s]", removed, rootVolumeID)
+	}
+	if _, ok := config.GetVolume(rootVolumeID); ok {
+		t.Fatal("volume record still exists after DeleteContainerVolumes")
+	}
+}
+
+// TestMoveContainerToStoragePoolLegacyPathForNonDirBackend 验证旧直连路径
+// 模式保留：非 dir 后端（P0-2 前仅可能来自手工配置）仍以 lxcName 命名目标
+// 目录，不产生卷记录。
+func TestMoveContainerToStoragePoolLegacyPathForNonDirBackend(t *testing.T) {
+	setupVolumeTestConfig(t)
+
+	base := t.TempDir()
+	lxcPath := filepath.Join(base, "lxc")
+	poolPath := filepath.Join(base, "pool")
+	sourceRootfs := filepath.Join(lxcPath, "ct-9", "rootfs")
+	if err := os.MkdirAll(sourceRootfs, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	config.AppConfig.StoragePools = []config.StoragePool{{
+		ID:              "pool-zfs",
+		Name:            "pool-zfs",
+		Path:            poolPath,
+		ContentTypes:    []string{config.StorageContentLXC},
+		DefaultContents: []string{config.StorageContentLXC},
+		Enabled:         true,
+		Backend:         storage.BackendZFS,
+	}}
+	// 池选择器通过真实 df/stat 探测可用性，路径必须先存在。
+	if err := os.MkdirAll(poolPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := &Manager{LxcPath: lxcPath}
+	poolID, storagePath, rootVolumeID, err := m.moveContainerToStoragePool("ct-9", 9, "pool-zfs", 5.0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootVolumeID != "" {
+		t.Fatalf("non-dir backend must not create volumes, got %q", rootVolumeID)
+	}
+	wantPath := filepath.Join(poolPath, "lxc", "ct-9")
+	if storagePath != wantPath || poolID != "pool-zfs" {
+		t.Fatalf("legacy path = %q/%q, want %q/pool-zfs", poolID, storagePath, wantPath)
+	}
+	if volumes := config.ListVolumes(); len(volumes) != 0 {
+		t.Fatalf("no volume records expected, got %+v", volumes)
 	}
 }

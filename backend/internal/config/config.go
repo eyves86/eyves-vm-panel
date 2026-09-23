@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+
+	"eyvescloud/internal/storage"
 )
 
 // PortMapping represents a port mapping rule
@@ -175,6 +177,11 @@ type Container struct {
 	RescueEnabled                 bool                   `json:"rescue_enabled,omitempty"`  // 是否处于救援模式（KVM 从救援 ISO 引导）
 	RescueISOID                   string                 `json:"rescue_iso_id,omitempty"`   // 当前使用的救援 ISO 目录条目 ID
 	RescueISOPath                 string                 `json:"rescue_iso_path,omitempty"` // 救援 ISO 的本地绝对路径
+	// RootVolumeID 根卷 ID（P0-1 存储抽象层）：新容器在 dir 后端池上创建的根目录卷。
+	// 为空表示旧数据直连路径模式（沿用 StoragePath，读路径完全向后兼容，不做迁移）。
+	RootVolumeID string `json:"root_volume_id,omitempty"`
+	// DataVolumeIDs 数据卷 ID 列表（P0-1 仅落库记录，挂载流程在后续阶段接入）。
+	DataVolumeIDs []string `json:"data_volume_ids,omitempty"`
 }
 
 const (
@@ -268,6 +275,10 @@ func normalizeStoragePools() bool {
 		pool.DefaultContents = defaults
 		if pool.ContentTypes == nil {
 			pool.ContentTypes = []string{}
+		}
+		// P0-1：旧池数据自动补 Backend=dir 与水位线默认值（80/90）。
+		if NormalizeStoragePoolDefaults(&pool) {
+			changed = true
 		}
 		result = append(result, pool)
 	}
@@ -780,6 +791,55 @@ type StoragePool struct {
 	ContentTypes    []string `json:"content_types"`
 	DefaultContents []string `json:"default_contents,omitempty"`
 	Enabled         bool     `json:"enabled"`
+	// Backend 存储后端类型：dir|zfs|lvm|rbd|cephfs|nfs（P0-1 仅实现 dir；
+	// 旧数据该字段为空字符串，加载时自动补 dir）。
+	Backend string `json:"backend,omitempty"`
+	// Shared 是否为多节点共享存储池（如 NFS/CephFS）。P0-1 仅落库，暂不参与调度。
+	Shared bool `json:"shared,omitempty"`
+	// WatermarkWarn 使用率告警水位线（百分比），默认 80：超过后产生告警事件。
+	WatermarkWarn int `json:"watermark_warn,omitempty"`
+	// WatermarkCritical 使用率禁止写入水位线（百分比），默认 90：超过后拒绝新建/扩容。
+	WatermarkCritical int `json:"watermark_critical,omitempty"`
+}
+
+// 存储池水位线默认值（P0-1 约定 80/90）。
+const (
+	DefaultStorageWatermarkWarn     = 80
+	DefaultStorageWatermarkCritical = 90
+)
+
+// NormalizeStoragePoolDefaults 补齐存储池 P0-1 新增字段的默认值并返回是否发生修改：
+//   - Backend 为空（旧数据）或为未知后端时回退 dir（当前唯一可服务的后端实现）；
+//   - 水位线缺省补 80/90，并保证 Warn <= Critical。
+//
+// 该函数同时被 config 加载归一化路径与 /api/storage 的 PUT 归一化路径使用，
+// 保证两条写路径行为一致。
+func NormalizeStoragePoolDefaults(pool *StoragePool) bool {
+	changed := false
+	if backend := storage.NormalizeBackendKind(pool.Backend); pool.Backend != backend {
+		pool.Backend = backend
+		changed = true
+	}
+	warn := pool.WatermarkWarn
+	if warn <= 0 {
+		warn = DefaultStorageWatermarkWarn
+	}
+	critical := pool.WatermarkCritical
+	if critical < warn {
+		critical = DefaultStorageWatermarkCritical
+	}
+	if critical < warn {
+		critical = warn
+	}
+	if pool.WatermarkWarn != warn {
+		pool.WatermarkWarn = warn
+		changed = true
+	}
+	if pool.WatermarkCritical != critical {
+		pool.WatermarkCritical = critical
+		changed = true
+	}
+	return changed
 }
 
 func defaultPrimaryStoragePool() StoragePool {
@@ -791,13 +851,16 @@ func defaultPrimaryStoragePool() StoragePool {
 		StorageContentBackups,
 	}
 	return StoragePool{
-		ID:              "disk-root",
-		Name:            "system (/)",
-		Path:            "/var/lib/eyvescloud",
-		MountPoint:      "/",
-		ContentTypes:    append([]string(nil), contents...),
-		DefaultContents: append([]string(nil), contents...),
-		Enabled:         true,
+		ID:                "disk-root",
+		Name:              "system (/)",
+		Path:              "/var/lib/eyvescloud",
+		MountPoint:        "/",
+		ContentTypes:      append([]string(nil), contents...),
+		DefaultContents:   append([]string(nil), contents...),
+		Enabled:           true,
+		Backend:           storage.BackendDir,
+		WatermarkWarn:     DefaultStorageWatermarkWarn,
+		WatermarkCritical: DefaultStorageWatermarkCritical,
 	}
 }
 
@@ -1105,6 +1168,11 @@ func SetConfigPath(path string) {
 }
 
 func getDataDir() string {
+	// EYVESCLOUD_DATA_DIR 允许运维与测试显式重定向数据目录（与
+	// EYVESCLOUD_LXC_SUBNET 等环境变量风格一致）；未设置时保持原默认。
+	if dir := strings.TrimSpace(os.Getenv("EYVESCLOUD_DATA_DIR")); dir != "" {
+		return dir
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		home = "/root"
@@ -1153,6 +1221,17 @@ func newContainerUUIDUnlocked() string {
 		}
 		if !found {
 			return uuid
+		}
+	}
+}
+
+// NewVolumeID 生成全局唯一的卷 ID（vol-<uuid>），用于 P0-1 存储抽象层。
+// 卷 ID 同时是 dir 后端下卷目录的名字，因此不含路径分隔符。
+func NewVolumeID() string {
+	for {
+		id := "vol-" + generateUUIDString()
+		if _, exists := GetVolume(id); !exists {
+			return id
 		}
 	}
 }
@@ -1831,6 +1910,17 @@ func SaveConfig() error {
 	AppConfigMu.Lock()
 	defer AppConfigMu.Unlock()
 	return saveConfigToDB()
+}
+
+// CloseConfigDB 关闭 SQLite 连接（用于服务优雅停机与测试中重放启动迁移）。
+// 之后的再次调用会重新打开数据库并重跑 ensureSchema 迁移（幂等）。
+func CloseConfigDB() {
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if db != nil {
+		_ = db.Close()
+		db = nil
+	}
 }
 
 func ListCustomKVMImages() []CustomKVMImage {

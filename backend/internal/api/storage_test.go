@@ -1,12 +1,14 @@
 package api
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/storage"
 )
 
 func TestIsUsableStorageMount(t *testing.T) {
@@ -117,5 +119,51 @@ func TestDirSizeBytesUsesAllocatedBlocks(t *testing.T) {
 
 	if got := dirSizeBytes(dir); got >= 128<<20 {
 		t.Fatalf("dirSizeBytes() = %d, expected allocated size instead of 1 GiB apparent size", got)
+	}
+}
+
+// TestBuildStorageInfoHidesP0xStorageFields 直接证明验收项：/api/storage 的
+// GET 响应结构在 P0-1 之后完全不变——即使池配置携带 backend/shared/
+// watermark_*（P0-1 新增、已在 config 层归一化），序列化输出也不包含这些键。
+func TestBuildStorageInfoHidesP0xStorageFields(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+
+	poolPath := t.TempDir()
+	config.AppConfig = &config.EyvescloudConfig{StoragePools: []config.StoragePool{{
+		ID:                "disk-root",
+		Name:              "system (/)",
+		Path:              poolPath,
+		MountPoint:        "/",
+		ContentTypes:      []string{config.StorageContentLXC},
+		DefaultContents:   []string{config.StorageContentLXC},
+		Enabled:           true,
+		Backend:           storage.BackendDir,
+		Shared:            true,
+		WatermarkWarn:     config.DefaultStorageWatermarkWarn,
+		WatermarkCritical: config.DefaultStorageWatermarkCritical,
+	}}}
+
+	info := buildStorageInfo()
+	if len(info.Pools) != 1 {
+		t.Fatalf("expected 1 pool, got %+v", info.Pools)
+	}
+	data, err := json.Marshal(info.Pools[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(data, &fields); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"backend", "shared", "watermark_warn", "watermark_critical"} {
+		if _, exists := fields[key]; exists {
+			t.Fatalf("/api/storage pool response must not expose P0-1 field %q: %s", key, data)
+		}
+	}
+	for _, key := range []string{"id", "name", "path", "mount_point", "content_types", "default_contents", "enabled"} {
+		if _, exists := fields[key]; !exists {
+			t.Fatalf("/api/storage pool response lost legacy field %q: %s", key, data)
+		}
 	}
 }

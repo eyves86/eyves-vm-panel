@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/storage"
 )
 
 // Manager handles LXC container operations
@@ -629,11 +630,20 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	}
 
 	cfg.ReportProgress("storage", "复制容器数据到存储磁盘")
-	storagePoolID, storagePath, err := m.moveContainerToStoragePool(lxcName, cfg.StoragePoolID)
+	storagePoolID, storagePath, rootVolumeID, err := m.moveContainerToStoragePool(lxcName, id, cfg.StoragePoolID, cfg.DiskGB)
 	if err != nil {
 		_ = m.cleanupContainerStorage(lxcName)
 		return err
 	}
+	// P0-1：容器创建流程已为 dir 后端池建立根卷记录（status=attached）。
+	// 此后任何失败路径（含 AddContainer 之后的回滚）都必须同步删除卷记录，
+	// 避免留下指向已清理目录的孤儿卷；成功路径在 return 前置 creationFinalized。
+	creationFinalized := false
+	defer func() {
+		if !creationFinalized && rootVolumeID != "" {
+			_ = config.DeleteVolumeRecord(rootVolumeID)
+		}
+	}()
 
 	cfg.ReportProgress("disk", "创建容量限制磁盘并复制 rootfs")
 	if err := m.applyDiskLimit(lxcName, cfg.DiskGB); err != nil {
@@ -710,13 +720,15 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	trafficResetDate := now[:7] // YYYY-MM for monthly tracking
 
 	container := config.Container{
-		ID:                   id,
-		UUID:                 config.NewContainerUUID(),
-		Name:                 cfg.Name,
-		Virtualization:       config.VirtualizationLXC,
-		LXCName:              lxcName,
-		StoragePoolID:        storagePoolID,
-		StoragePath:          storagePath,
+		ID:             id,
+		UUID:           config.NewContainerUUID(),
+		Name:           cfg.Name,
+		Virtualization: config.VirtualizationLXC,
+		LXCName:        lxcName,
+		StoragePoolID:  storagePoolID,
+		StoragePath:    storagePath,
+		// P0-1：dir 后端池上的新容器记录根卷 ID；旧直连路径模式该字段为空。
+		RootVolumeID:         rootVolumeID,
 		Template:             cfg.TemplateID,
 		VCPU:                 cfg.VCPU,
 		RAMMB:                cfg.RAMMB,
@@ -810,6 +822,8 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	}
 
 	fmt.Printf("Container %d (%s) created successfully\n", id, cfg.Name)
+	// P0-1：容器注册成功，根卷记录交由容器生命周期管理，不再回滚。
+	creationFinalized = true
 	return nil
 }
 
@@ -1497,36 +1511,91 @@ func (m *Manager) applyLoopbackDiskLimit(lxcName string, diskGB float64) error {
 	return nil
 }
 
-func (m *Manager) moveContainerToStoragePool(lxcName string, requestedPoolID string) (string, string, error) {
+// moveContainerToStoragePool moves the freshly created container directory
+// into the selected storage pool, creating a symlink at the original LXC path.
+//
+// P0-1 卷流程：当池后端为 dir 时，目标目录不再以 lxcName 命名，而是改为
+// P0-1 卷目录 <pool>/lxc/vol-<uuid>，并在 SQLite volumes 表中记录卷生命周期
+// （creating → attached），返回 rootVolumeID 供容器记录 RootVolumeID。
+// 非 dir 后端（P0-2+ 之前的未知值已被归一化为 dir，此处仅为防御）沿用旧的
+// lxcName 直连路径模式。卷目录命名刻意与旧容器目录同区（<pool>/lxc/*），
+// 因此 lxcStorageTargetAllowed 白名单与 /api/storage 用量统计零改动。
+func (m *Manager) moveContainerToStoragePool(lxcName string, containerID int, requestedPoolID string, diskGB float64) (string, string, string, error) {
 	sourceDir := filepath.Join(m.LxcPath, lxcName)
 	requiredBytes := dirSizeBytes(sourceDir)
 	pool, err := config.SelectStoragePoolForContent(config.StorageContentLXC, requestedPoolID, requiredBytes)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
+	}
+	targetName := lxcName
+	rootVolumeID := ""
+	volumeCommitted := false
+	if storage.NormalizeBackendKind(pool.Backend) == storage.BackendDir {
+		vol := storage.Volume{
+			ID:     config.NewVolumeID(),
+			PoolID: pool.ID,
+			Kind:   storage.VolumeKindDir,
+			// dir 卷为精置备软配额：SizeMB 记录标称容量，实际占用按需增长，
+			// 硬限额由 applyDiskLimit 的 rootfs.img 机制控制，与此值解耦。
+			SizeMB:    int64(math.Round(diskGB * 1024)),
+			Status:    storage.VolumeStatusCreating,
+			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+		}
+		if err := config.CreateVolumeRecord(vol); err != nil {
+			return "", "", "", err
+		}
+		// 卷记录已落库：此后本函数自身任何失败路径都要回收该记录，
+		// 防止崩溃残留 creating 状态的孤儿卷。
+		rootVolumeID = vol.ID
+		defer func() {
+			if !volumeCommitted && rootVolumeID != "" {
+				_ = config.DeleteVolumeRecord(rootVolumeID)
+			}
+		}()
+		targetName = vol.ID
 	}
 	targetRoot := filepath.Join(pool.Path, "lxc")
-	targetDir := filepath.Join(targetRoot, lxcName)
+	targetDir := filepath.Join(targetRoot, targetName)
 	sourceAbs, err := filepath.Abs(sourceDir)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	targetAbs, err := filepath.Abs(targetDir)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if sourceAbs == targetAbs {
-		return pool.ID, targetAbs, nil
+		// 该分支仅在旧直连路径模式下可达（LxcPath 恰好位于池内且目录同名）；
+		// 卷模式下 targetName=vol-<uuid>，不可能与源目录相等。
+		volumeCommitted = rootVolumeID == ""
+		return pool.ID, targetAbs, rootVolumeID, nil
 	}
 	if err := os.MkdirAll(targetRoot, 0755); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 	if _, err := os.Lstat(targetDir); err == nil {
-		return "", "", fmt.Errorf("target storage directory already exists: %s", targetDir)
+		return "", "", "", fmt.Errorf("target storage directory already exists: %s", targetDir)
 	}
 	if err := moveLXCStorageDirectory(sourceDir, targetDir); err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return pool.ID, targetAbs, nil
+	if rootVolumeID != "" {
+		// 物理目录已就位，卷进入 attached 状态并绑定容器。
+		vol := storage.Volume{
+			ID:                    rootVolumeID,
+			PoolID:                pool.ID,
+			Kind:                  storage.VolumeKindDir,
+			SizeMB:                int64(math.Round(diskGB * 1024)),
+			AttachedToContainerID: containerID,
+			Status:                storage.VolumeStatusAttached,
+			CreatedAt:             time.Now().Format("2006-01-02 15:04:05"),
+		}
+		if err := config.UpdateVolumeRecord(vol); err != nil {
+			return "", "", "", err
+		}
+		volumeCommitted = true
+	}
+	return pool.ID, targetAbs, rootVolumeID, nil
 }
 
 func moveLXCStorageDirectory(sourceDir, targetDir string) error {
@@ -2853,6 +2922,13 @@ func (m *Manager) DestroyContainer(id int) error {
 	}
 	if config.FindContainer(id) != nil {
 		return fmt.Errorf("container destroyed but config entry still exists: %d", id)
+	}
+	// P0-1：容器删除后同步清理其卷记录（根卷+数据卷）。物理卷目录已由上方
+	// cleanupContainerStorage 经符号链接白名单删除，此处只回收 SQLite 记录。
+	// 删卷属破坏性操作，逐卷写审计日志。
+	for _, removedVolumeID := range config.DeleteContainerVolumes(id) {
+		config.AddAuditLog("volume_delete", removedVolumeID,
+			fmt.Sprintf("容器 %s(%d) 删除时清理卷", lxcName, id), "system")
 	}
 	fmt.Printf("Container %d destroyed\n", id)
 	return nil
