@@ -146,18 +146,22 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
   const isMigrationPage = location.pathname.startsWith('/migration')
   const isPolicyPage = location.pathname.startsWith('/policies')
 
+  // 展开态：桌面端跟随 collapsed；移动端抽屉打开时（mobileOpen）强制展开，
+  // 否则左下角的语言/版本/有更新/登出等文字会被 collapsed 判据隐藏掉。
+  const expanded = mobileOpen || !collapsed
+
   return (
     <>
     <aside
       className={`fixed left-0 top-0 z-30 flex h-full flex-col border-r border-gray-200 bg-white transition-all duration-300 dark:border-gray-700 dark:bg-gray-900 ${
-        collapsed ? 'w-16' : 'w-60'
+        expanded ? 'w-60' : 'w-16'
       } ${
         // 移动端默认隐藏为抽屉，桌面端(md+)始终显示
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       } md:translate-x-0`}
     >
       <div className="flex items-center justify-between h-14 px-4 border-b border-gray-200 dark:border-gray-700">
-        {!collapsed && (
+        {expanded && (
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 flex items-center justify-center">
               <AppIcon className="w-5 h-5" />
@@ -165,7 +169,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             <span className="font-bold text-black text-sm dark:text-white">EyvesCloud</span>
           </div>
         )}
-        {collapsed && (
+        {!expanded && (
           <div className="w-7 h-7 flex items-center justify-center mx-auto">
             <AppIcon className="w-5 h-5" />
           </div>
@@ -194,7 +198,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             }`}
           >
             <LayoutDashboard className="w-4 h-4" />
-            {!collapsed && <span>控制面板</span>}
+            {expanded && <span>控制面板</span>}
           </button>
         )}
 
@@ -207,7 +211,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
           }`}
         >
           <Server className="w-4 h-4" />
-          {!collapsed && <span>容器管理</span>}
+          {expanded && <span>容器管理</span>}
         </button>
 
         {!isSubUser && (
@@ -220,7 +224,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             }`}
           >
             <Activity className="w-4 h-4" />
-            {!collapsed && <span>容器监控</span>}
+            {expanded && <span>容器监控</span>}
           </button>
         )}
 
@@ -234,7 +238,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             }`}
           >
             <Network className="w-4 h-4" />
-            {!collapsed && <span>节点管理</span>}
+            {expanded && <span>节点管理</span>}
           </button>
         )}
 
@@ -248,7 +252,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             }`}
           >
             <Package className="w-4 h-4" />
-            {!collapsed && <span>镜像管理</span>}
+            {expanded && <span>镜像管理</span>}
           </button>
         )}
 
@@ -263,7 +267,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <ShieldAlert className="w-4 h-4" />
-              {!collapsed && <span>安全告警</span>}
+              {expanded && <span>安全告警</span>}
             </button>
 
             <button
@@ -275,7 +279,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Camera className="w-4 h-4" />
-              {!collapsed && <span>快照管理</span>}
+              {expanded && <span>快照管理</span>}
             </button>
 
             <button
@@ -287,7 +291,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Route className="w-4 h-4" />
-              {!collapsed && <span>路由管理</span>}
+              {expanded && <span>路由管理</span>}
             </button>
 
             <button
@@ -299,7 +303,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <MoveRight className="w-4 h-4" />
-              {!collapsed && <span>节点迁移</span>}
+              {expanded && <span>节点迁移</span>}
             </button>
 
             <button
@@ -311,7 +315,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <SlidersHorizontal className="w-4 h-4" />
-              {!collapsed && <span>策略管理</span>}
+              {expanded && <span>策略管理</span>}
             </button>
 
             <button
@@ -323,7 +327,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <HardDrive className="w-4 h-4" />
-              {!collapsed && <span>存储管理</span>}
+              {expanded && <span>存储管理</span>}
             </button>
 
             <button
@@ -335,7 +339,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <ScrollText className="w-4 h-4" />
-              {!collapsed && <span>操作日志</span>}
+              {expanded && <span>操作日志</span>}
             </button>
 
             <button
@@ -347,7 +351,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <UserCog className="w-4 h-4" />
-              {!collapsed && <span>子用户管理</span>}
+              {expanded && <span>子用户管理</span>}
             </button>
 
             <button
@@ -359,7 +363,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <ShieldAlert className="w-4 h-4" />
-              {!collapsed && <span>管理员账号</span>}
+              {expanded && <span>管理员账号</span>}
             </button>
 
             <button
@@ -371,7 +375,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Building2 className="w-4 h-4" />
-              {!collapsed && <span>多租户</span>}
+              {expanded && <span>多租户</span>}
             </button>
 
             <button
@@ -383,7 +387,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Globe className="w-4 h-4" />
-              {!collapsed && <span>区域管理</span>}
+              {expanded && <span>区域管理</span>}
             </button>
 
             <button
@@ -395,7 +399,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Layers className="w-4 h-4" />
-              {!collapsed && <span>IP 组</span>}
+              {expanded && <span>IP 组</span>}
             </button>
 
             <button
@@ -407,7 +411,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Disc3 className="w-4 h-4" />
-              {!collapsed && <span>ISO 镜像</span>}
+              {expanded && <span>ISO 镜像</span>}
             </button>
 
             <button
@@ -419,7 +423,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Activity className="w-4 h-4" />
-              {!collapsed && <span>指标留存</span>}
+              {expanded && <span>指标留存</span>}
             </button>
 
             <button
@@ -431,7 +435,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Code2 className="w-4 h-4" />
-              {!collapsed && <span>API 集成</span>}
+              {expanded && <span>API 集成</span>}
             </button>
 
             <button
@@ -443,7 +447,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <Cpu className="w-4 h-4" />
-              {!collapsed && <span>宿主机信息</span>}
+              {expanded && <span>宿主机信息</span>}
             </button>
 
             <button
@@ -455,7 +459,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
               }`}
             >
               <UserCog className="w-4 h-4" />
-              {!collapsed && <span>面板设置</span>}
+              {expanded && <span>面板设置</span>}
             </button>
           </>
         )}
@@ -463,10 +467,10 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
 
       <div className="border-t border-gray-200 dark:border-gray-700 p-2 space-y-1">
         {/* Theme Toggle */}
-        <div className={collapsed ? 'space-y-1' : 'flex items-center gap-1'}>
+        <div className={expanded ? 'flex items-center gap-1' : 'space-y-1'}>
           <button
             onClick={toggleTheme}
-            className={`${collapsed ? 'w-full justify-center' : 'flex-1'} flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800`}
+            className={`${expanded ? 'flex-1' : 'w-full justify-center'} flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800`}
             title={t(theme === 'dark' ? '切换亮色模式' : '切换暗黑模式')}
           >
             {theme === 'dark' ? (
@@ -474,33 +478,23 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             ) : (
               <Moon className="w-4 h-4" />
             )}
-            {!collapsed && <span>{theme === 'dark' ? '亮色模式' : '暗黑模式'}</span>}
+            {expanded && <span>{theme === 'dark' ? '亮色模式' : '暗黑模式'}</span>}
           </button>
 
           <button
             onClick={() => { void toggleLanguage() }}
-            className={`${collapsed ? 'w-full justify-center' : 'flex-1 justify-center'} flex items-center gap-2 rounded-md px-3 py-2.5 text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800`}
+            className={`${expanded ? 'flex-1 justify-center' : 'w-full justify-center'} flex items-center gap-2 rounded-md px-3 py-2.5 text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800`}
             title="Language"
           >
             <LanguageIcon className="h-4 w-4 shrink-0" />
-            {!collapsed && <span>Language</span>}
+            {expanded && <span>Language</span>}
           </button>
         </div>
 
         {/* Version */}
         {version && (
-          <div className={`px-3 py-2 text-xs text-gray-400 dark:text-gray-500 ${collapsed ? 'text-center' : ''}`}>
-            {collapsed ? (
-              <a
-                href="https://github.com/FenhaoLost/eyves-vm-panel"
-                target="_blank"
-                rel="noreferrer"
-                title={`EyvesCloud v${version}`}
-                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white"
-              >
-                <GitHubIcon className="h-4 w-4" />
-              </a>
-            ) : (
+          <div className={`px-3 py-2 text-xs text-gray-400 dark:text-gray-500 ${expanded ? '' : 'text-center'}`}>
+            {expanded ? (
               <div className="flex min-w-0 items-center gap-2">
                 <a
                   href="https://github.com/FenhaoLost/eyves-vm-panel"
@@ -528,6 +522,16 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
                   <span className="shrink-0 text-[11px] text-amber-600 dark:text-amber-400">{upgradeMsg}</span>
                 )}
               </div>
+            ) : (
+              <a
+                href="https://github.com/FenhaoLost/eyves-vm-panel"
+                target="_blank"
+                rel="noreferrer"
+                title={`EyvesCloud v${version}`}
+                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white"
+              >
+                <GitHubIcon className="h-4 w-4" />
+              </a>
             )}
           </div>
         )}
@@ -538,7 +542,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
           className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800"
         >
           <LogOut className="w-4 h-4" />
-          {!collapsed && <span>退出登录</span>}
+          {expanded && <span>退出登录</span>}
         </button>
       </div>
     </aside>
