@@ -8,6 +8,13 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  margin: 0;
+  max-width: 100%;
+  overflow-x: hidden; /* 移动端：防止个别元素超宽把整页横向撑开导致错位 */
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background-color: #ffffff;

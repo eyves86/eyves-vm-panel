@@ -415,7 +415,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
         </div>
 
         <nav aria-label={t('创建步骤')} className="border-b border-gray-200 px-5 py-3">
-          <ol className="grid grid-cols-4 gap-2">
+          <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {wizardSteps.map((label, index) => {
               const completed = index < currentStep
               const active = index === currentStep
@@ -593,7 +593,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
           {currentStep === 0 && linuxTemplate && (
             <div className="rounded-md border border-gray-200 bg-white px-3 py-3 text-sm">
               <div className="mb-2 font-medium text-gray-800">登录方式</div>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 {([
                   ['auto_password', '自动生成密码'],
                   ['password', '自定义密码'],

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"compress/gzip"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -355,6 +356,157 @@ func limitRequestBody(next http.Handler) http.Handler {
 	})
 }
 
+// gzipResponseWriter wraps http.ResponseWriter to transparently gzip responses
+// when the client advertises gzip support. It skips already compressed payloads
+// and websocket/streaming connections.
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	writer      *gzip.Writer
+	wroteHeader bool
+	skipTee     bool // true when passing through (non-compressible response)
+	path        string
+}
+
+// gzipMiddleware compresses HTML/CSS/JS/JSON text bodies — the dominant cause of
+// the phone/weak-network "white screen" (huge uncompressed frontend bundle on a
+// slow uplink). It also adds long-lived cache headers for content-hashed assets.
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := r.URL.Path
+
+		// Skip compression for websocket upgrades (SSH / VNC proxies) and any
+		// already-binary stream to avoid corrupting the protocol.
+		if strings.HasPrefix(path, "/api/ssh") || strings.HasPrefix(path, "/api/vnc") ||
+			strings.HasPrefix(path, "/api/v1/vnc") || strings.HasPrefix(path, "/api/v1/ssh") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Long-lived cache for content-hashed static assets (assets/index-*.js|css).
+		if isHashedAsset(path) {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
+
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		gw := &gzipResponseWriter{
+			ResponseWriter: w,
+			writer:         gzip.NewWriter(w),
+			path:           path,
+		}
+		gw.Header().Set("Vary", "Accept-Encoding")
+		next.ServeHTTP(gw, r)
+		gw.finish()
+	})
+}
+
+// finish finalizes the gzip stream and flushes remaining bytes to the client.
+func (g *gzipResponseWriter) finish() {
+	if g.skipTee {
+		// Already passed raw bytes through to the underlying writer.
+		return
+	}
+	if g.writer != nil {
+		_ = g.writer.Close()
+	}
+}
+
+// isHashedAsset reports whether path points at a content-hashed hashed asset.
+func isHashedAsset(path string) bool {
+	base := path
+	if i := strings.LastIndexByte(base, '/'); i >= 0 {
+		base = base[i+1:]
+	}
+	// Matches assets/index-xxxxx.js / .css / .svg 等
+	return (strings.Contains(base, ".js") || strings.Contains(base, ".css")) &&
+		strings.Contains(base, "-")
+}
+
+// shouldCompressPath decides compressibility from the URL path (works even when
+// the underlying handler doesn't set a Content-Type header before writing).
+func shouldCompressPath(path string) bool {
+	lower := strings.ToLower(path)
+	switch {
+	case strings.HasSuffix(lower, ".html"), strings.HasSuffix(lower, ".js"),
+		strings.HasSuffix(lower, ".css"), strings.HasSuffix(lower, ".json"),
+		strings.HasSuffix(lower, ".svg"), strings.HasSuffix(lower, ".xml"),
+		strings.HasSuffix(lower, ".txt"), strings.HasSuffix(lower, ".md"),
+		strings.HasSuffix(lower, ".woff2"), strings.HasSuffix(lower, ".woff"),
+		strings.HasSuffix(lower, ".ttf"):
+		return true
+	}
+	// JSON/HTML API responses fall under /api — always compress.
+	if strings.HasPrefix(path, "/api/") {
+		return true
+	}
+	// SPA fallback index.html.
+	if path == "/" || !strings.Contains(lower, ".") {
+		return true
+	}
+	return false
+}
+
+func (g *gzipResponseWriter) WriteHeader(status int) {
+	if g.wroteHeader {
+		return
+	}
+	g.wroteHeader = true
+	ct := g.Header().Get("Content-Type")
+	if status == http.StatusNoContent || status == http.StatusNotModified {
+		g.skipTee = true
+	} else if !shouldCompressContentType(ct) && !shouldCompressPath(g.path) {
+		g.skipTee = true
+	}
+	if g.skipTee {
+		// No compression: drop the writer and write raw.
+		if g.writer != nil {
+			_ = g.writer.Close()
+		}
+	} else {
+		g.Header().Set("Content-Encoding", "gzip")
+		g.Header().Del("Content-Length")
+	}
+	g.ResponseWriter.WriteHeader(status)
+}
+
+func (g *gzipResponseWriter) Write(b []byte) (int, error) {
+	if !g.wroteHeader {
+		g.WriteHeader(http.StatusOK)
+	}
+	if g.skipTee {
+		return g.ResponseWriter.Write(b)
+	}
+	return g.writer.Write(b)
+}
+
+func (g *gzipResponseWriter) Flush() {
+	if g.writer != nil && !g.skipTee {
+		_ = g.writer.Flush()
+	}
+	if f, ok := g.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func shouldCompressContentType(ct string) bool {
+	switch {
+	case strings.Contains(ct, "text/"),
+		strings.Contains(ct, "application/json"),
+		strings.Contains(ct, "application/javascript"),
+		strings.Contains(ct, "application/x-javascript"),
+		strings.Contains(ct, "application/xml"),
+		strings.Contains(ct, "image/svg+xml"),
+		strings.Contains(ct, "font/ttf"),
+		strings.Contains(ct, "font/woff"):
+		return true
+	}
+	// Default: don't compress (binaries like png/jpg/zip/gz would waste CPU).
+	return false
+}
+
 // apiRateLimitMiddleware applies a per-client-IP rate limit to the versioned
 // API (/api/v1/...) when API governance rate limiting is enabled.
 func apiRateLimitMiddleware(next http.Handler) http.Handler {
@@ -393,7 +545,7 @@ func Run() error {
 
 	server := &http.Server{
 		Addr:    addr,
-		Handler: recoverPanicMiddleware(limitRequestBody(panelAccessMiddleware(apiRateLimitMiddleware(mux)))),
+		Handler: recoverPanicMiddleware(limitRequestBody(panelAccessMiddleware(apiRateLimitMiddleware(gzipMiddleware(mux))))),
 	}
 
 	if sslEnabled() {

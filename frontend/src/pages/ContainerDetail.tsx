@@ -1315,7 +1315,7 @@ export default function ContainerDetail() {
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-5">
-        <div className="flex items-start justify-between gap-4">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-4">
             <div className="w-14 h-14 flex items-center justify-center">
               {getTemplateIcon(container.template || '') || <Cpu className="w-7 h-7 text-slate-700" />}
@@ -1566,7 +1566,7 @@ export default function ContainerDetail() {
       {container && (
         <div className="bg-white border border-gray-200 rounded-lg p-5">
           <h2 className="text-sm font-semibold text-black mb-4">状态</h2>
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4">
             <RingStat
               value={cpuPct}
               label="CPU"
