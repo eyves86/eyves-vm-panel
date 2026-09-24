@@ -1,6 +1,6 @@
 # EYVESCLOUD 计费系统对接模块
 
-这是 EYVESCLOUD 的计费系统对接模块。模块通过 EYVESCLOUD API 完成实例开通、删除、开关机、重启、重装、改密、资源变更、流量重置、NAT 端口映射管理、实例信息展示和 WebSSH 入口。
+这是 EYVESCLOUD 的计费系统对接模块。模块通过 EYVESCLOUD API 完成实例开通、删除、开关机、重启、重装、改密、资源变更、流量重置、快照、备份、ISO 挂载、NAT 端口映射管理、防火墙、实例信息展示和 WebSSH 入口。客户区提供快照、备份、ISO 挂载（KVM）与重装系统管理页面。
 
 ## 文件结构
 
@@ -10,9 +10,13 @@ README.md
 handlers/
   webssh.php
 templates/
-  firewall.html
   info.html
   nat.html
+  firewall.html
+  snapshot.html
+  backup.html
+  iso.html
+  reinstall.html
 ```
 
 安装时请保持目录结构不变，将整个 `eyvescloud` 目录放入计费系统服务器模块目录：
@@ -94,12 +98,16 @@ Content-Type: application/json
 
 ## 客户区页面
 
-模块提供三个客户区选项卡：
+模块提供客户区选项卡：
 
 ```text
 实例信息
 NAT转发
 防火墙
+快照
+备份
+ISO挂载（仅 KVM 产品展示）
+重装系统
 ```
 
 客户区按钮提供：
@@ -128,7 +136,13 @@ WebSSH
 10 分钟
 ```
 
-也可以点击“立即刷新”手动刷新一次。当前 EYVESCLOUD 用量接口返回的是实时值，不是历史数组；图表曲线由客户区前端持续采样生成。若需要打开页面立即显示历史曲线，需要 EYVESCLOUD 额外提供历史指标接口。
+也可以点击“立即刷新”手动刷新一次。当前 EYVESCLOUD 用量接口返回的是实时值；图表曲线由客户区前端持续采样生成。EYVESCLOUD 后端还提供历史指标接口：
+
+```text
+GET /api/v1/containers/{id}/history
+```
+
+返回原始采样 + 小时聚合的时序数据，供计费系统 / 客户区在打开页面时直接绘制历史曲线。
 
 流量显示支持智能单位，小流量会显示 B / KB / MB，大流量显示 GB，例如：
 
@@ -258,6 +272,78 @@ PUT /api/v1/containers/{id}/firewall
 | `enabled` | 是否启用该规则 |
 
 IPv4 NAT 入站规则的端口按容器内部端口匹配，不是宿主机公网端口。例如公网 `22023 -> 容器 22`，防火墙规则端口应填写 `22`。
+
+## 快照
+
+快照用于保存当前磁盘状态，支持快速还原。客户区快照页支持：
+
+- 查看快照列表（快照 ID、创建时间、大小、创建者）与配额
+- 创建快照
+- 还原快照（确认弹窗）
+- 删除快照（确认弹窗）
+
+快照配额由产品配置项 `snapshot_limit` 控制。
+
+使用的 EYVESCLOUD API：
+
+```text
+GET    /api/v1/containers/{id|uuid|name}/snapshots
+POST   /api/v1/containers/{id|uuid|name}/snapshots
+POST   /api/v1/containers/{id}/snapshots/{snapshotID}/restore
+DELETE /api/v1/containers/{id}/snapshots/{snapshotID}
+```
+
+## 备份
+
+备份保存当前磁盘的完整副本，用于灾难恢复。客户区备份页支持：
+
+- 查看备份列表（名称、创建时间、大小、状态）
+- 创建备份
+- 还原备份（确认弹窗，耗时较长）
+- 删除备份（确认弹窗）
+
+使用的 EYVESCLOUD API：
+
+```text
+GET    /api/v1/containers/{id|uuid|name}/backups
+POST   /api/v1/containers/{id|uuid|name}/backups
+POST   /api/v1/containers/{id}/backups/{backupID}/restore
+DELETE /api/v1/containers/{id}/backups/{backupID}
+```
+
+## ISO 挂载（KVM）
+
+ISO 挂载仅在虚拟化类型为 `kvm` 的产品中展示。客户区 ISO 页支持：
+
+- 查看 ISO 镜像目录（名称、系统、大小、挂载状态）
+- 挂载 ISO 到实例光驱（用于引导安装或进入救援系统）
+- 卸载 ISO
+
+使用的 EYVESCLOUD API：
+
+```text
+GET  /api/isos
+POST /api/isos/attach   （请求体 container_id / iso_id / attach）
+```
+
+## 重装系统
+
+客户区重装页支持：
+
+- 查看当前系统模板
+- 从 EYVESCLOUD 模板列表中选择新系统
+- 选择重装范围：
+  - `full` 完整重装（清空系统盘）
+  - `system` 仅重装系统盘（保留数据盘）
+- 二次确认后提交重装任务
+
+使用的 EYVESCLOUD API：
+
+```text
+GET  /api/v1/templates
+POST /api/v1/containers/{id|uuid|name}/reinstall  （请求体 template_id / 可选 reinstall_mode）
+```
+
 ## WebSSH
 
 WebSSH 按钮会调用：
@@ -310,12 +396,29 @@ https://www.example.com
 | 重装 | `POST /api/v1/containers/{name}/reinstall` |
 | 改密 | `POST /api/v1/containers/{name}/reset-password` |
 | 重置流量 | `POST /api/v1/containers/{name}/traffic-reset` |
-| 变更资源 | `PUT /api/v1/containers/{name}/resource-limit` |
+| 变更资源 | `PUT /api/v1/containers/{name}/resource-limit`（支持 `vcpu`、`ram_mb`、`disk_gb`、`io_speed_mbps`、`network_bw_mbps`；`disk_gb` 仅允许扩大） |
 | 变更流量 | `PUT /api/v1/containers/{name}/traffic-limit` |
 | 同步到期 | `PUT /api/v1/containers/{name}/expiry` |
+| 历史指标 | `GET /api/v1/containers/{id}/history` |
 | 查询防火墙 | `GET /api/v1/containers/{id}/firewall` |
 | 更新防火墙 | `PUT /api/v1/containers/{id}/firewall` |
+| 快照列表 | `GET /api/v1/containers/{id}/snapshots` |
+| 创建快照 | `POST /api/v1/containers/{id}/snapshots` |
+| 还原快照 | `POST /api/v1/containers/{id}/snapshots/{snapshotID}/restore` |
+| 删除快照 | `DELETE /api/v1/containers/{id}/snapshots/{snapshotID}` |
+| 备份列表 | `GET /api/v1/containers/{id}/backups` |
+| 创建备份 | `POST /api/v1/containers/{id}/backups` |
+| 还原备份 | `POST /api/v1/containers/{id}/backups/{backupID}/restore` |
+| 删除备份 | `DELETE /api/v1/containers/{id}/backups/{backupID}` |
+| ISO 列表 | `GET /api/isos` |
+| ISO 挂载/卸载 | `POST /api/isos/attach` |
 | WebSSH | `POST /api/v1/ssh-ticket` |
+
+## 开通幂等
+
+模块开通时会携带 `Idempotency-Key: container-create-{hostid}` 请求头。同一主机
+重试开通时，EYVESCLOUD 返回既有容器而不是二次开通；后端同时保留容器名唯一校验
+作为兜底。因此计费系统回调超时后的重复开通不会产生重复实例。
 
 ## 建议 API 权限
 
@@ -333,6 +436,19 @@ container:traffic
 container:resize
 container:port
 container:firewall
+snapshot:read
+snapshot:create
+snapshot:restore
+snapshot:delete
+snapshot:schedule
+backup:read
+backup:create
+backup:restore
+backup:delete
+iso:read
+iso:attach
+iso:detach
+template:read
 task:read
 ssh-ticket:create
 ```
@@ -396,6 +512,43 @@ curl --location --request PUT \
   --header "Content-Type: application/json" \
   --data-raw '{"enabled":true,"default_action":"ACCEPT","rules":[{"id":"","network":"ipv4","direction":"in","protocol":"tcp","port":"22","source_ip":"","action":"ACCEPT","description":"Allow SSH","enabled":true}]}'
 ```
+
+快照列表：
+
+```bash
+curl -H "X-API-Key: eyvescloud_sk_xxxx" \
+  https://0.0.0.0:8999/api/v1/containers/10/snapshots
+```
+
+创建快照：
+
+```bash
+curl --location --request POST \
+  -H "X-API-Key: eyvescloud_sk_xxxx" \
+  https://0.0.0.0:8999/api/v1/containers/10/snapshots
+```
+
+备份列表：
+
+```bash
+curl -H "X-API-Key: eyvescloud_sk_xxxx" \
+  https://0.0.0.0:8999/api/v1/containers/10/backups
+```
+
+系统模板列表：
+
+```bash
+curl -H "X-API-Key: eyvescloud_sk_xxxx" \
+  https://0.0.0.0:8999/api/v1/templates
+```
+
+ISO 目录：
+
+```bash
+curl -H "X-API-Key: eyvescloud_sk_xxxx" \
+  https://0.0.0.0:8999/api/isos
+```
+
 创建 WebSSH 票据：
 
 ```bash
@@ -453,7 +606,15 @@ GET /api/v1/containers/{id}/firewall
 ```
 ### 图表刚打开只有一条横线
 
-EYVESCLOUD 当前用量接口返回的是实时值，不是历史序列。页面刚打开时只有一个采样点，所以会显示当前值横线。选择 `10 秒` 自动刷新或点击“立即刷新”多采样几次后，会逐步形成折线。
+页面刚打开时如果只用实时值采样，只有一个采样点，会显示当前值横线。可选择 `10 秒`
+自动刷新或点击“立即刷新”多采样几次后形成折线。若要打开页面立即显示历史曲线，
+可直接调用 EYVESCLOUD 历史指标接口：
+
+```text
+GET /api/v1/containers/{id}/history
+```
+
+该接口返回原始采样 + 小时聚合的时序数据。
 
 ### 流量显示为 0
 

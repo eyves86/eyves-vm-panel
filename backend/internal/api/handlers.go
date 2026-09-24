@@ -263,6 +263,25 @@ func listContainers(w http.ResponseWriter, r *http.Request) {
 }
 
 func createContainer(w http.ResponseWriter, r *http.Request) {
+	// 幂等键：同一 Idempotency-Key 重试开通时返回既有容器，避免计费系统
+	// 回调超时后重复开通（双开）。
+	idemKey := normalizeIdempotencyKey(r.Header.Get("Idempotency-Key"))
+	if idemKey != "" {
+		if name, ok := containerIdemLookup(idemKey); ok {
+			if existing := config.FindContainerByName(name); existing != nil {
+				jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Container already exists (idempotent)", Data: map[string]interface{}{
+					"id":     existing.ID,
+					"name":   existing.Name,
+					"uuid":   existing.UUID,
+					"status": existing.Status,
+				}})
+				return
+			}
+			// 记录中的容器已不存在，允许以同名重建并清理旧记录。
+			containerIdemRemove(idemKey)
+		}
+	}
+
 	var cfg lxc.ContainerConfig
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -381,6 +400,11 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
+	if idemKey != "" {
+		if created := config.FindContainerByName(cfg.Name); created != nil {
+			containerIdemStore(idemKey, cfg.Name)
+		}
+	}
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Message: "Container created successfully"})
 }
 
@@ -479,6 +503,7 @@ func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 	var req struct {
 		VCPU            *float64 `json:"vcpu"`
 		RAMMB           *int     `json:"ram_mb"`
+		DiskGB          *float64 `json:"disk_gb"`
 		IOMBps          *int     `json:"io_speed_mbps"`
 		IOReadMBps      *int     `json:"io_read_mbps"`
 		IOWriteMBps     *int     `json:"io_write_mbps"`
@@ -494,6 +519,22 @@ func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 	if c == nil {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
 		return
+	}
+
+	// 系统盘扩容：仅允许扩大，缩小必须显式报错。物理扩容失败时不提交配置，
+	// 防止配置与真实磁盘容量漂移。
+	if req.DiskGB != nil {
+		newDiskGB := *req.DiskGB
+		if newDiskGB < c.DiskGB {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "disk_gb can only be expanded, change below current size is not allowed"})
+			return
+		}
+		if newDiskGB > c.DiskGB {
+			if err := resizeDiskByRuntime(c, newDiskGB); err != nil {
+				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+				return
+			}
+		}
 	}
 
 	// Update config
@@ -528,6 +569,9 @@ func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 	ok, c = config.MutateContainerByID(id, func(cc *config.Container) {
 		cc.VCPU = nextVCPU
 		cc.RAMMB = nextRAMMB
+		if req.DiskGB != nil {
+			cc.DiskGB = *req.DiskGB
+		}
 		applyNetworkLimitPatch(cc, req.BWMbps, req.NetworkDownMbps, req.NetworkUpMbps)
 		applyIOLimitPatch(cc, req.IOMBps, req.IOReadMBps, req.IOWriteMBps)
 		config.NormalizeContainerResourceAliases(cc)

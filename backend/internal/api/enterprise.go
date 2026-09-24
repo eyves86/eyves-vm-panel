@@ -799,6 +799,21 @@ func HandleOpenAPI(w http.ResponseWriter, r *http.Request) {
 			},
 		},
 	}
+
+	// 把实际可用的路由补齐进契约（见 openapi_paths.go）。已声明的路径不覆盖。
+	if paths, ok := spec["paths"].(map[string]interface{}); ok {
+		for p, methods := range openAPIExtraPaths() {
+			if _, exists := paths[p]; exists {
+				continue
+			}
+			ops := make(map[string]interface{}, len(methods))
+			for method, summary := range methods {
+				ops[method] = openAPIOperation(summary)
+			}
+			paths[p] = ops
+		}
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(spec)
 }

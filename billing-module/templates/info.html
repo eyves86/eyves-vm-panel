@@ -212,6 +212,26 @@
         if (history[name].length > maxPoints) history[name].shift();
     }
 
+    // 优先用面板历史指标接口返回的时序一次性画出历史曲线。
+    function seedFromHistory(points) {
+        if (!points || !points.length) return false;
+        history.cpu_percent = [];
+        history.mem_percent = [];
+        history.network_in = [];
+        history.network_out = [];
+        history.disk_read = [];
+        history.disk_write = [];
+        points.forEach(function(p){
+            history.cpu_percent.push(number(p.cpu_percent));
+            history.mem_percent.push(number(p.mem_percent));
+            history.network_in.push(number(p.net_in_bps));
+            history.network_out.push(number(p.net_out_bps));
+            history.disk_read.push(number(p.disk_read_bps));
+            history.disk_write.push(number(p.disk_write_bps));
+        });
+        return true;
+    }
+
     function setText(key, value) {
         root.querySelectorAll('[data-eyvescloud-info="' + key + '"]').forEach(function(node){
             if (typeof value !== 'object') node.textContent = value;
@@ -338,6 +358,11 @@
                 ['cpu_percent','mem_percent','load_percent','disk_percent'].forEach(function(key){ setGauge(key, data[key]); });
                 fitGaugeText();
                 setProgress('traffic_percent', data.traffic_percent);
+                // 历史接口可用时先画出历史曲线，再把当前实时值续接到最新点；
+                // 不可用时回退为实时值持续采样累积。
+                if (seedFromHistory(data.history)) {
+                    maxPoints = Math.max(maxPoints, history.cpu_percent.length + 1);
+                }
                 push('cpu_percent', data.cpu_percent);
                 push('mem_percent', data.mem_percent);
                 push('network_in', data.net_in_bps);

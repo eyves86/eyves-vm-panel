@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"eyvescloud/internal/config"
@@ -227,6 +229,89 @@ func listByRuntime() ([]config.Container, error) {
 	}
 	containers = kvmManager.ListContainers(containers)
 	return containers, err
+}
+
+// resizeDiskByRuntime 扩容系统盘（仅允许扩大），按运行时分发：
+//   - KVM：qemu-img resize 在线扩大 qcow2（绝对容量；qemu 对缩小天然报错）。
+//   - LXC：扩 rootfs.img 文件 + 在线 resize2fs 扩大 ext4 文件系统。
+//
+// 对不存在根镜像的容器（仅配置级软配额，如 dir 后端抽取后的卷）跳过物理
+// 扩容，仅返回 nil，由调用方持久化 config.DiskGB。真正的文件系统在线扩容
+// 失败会返回错误，调用方不会提交配置漂移。
+func resizeDiskByRuntime(c *config.Container, newDiskGB float64) error {
+	if c == nil {
+		return nil
+	}
+	if c.IsKVM() {
+		return growKVMQcow2Disk(c, newDiskGB)
+	}
+	return growLXCRootfsDisk(c, newDiskGB)
+}
+
+func growKVMQcow2Disk(c *config.Container, newDiskGB float64) error {
+	if c.DiskImage == "" {
+		return nil
+	}
+	if _, err := os.Stat(c.DiskImage); err != nil {
+		return nil
+	}
+	diskMB := int64(math.Round(newDiskGB * 1024))
+	if diskMB < 128 {
+		diskMB = 128
+	}
+	out, err := exec.Command("qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB)).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// growLXCRootfsDisk 扩大 LXC loopback rootfs.img 并在线扩展文件系统。
+// 仅当 rootfs.img 确实存在时才操作；不存在的容器目录（例如池抽取后无 loopback
+// 镜像）直接跳过。文件系统在线 resize2fs 失败视为扩容失败并返回错误。
+func growLXCRootfsDisk(c *config.Container, newDiskGB float64) error {
+	imagePath := filepath.Join(lxcManager.LxcPath, c.LxcName(), "rootfs.img")
+	if _, err := os.Stat(imagePath); err != nil {
+		return nil
+	}
+	diskMB := int64(math.Round(newDiskGB * 1024))
+	if diskMB < 128 {
+		diskMB = 128
+	}
+	out, err := exec.Command("truncate", "-s", fmt.Sprintf("%dM", diskMB), imagePath).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("grow rootfs image failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	device := loopDeviceForImage(imagePath)
+	if device == "" {
+		// 未挂载则无法在线扩文件系统；文件已扩到目标容量，重启或下次挂载时由
+		// 文件系统自愈（resize2fs 幂等）。此处不报错，避免阻塞配置提交。
+		return nil
+	}
+	out, err = exec.Command("resize2fs", device).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("resize2fs failed on %s: %v, output: %s", device, err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// loopDeviceForImage 解析 rootfs.img 对应已挂载的 loop 设备（如 /dev/loop0）。
+func loopDeviceForImage(imagePath string) string {
+	out, err := exec.Command("losetup", "-j", imagePath).Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		device := strings.TrimSuffix(strings.SplitN(line, ":", 2)[0], ":")
+		if device != "" {
+			return device
+		}
+	}
+	return ""
 }
 
 func validateRuntimeResourceRequest(runtime string, templateID string, vcpu float64, ramMB int, diskGB float64) error {

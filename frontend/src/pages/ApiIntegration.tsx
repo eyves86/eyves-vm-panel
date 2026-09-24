@@ -166,7 +166,7 @@ const endpointGroups: Array<{ title: string; endpoints: EndpointTuple[] }> = [
     endpoints: [
       ['GET', '/api/v1/containers', '容器列表'],
       ['POST', '/api/v1/containers/list', '容器列表（兼容 POST 写法）'],
-      ['POST', '/api/v1/containers', '创建容器'],
+      ['POST', '/api/v1/containers', '创建容器（可携带 Idempotency-Key 请求头，重试不重复开通）'],
       ['GET', '/api/v1/containers/{id|uuid|name}', '容器详情'],
       ['POST', '/api/v1/containers/{id}/start', '开机'],
       ['POST', '/api/v1/containers/{id}/stop', '关机'],
@@ -178,7 +178,7 @@ const endpointGroups: Array<{ title: string; endpoints: EndpointTuple[] }> = [
       ['GET', '/api/v1/containers/{id}/traffic', '流量统计'],
       ['POST', '/api/v1/containers/{id}/traffic-reset', '重置流量'],
       ['PUT', '/api/v1/containers/{id}/traffic-limit', '调整流量限制'],
-      ['PUT', '/api/v1/containers/{id}/resource-limit', '调整资源限制'],
+      ['PUT', '/api/v1/containers/{id}/resource-limit', '调整资源限制（vcpu/ram_mb/disk_gb/io/带宽，disk_gb 仅允许扩大）'],
       ['PUT', '/api/v1/containers/{id}/expiry', '调整到期时间'],
       ['POST', '/api/v1/containers/{id}/reset-password', '重置 SSH 密码'],
       ['POST', '/api/v1/containers/{id}/ipv6', '分配 IPv6'],
@@ -833,6 +833,7 @@ const requestBodySamples: Record<string, Record<string, unknown>> = {
   'PUT /api/v1/containers/{id}/resource-limit': {
     vcpu: 1,
     ram_mb: 512,
+    disk_gb: 10,
     network_down_mbps: 100,
     network_up_mbps: 20,
     io_read_mbps: 80,

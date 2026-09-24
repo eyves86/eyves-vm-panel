@@ -1,0 +1,168 @@
+<style>
+.eyvescloud-rei-panel{font-size:14px;color:#1f2937}
+.eyvescloud-rei-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+.eyvescloud-rei-card{border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fff}
+.eyvescloud-rei-label{color:#6b7280;font-size:12px;margin-bottom:4px}
+.eyvescloud-rei-value{font-size:18px;font-weight:600;word-break:break-all}
+.eyvescloud-rei-title{font-weight:600;margin:18px 0 8px}
+.eyvescloud-rei-muted{color:#6b7280}
+.eyvescloud-rei-form{border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:12px;margin-top:8px}
+.eyvescloud-rei-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;align-items:end}
+.eyvescloud-rei-field label{display:block;color:#6b7280;font-size:12px;margin-bottom:4px}
+.eyvescloud-rei-select,.eyvescloud-rei-input{width:100%;height:34px;border:1px solid #d1d5db;border-radius:4px;padding:6px 8px;box-sizing:border-box;background:#fff}
+.eyvescloud-rei-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.eyvescloud-rei-btn{height:34px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:4px;padding:0 12px;cursor:pointer}
+.eyvescloud-rei-btn[disabled]{opacity:.6;cursor:not-allowed}
+.eyvescloud-rei-btn-secondary{border-color:#d1d5db;background:#fff;color:#374151}
+.eyvescloud-rei-btn-danger{border-color:#dc2626;background:#dc2626;color:#fff}
+.eyvescloud-rei-msg{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:6px;padding:10px 12px;margin-bottom:12px;display:none}
+.eyvescloud-rei-msg.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+.eyvescloud-rei-warn{border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:6px;padding:10px 12px;margin-top:12px;font-size:13px;line-height:1.6}
+.eyvescloud-rei-modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+.eyvescloud-rei-modal{width:min(420px,100%);background:#fff;border-radius:6px;border:1px solid #e5e7eb;box-shadow:0 18px 48px rgba(15,23,42,.22);padding:16px}
+.eyvescloud-rei-modal-title{font-size:16px;font-weight:700;color:#111827;margin-bottom:8px}
+.eyvescloud-rei-modal-body{font-size:14px;color:#4b5563;line-height:1.6;margin-bottom:14px}
+.eyvescloud-rei-modal-actions{display:flex;justify-content:flex-end;gap:8px}
+</style>
+
+<div class="eyvescloud-rei-panel" id="eyvescloud-rei-panel" data-service-id="{$service_id}" data-area-key="{$area_key}">
+    <div class="eyvescloud-rei-msg" id="eyvescloud-rei-msg"></div>
+
+    <div class="eyvescloud-rei-grid">
+        <div class="eyvescloud-rei-card">
+            <div class="eyvescloud-rei-label">实例名称</div>
+            <div class="eyvescloud-rei-value">{$container_name}</div>
+        </div>
+        <div class="eyvescloud-rei-card">
+            <div class="eyvescloud-rei-label">当前系统模板</div>
+            <div class="eyvescloud-rei-value" id="eyvescloud-rei-current">{$current_template}</div>
+        </div>
+    </div>
+
+    <div class="eyvescloud-rei-title">重装系统</div>
+    <div class="eyvescloud-rei-form">
+        <div class="eyvescloud-rei-row">
+            <div class="eyvescloud-rei-field">
+                <label>选择系统模板</label>
+                <select class="eyvescloud-rei-select" id="eyvescloud-rei-template">
+                    <option value="">正在加载模板…</option>
+                </select>
+            </div>
+            <div class="eyvescloud-rei-field">
+                <label>重装范围</label>
+                <select class="eyvescloud-rei-select" id="eyvescloud-rei-mode">
+                    <option value="full">完整重装（清空系统盘）</option>
+                    <option value="system">仅重装系统盘（保留数据盘）</option>
+                </select>
+            </div>
+        </div>
+        <div class="eyvescloud-rei-actions">
+            <button class="eyvescloud-rei-btn eyvescloud-rei-btn-danger" type="button" data-eyvescloud-action="reinstall" disabled>开始重装</button>
+        </div>
+    </div>
+
+    <div class="eyvescloud-rei-warn">
+        重装系统将会清空所选范围内的磁盘数据，且可能需要数分钟完成。重装期间实例可能无法连接，请确保重要数据已备份。
+    </div>
+
+    <div class="eyvescloud-rei-modal-mask" id="eyvescloud-rei-modal-mask">
+        <div class="eyvescloud-rei-modal">
+            <div class="eyvescloud-rei-modal-title" id="eyvescloud-rei-modal-title">确认操作</div>
+            <div class="eyvescloud-rei-modal-body" id="eyvescloud-rei-modal-body"></div>
+            <div class="eyvescloud-rei-modal-actions">
+                <button class="eyvescloud-rei-btn eyvescloud-rei-btn-secondary" type="button" id="eyvescloud-rei-cancel">取消</button>
+                <button class="eyvescloud-rei-btn eyvescloud-rei-btn-danger" type="button" id="eyvescloud-rei-confirm">确认重装</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+    var panel = document.getElementById('eyvescloud-rei-panel');
+    if (!panel || panel.getAttribute('data-bound') === '1') return;
+    panel.setAttribute('data-bound', '1');
+
+    var msg = document.getElementById('eyvescloud-rei-msg');
+    var sel = document.getElementById('eyvescloud-rei-template');
+    var modeSel = document.getElementById('eyvescloud-rei-mode');
+    var reiBtn = document.querySelector('[data-eyvescloud-action="reinstall"]');
+    var current = document.getElementById('eyvescloud-rei-current');
+    var mask = document.getElementById('eyvescloud-rei-modal-mask');
+    var pending = null;
+    var maskText = document.getElementById('eyvescloud-rei-modal-body');
+    var cancelBtn = document.getElementById('eyvescloud-rei-cancel');
+    var confirmBtn = document.getElementById('eyvescloud-rei-confirm');
+
+    function endpoint(){ return "{$MODULE_CUSTOM_API}"; }
+    function escapeHtml(v){ return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+    function show(type, text){ msg.className = 'eyvescloud-rei-msg'+(type==='error'?' error':''); msg.style.display='block'; msg.textContent = text||''; }
+
+    function post(func, payload, done){
+        try{
+            var body = new URLSearchParams();
+            body.set('id', panel.getAttribute('data-service-id')||'');
+            body.set('func', func || '');
+            Object.keys(payload||{}).forEach(function(k){ body.set(k, payload[k]); });
+            fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','Authorization':'JWT {$Think.get.jwt}'},credentials:'same-origin',body:body.toString()})
+            .then(function(r){return r.text();})
+            .then(function(txt){
+                var d; try{d=JSON.parse(txt);}catch(e){d={status:'error',msg:'非 JSON 响应: '+txt};}
+                if(d.status===200||d.status==='success'){
+                    show('success', d.msg||'操作成功');
+                    if(done) done(d);
+                } else {
+                    show('error', d.msg||'操作失败');
+                }
+            })
+            .catch(function(e){ show('error', e.message||'请求失败'); });
+        }catch(e){ show('error', e.message||'请求失败'); }
+    }
+
+    function loadTemplates(){
+        post('reinstallTemplates', {}, function(d){
+            if(!d.data || !Array.isArray(d.data.templates)){
+                sel.innerHTML = '<option value="">暂无可用模板</option>';
+                return;
+            }
+            var cur = current.textContent.trim();
+            var opts = d.data.templates.map(function(t){
+                var id = escapeHtml(t.id);
+                var arch = escapeHtml(t.arch||'');
+                var name = escapeHtml(t.name||id) + (arch ? ' ('+arch+')' : '');
+                var selected = (id === cur) ? ' selected' : '';
+                return '<option value="'+id+'"'+selected+'>'+name+'</option>';
+            }).join('');
+            sel.innerHTML = opts || '<option value="">暂无可用模板</option>';
+            reiBtn.disabled = sel.options.length < 1;
+        });
+    }
+
+    function ask(title, text, cb){
+        maskText.textContent = text||'';
+        document.getElementById('eyvescloud-rei-modal-title').textContent = title||'确认操作';
+        pending = cb;
+        mask.style.display='flex';
+    }
+    function closeMask(){ pending=null; mask.style.display='none'; }
+
+    panel.addEventListener('click', function(ev){
+        var b = ev.target.closest('[data-eyvescloud-action]');
+        if(!b || b.getAttribute('data-eyvescloud-action')!=='reinstall') return;
+        var tid = sel.value;
+        if(!tid){ show('error', '请先选择系统模板'); return; }
+        var tname = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].text : tid;
+        var mode = modeSel.value || 'full';
+        var modeText = mode==='system' ? '仅重装系统盘（保留数据盘）' : '完整重装（清空系统盘）';
+        ask('重装系统', '确认将实例重装为「'+tname+'」，范围：'+modeText+'？该操作不可逆！', function(){
+            post('reinstall', {template_id:tid, reinstall_mode:mode});
+        });
+    });
+
+    if(cancelBtn){ cancelBtn.addEventListener('click', closeMask); }
+    if(confirmBtn){ confirmBtn.addEventListener('click', function(){ var cb=pending; closeMask(); if(cb) cb(); }); }
+    if(mask){ mask.addEventListener('click', function(ev){ if(ev.target===mask) closeMask(); }); }
+
+    loadTemplates();
+})();
+</script>
