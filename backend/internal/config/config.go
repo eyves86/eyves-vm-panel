@@ -729,6 +729,79 @@ func DeleteApiKey(id string) {
 	_ = saveConfigToDB()
 }
 
+// DefaultAdminPath 是管理员入口路径的默认值（挂在根路径，保持历史行为）。
+const DefaultAdminPath = "/"
+
+// 管理员入口路径占用的保留前缀：这些路径属于 API、用户门户或静态资源。
+var reservedAdminPathPrefixes = []string{"/api", "/user", "/assets", "/favicon", "/favicon.svg", "/index.html"}
+
+// NormalizeAdminPath 归一化管理员入口路径并校验合法性：
+//   - 空串或 "/" → "/"（默认挂在根路径）
+//   - 必须以 "/" 开头，自动去掉尾部 "/"
+//   - 每一段仅允许 [A-Za-z0-9._~-]，禁止空段/./..，避免路径穿越与编码歧义
+//   - 不得占用 /api、/user、/assets、/favicon 等保留前缀
+//
+// 第二个返回值 false 表示非法，调用方应拒绝保存。
+func NormalizeAdminPath(p string) (string, bool) {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		return DefaultAdminPath, true
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.TrimRight(p, "/")
+	if p == "" {
+		return DefaultAdminPath, true
+	}
+	for _, seg := range strings.Split(strings.TrimPrefix(p, "/"), "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return "", false
+		}
+		for _, r := range seg {
+			switch {
+			case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			case r == '-', r == '_', r == '.', r == '~':
+			default:
+				return "", false
+			}
+		}
+	}
+	lower := strings.ToLower(p)
+	for _, reserved := range reservedAdminPathPrefixes {
+		if lower == reserved || strings.HasPrefix(lower, reserved+"/") {
+			return "", false
+		}
+	}
+	return p, true
+}
+
+// CurrentAdminPath 返回当前管理员入口路径（已归一化，默认 "/"）。
+func CurrentAdminPath() string {
+	AppConfigMu.RLock()
+	raw := AppConfig.AdminPath
+	AppConfigMu.RUnlock()
+	if p, ok := NormalizeAdminPath(raw); ok {
+		return p
+	}
+	return DefaultAdminPath
+}
+
+// AdminPathForRequest 决定给某个前端请求注入的管理员入口路径：
+//   - 管理员路径为 "/"：始终注入 "/"（默认行为）
+//   - 请求落在管理员路径下：注入真实路径，管理端路由才会被挂载
+//   - 其它路径：注入空串，页面里不含任何管理端路由（入口不可被枚举）
+func AdminPathForRequest(requestPath string) string {
+	adminPath := CurrentAdminPath()
+	if adminPath == DefaultAdminPath {
+		return DefaultAdminPath
+	}
+	if requestPath == adminPath || strings.HasPrefix(requestPath, adminPath+"/") {
+		return adminPath
+	}
+	return ""
+}
+
 // AdminAccount 是主管理员之外的管理员账号（多管理员支持）。
 //
 // 主管理员仍由 AdminUser/AdminPassHash/AdminTOTP* 承载，行为完全不变（TOTP、
@@ -1116,6 +1189,8 @@ type EyvescloudConfig struct {
 	AdminTOTPSecret      string                 `json:"admin_totp_secret,omitempty"`
 	AdminTOTPEnabled     bool                   `json:"admin_totp_enabled"`
 	AdminBackupCodes     []string               `json:"admin_backup_codes,omitempty"`
+	// AdminPath 是管理员入口路径（可自定义，默认 "/"）。用户门户固定为 /user。
+	AdminPath string `json:"admin_path,omitempty"`
 	JWTSecret            string                 `json:"jwt_secret"`
 	Port                 int                    `json:"port"`
 	DataDir              string                 `json:"data_dir"`
@@ -1562,6 +1637,16 @@ func normalizeConfigDefaults(dataDir string) bool {
 				changed = true
 			}
 		}
+	}
+	if normalized, ok := NormalizeAdminPath(AppConfig.AdminPath); !ok {
+		// 非法值（含历史脏数据）一律回落默认路径，避免面板入口不可达。
+		if AppConfig.AdminPath != DefaultAdminPath {
+			AppConfig.AdminPath = DefaultAdminPath
+			changed = true
+		}
+	} else if normalized != AppConfig.AdminPath {
+		AppConfig.AdminPath = normalized
+		changed = true
 	}
 	if AppConfig.ApiKeys == nil {
 		AppConfig.ApiKeys = make([]ApiKeyConfig, 0)

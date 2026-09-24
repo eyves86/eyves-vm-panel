@@ -729,6 +729,7 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["admins"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Admins)
 	}
+	cfg.AdminPath = meta["admin_path"]
 	if raw := strings.TrimSpace(meta["ssl"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.SSL)
 	}
@@ -889,6 +890,7 @@ func saveMeta(tx *sql.Tx) error {
 		"admin_totp_enabled":     btoa(AppConfig.AdminTOTPEnabled),
 		"admin_backup_codes":     string(nCIbackup),
 		"admins":                 string(adminsJSON),
+		"admin_path":             AppConfig.AdminPath,
 		"jwt_secret":             AppConfig.JWTSecret,
 		"port":                   strconv.Itoa(AppConfig.Port),
 		"data_dir":               AppConfig.DataDir,

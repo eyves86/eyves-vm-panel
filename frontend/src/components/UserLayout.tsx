@@ -1,15 +1,14 @@
-import { Link, Outlet, useNavigate } from 'react-router'
-import { LogOut, Server } from 'lucide-react'
+import { Link, Outlet } from 'react-router'
+import { LogOut } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import AppIcon from './AppIcon'
 
 // UserLayout 是**用户门户**（/user/*）的极简外壳：只有品牌、用户信息与登出，
-// 不暴露任何管理端导航（管理端在 /）。
+// 不暴露任何管理端导航（管理端在可自定义的管理员路径下）。
 export default function UserLayout() {
   const { username, logout } = useAuth()
   const { t } = useLanguage()
-  const navigate = useNavigate()
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
@@ -41,14 +40,8 @@ export default function UserLayout() {
       </main>
 
       <footer className="mx-auto max-w-6xl px-4 pb-8 pt-2 text-center text-xs text-gray-400">
-        <button
-          type="button"
-          className="inline-flex items-center gap-1 underline hover:text-gray-600"
-          onClick={() => navigate('/login')}
-        >
-          <Server className="h-3 w-3" />
-          {t('管理员入口')}
-        </button>
+        {/* 不在此处暴露管理入口链接：管理员路径是自定义的，且不应被枚举。 */}
+        <span>EyvesCloud</span>
       </footer>
     </div>
   )

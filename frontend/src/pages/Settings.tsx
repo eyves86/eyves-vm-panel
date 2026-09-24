@@ -17,6 +17,7 @@ import {
   getLoginLogs,
   getOvercommitSettings,
   getNotificationSettings,
+  getAdminPath,
   getPanelAccessPolicy,
   getRateLimitSettings,
   getSSLSettings,
@@ -41,6 +42,7 @@ import {
   updateOvercommitSettings,
   updateTaskQueueSettings,
   updateSSLSettings,
+  updateAdminPath,
   updatePanelAccessPolicy,
   updateWebSSHOriginSettings,
   WebSSHOriginSettings,
@@ -99,6 +101,11 @@ export default function Settings() {
   const [allowedSourcesText, setAllowedSourcesText] = useState('')
   const [trustedProxiesText, setTrustedProxiesText] = useState('')
   const [savingAccessPolicy, setSavingAccessPolicy] = useState(false)
+  // 管理员入口路径（可自定义）
+  const [adminPath, setAdminPath] = useState('/')
+  const [adminPathInput, setAdminPathInput] = useState('/')
+  const [savingAdminPath, setSavingAdminPath] = useState(false)
+  const [adminPathMsg, setAdminPathMsg] = useState('')
   const [activeSection, setActiveSection] = useState<SettingsSection>('tasks')
 
   // 两步验证 (TOTP)
@@ -217,6 +224,18 @@ export default function Settings() {
     }
   }, [])
 
+  const fetchAdminPath = useCallback(async () => {
+    try {
+      const res = await getAdminPath()
+      const data = res.data.data
+      if (!data) return
+      setAdminPath(data.admin_path || '/')
+      setAdminPathInput(data.admin_path || '/')
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await getNotificationSettings()
@@ -330,6 +349,7 @@ export default function Settings() {
     fetchWebSSHOrigins()
     fetchTaskQueue()
     fetchAccessPolicy()
+    fetchAdminPath()
     fetchNotifications()
     fetch2FA()
     fetchAudit()
@@ -343,7 +363,25 @@ export default function Settings() {
       clearInterval(logTimer)
       clearInterval(taskTimer)
     }
-  }, [fetch2FA, fetchAccessPolicy, fetchAudit, fetchBackup, fetchHealth, fetchLogs, fetchNotifications, fetchOvercommit, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchWebSSHOrigins])
+  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAudit, fetchBackup, fetchHealth, fetchLogs, fetchNotifications, fetchOvercommit, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchWebSSHOrigins])
+
+  const handleSaveAdminPath = async () => {
+    setSavingAdminPath(true)
+    setAdminPathMsg('')
+    try {
+      const res = await updateAdminPath(adminPathInput)
+      const data = res.data.data
+      const saved = data?.admin_path || '/'
+      setAdminPath(saved)
+      setAdminPathInput(saved)
+      setAdminPathMsg(t('已保存，新管理入口：') + (saved === '/' ? '/login' : `${saved}/login`))
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setAdminPathMsg(e.response?.data?.message || t('保存失败'))
+    } finally {
+      setSavingAdminPath(false)
+    }
+  }
 
   const handleSaveTaskQueue = async () => {
     const concurrency = Math.max(1, Math.min(16, Math.round(taskConcurrency || 1)))
@@ -874,6 +912,49 @@ export default function Settings() {
               onRefresh={fetchAccessPolicy}
               onSave={handleSaveAccessPolicy}
             />
+          )}
+
+          {activeSection === 'access' && (
+            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('管理员入口路径')}</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                {t('自定义管理后台的入口路径（用户门户固定为 /user）。只有访问到该路径时，页面才会包含管理端路由，其它路径不含任何管理入口，因此无法通过枚举 /login、/admin 等常见路径发现。')}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  className="min-w-[240px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
+                  value={adminPathInput}
+                  onChange={(e) => setAdminPathInput(e.target.value)}
+                  placeholder="/mypanel-x9k2（留空或 / 表示挂在根路径）"
+                />
+                <button
+                  type="button"
+                  disabled={savingAdminPath}
+                  onClick={() => { void handleSaveAdminPath() }}
+                  className="rounded-md bg-black px-3 py-2 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {savingAdminPath ? t('保存中...') : t('保存')}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingAdminPath}
+                  onClick={() => { void fetchAdminPath() }}
+                  className="rounded-md border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {t('刷新')}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                {t('当前管理入口')}：
+                <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+                  {adminPath === '/' ? '/login' : `${adminPath}/login`}
+                </code>
+              </p>
+              {adminPathMsg && <p className="mt-2 text-xs text-amber-600">{adminPathMsg}</p>}
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                {t('注意：修改后请立即用新地址访问并收藏，忘记路径需要通过配置文件或 CLI 恢复。')}
+              </p>
+            </div>
           )}
 
           {activeSection === 'ssl' && (

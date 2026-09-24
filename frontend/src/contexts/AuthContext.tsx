@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import api, { login as apiLogin, checkAuth, LoginResponse } from '../services/api'
+import { adminUrl } from '../services/panelPath'
 
 // CheckAuthData 与服务端 /check-auth 返回的解析结果对应。
 type CheckAuthData = {
@@ -104,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = response.data.data as LoginResponse
     saveAuth(data.token, data.username, false, [])
     setAdminRole('')
-    navigate('/')
+    navigate(adminUrl() || '/')
   }
 
   // 用户入口：只认 /api/sub-user/login（账号密码）。
@@ -120,7 +121,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const data = response.data.data as LoginResponse
     saveAuth(data.token, data.username, false, [])
     setAdminRole('')
-    navigate('/')
+    navigate(adminUrl() || '/')
   }
 
   const accessCodeLogin = async (code: string, password: string) => {
@@ -131,6 +132,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
+    const wasSubUser = isSubUser
     localStorage.removeItem('eyvescloud_token')
     localStorage.removeItem('eyvescloud_username')
     setToken(null)
@@ -140,7 +142,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setAdminRole('')
     setContainerIdentifiers([])
     setIsAuthenticated(false)
-    navigate('/login')
+    // 子用户回用户登录页；管理员回（可自定义的）管理登录页。
+    navigate(wasSubUser ? '/user/login' : (adminUrl('login') || '/user/login'))
   }
 
   return (

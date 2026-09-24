@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -70,6 +71,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/ssl", corsMiddleware(api.AdminMiddleware(api.HandleSSLSettings)))
 	mux.HandleFunc("/api/webssh-origins", corsMiddleware(api.AdminMiddleware(api.HandleWebSSHOriginSettings)))
 	mux.HandleFunc("/api/access-policy", corsMiddleware(api.AdminMiddleware(api.HandlePanelAccessPolicy)))
+	// 管理员入口路径（可自定义）：仅主管理员会话可读写。
+	mux.HandleFunc("/api/admin-path", corsMiddleware(api.AuthMiddleware(api.HandleAdminPathSettings)))
 	// 管理员两步验证（TOTP / Google Authenticator）
 	mux.HandleFunc("/api/2fa/status", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FAStatus)))
 	mux.HandleFunc("/api/2fa/setup", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FASetup)))
@@ -233,6 +236,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/ssl", corsMiddleware(api.AdminMiddleware(api.HandleSSLSettings)))
 	mux.HandleFunc("/api/v1/webssh-origins", corsMiddleware(api.AdminMiddleware(api.HandleWebSSHOriginSettings)))
 	mux.HandleFunc("/api/v1/access-policy", corsMiddleware(api.AdminMiddleware(api.HandlePanelAccessPolicy)))
+	mux.HandleFunc("/api/v1/admin-path", corsMiddleware(api.AuthMiddleware(api.HandleAdminPathSettings)))
 	mux.HandleFunc("/api/v1/security/alerts", corsMiddleware(api.AuthMiddleware(api.ScopeMiddleware("security:read", api.HandleSecurityAlerts))))
 	mux.HandleFunc("/api/v1/security/check", corsMiddleware(api.AuthMiddleware(api.ScopeMiddleware("security:check", api.HandleSecurityCheck))))
 	mux.HandleFunc("/api/v1/security/logs", corsMiddleware(api.AuthMiddleware(api.ScopeMiddleware("security:read", api.HandleSecurityLogs))))
@@ -281,21 +285,43 @@ func setupRoutes(mux *http.ServeMux) {
 			path := r.URL.Path
 			f, err := webFS.Open(path)
 			if err != nil {
-				// SPA fallback: serve index.html
-				indexFile, err := webFS.Open("index.html")
-				if err != nil {
-					http.Error(w, "Not found", http.StatusNotFound)
-					return
-				}
-				defer indexFile.Close()
-				stat, _ := indexFile.Stat()
-				http.ServeContent(w, r, "index.html", stat.ModTime(), indexFile)
+				// SPA fallback: serve index.html（并按请求路径注入管理员入口路径）
+				serveSPAIndex(w, r)
 				return
 			}
 			defer f.Close()
 			fs.ServeHTTP(w, r)
 		})
 	}
+}
+
+// adminPathPlaceholder 是 frontend/index.html 里管理员入口路径的占位符。
+// 注意不要与 JS 变量名 __EYVES_ADMIN_PATH__ 相同，否则会被一并替换掉。
+const adminPathPlaceholder = "__EYVES_ADMIN_PATH_VALUE__"
+
+// serveSPAIndex 返回 SPA 入口页，并按请求路径注入「管理员入口路径」。
+//
+// 这样做的意义：只有访问到正确路径的请求才会拿到**包含管理端路由**的页面，
+// 其它路径拿到的页面里没有任何管理端入口，攻击者无法通过枚举 /login、/admin
+// 之类的常见路径发现管理入口。
+func serveSPAIndex(w http.ResponseWriter, r *http.Request) {
+	indexFile, err := webFS.Open("index.html")
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	defer indexFile.Close()
+	raw, err := io.ReadAll(indexFile)
+	if err != nil {
+		http.Error(w, "Not found", http.StatusNotFound)
+		return
+	}
+	body := strings.ReplaceAll(string(raw), adminPathPlaceholder, config.AdminPathForRequest(r.URL.Path))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// 注入内容随请求路径变化，必须禁用缓存，否则不同路径会互相串味。
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(body))
 }
 
 // recoverPanicMiddleware 是全局 panic 兜底：任何 handler 抛出的 panic 都会被

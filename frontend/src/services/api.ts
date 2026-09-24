@@ -829,6 +829,18 @@ export const getPanelAccessPolicy = () =>
 export const updatePanelAccessPolicy = (data: Pick<PanelAccessPolicy, 'enabled' | 'allowed_sources' | 'trusted_proxies'>) =>
   api.put<APIResponse<PanelAccessPolicy>>('/access-policy', data)
 
+// 管理员入口路径（可自定义，用于隐藏管理入口；用户门户固定 /user）
+export interface AdminPathSettings {
+  admin_path: string
+  user_path: string
+}
+
+export const getAdminPath = () =>
+  api.get<APIResponse<AdminPathSettings>>('/admin-path')
+
+export const updateAdminPath = (adminPath: string) =>
+  api.put<APIResponse<AdminPathSettings>>('/admin-path', { admin_path: adminPath })
+
 // 外部告警推送
 export interface NotificationSettings {
   security_alerts_enabled: boolean
