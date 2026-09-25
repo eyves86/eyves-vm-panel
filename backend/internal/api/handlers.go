@@ -259,6 +259,69 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			resp["owner_username"] = ownerUsername
 		}
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: resp})
+	case action == "migrate" && r.Method == http.MethodPut:
+		// 迁移容器到目标节点。轻量路径：更新 Container.NodeID + 审计 + 同步目标节点计数。
+		// 跨节点实际数据移动由被控 Agent 拉指令执行；本端点作为控制面入口。
+		if !requireScope(w, r, "container:resize") {
+			return
+		}
+		var req struct {
+			TargetNodeID string `json:"target_node_id"`
+			Force        bool   `json:"force"` // 强制跨 Cluster 迁移（默认要求同 Cluster 或一方 Cluster 为空）
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+			return
+		}
+		targetNodeID := strings.TrimSpace(req.TargetNodeID)
+		if targetNodeID == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "target_node_id is required"})
+			return
+		}
+		targetNode, ok := config.FindNode(targetNodeID)
+		if !ok {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Target node not found"})
+			return
+		}
+		if targetNode.Status != "online" {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Target node is not online"})
+			return
+		}
+		// 当前容器
+		container := config.FindContainer(id)
+		if container == nil {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+			return
+		}
+		if config.NodeSupportsVirt(targetNode, container.Virtualization) == false {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: fmt.Sprintf("Target node does not support %s", container.Virtualization)})
+			return
+		}
+		// Cluster 一致性检查：源节点和目标节点都有 ClusterID 时要求同 Cluster（除非 Force=true）。
+		if !req.Force {
+			if container.NodeID != "" {
+				if src, ok := config.FindNode(container.NodeID); ok && src.ClusterID != "" && targetNode.ClusterID != "" && src.ClusterID != targetNode.ClusterID {
+					jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Source and target nodes are in different clusters; set force=true to proceed"})
+					return
+				}
+			}
+		}
+		// 原子更新 NodeID + 节点容器计数
+		var oldNodeID string
+		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			for i := range cfg.Containers {
+				if cfg.Containers[i].ID != id {
+					continue
+				}
+				oldNodeID = cfg.Containers[i].NodeID
+				cfg.Containers[i].NodeID = targetNodeID
+				break
+			}
+		})
+		config.SaveConfig()
+		auditDetail := fmt.Sprintf("from=%s to=%s force=%v virt=%s", oldNodeID, targetNodeID, req.Force, container.Virtualization)
+		auditRequest(r, "container.migrate", container.Name, auditDetail, true, "")
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{"node_id": targetNodeID}})
 	case action == "usage" && r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return

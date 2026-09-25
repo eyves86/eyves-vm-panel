@@ -186,6 +186,24 @@ func setupRoutes(mux *http.ServeMux) {
 	// 主控（Controller）节点管理
 	mux.HandleFunc("/api/nodes", corsMiddleware(api.AdminMiddleware(api.HandleNodes)))
 	mux.HandleFunc("/api/nodes/", corsMiddleware(api.HandleNodeSubRoutes))
+	mux.HandleFunc("/api/node-groups", corsMiddleware(api.AdminMiddleware(api.HandleNodeGroups)))
+	mux.HandleFunc("/api/node-groups/", corsMiddleware(api.AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/node-groups/")
+		if path == "" {
+			api.HandleNodeGroups(w, r)
+			return
+		}
+		api.HandleNodeGroupItem(w, r, path)
+	})))
+	mux.HandleFunc("/api/clusters", corsMiddleware(api.AdminMiddleware(api.HandleClusters)))
+	mux.HandleFunc("/api/clusters/", corsMiddleware(api.AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/clusters/")
+		if path == "" {
+			api.HandleClusters(w, r)
+			return
+		}
+		api.HandleClusterItem(w, r, path)
+	})))
 	mux.HandleFunc("/api/nodes/binary", corsMiddleware(api.HandleNodeBinary))
 
 	// 批次3 网络管理：区域 / IP组与故障切换 / ISO 目录

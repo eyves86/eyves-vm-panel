@@ -31,12 +31,19 @@ type Request struct {
 	ContainerCountDelta int
 	// StorageBackend：所需存储后端（dir/zfs/lvm/rbd/cephfs/nfs）。dir 视为任意节点支持。
 	StorageBackend string
+	// VirtType：所需虚拟化类型 "lxc" 或 "kvm"；空时默认任意。
+	VirtType string
 	// ImageID：模板 ID（保留字段，本 P1-2 暂不参与过滤；P5-1 后按镜像能力扩展）。
 	ImageID string
 	// RequestID：调用方生成的去重 ID；空时由 Decide 填 UUID 替代占位。
 	RequestID string
 	// TenantID：可选亲和（同租户分散度评分时使用）。
 	TenantID string
+	// RegionID / NodeGroupID / ClusterID：将调度范围收敛到指定地域 / 分组 / 集群。
+	// 空 = 不限。三者可叠加使用（如某集群内的某分组 + 指定 Region 做子域收敛）。
+	RegionID    string
+	NodeGroupID string
+	ClusterID   string
 }
 
 // Diagnostics 是调度失败或选择的诊断信息（top-N 候选及理由）。
@@ -85,7 +92,8 @@ func DefaultPolicy() Policy {
 	}
 }
 
-// defaultFilter 检查节点是否满足硬性条件：状态、容量、存储后端、维护模式。
+// defaultFilter 检查节点是否满足硬性条件：状态、容量、存储后端、维护模式、
+// 虚拟化类型、地域 / 分组 / 集群归属。
 func defaultFilter(n config.Node, req Request) []string {
 	reason := []string{}
 	if n.MaintenanceMode {
@@ -105,6 +113,36 @@ func defaultFilter(n config.Node, req Request) []string {
 	}
 	if !backendMatches(n, req.StorageBackend) {
 		reason = append(reason, fmt.Sprintf("backend %q not supported by node", req.StorageBackend))
+	}
+	// VirtType 过滤：节点不支持请求的虚拟化类型则拒绝。
+	if req.VirtType != "" {
+		if !config.NodeSupportsVirt(n, req.VirtType) {
+			reason = append(reason, fmt.Sprintf("virt_type %q not supported by node (supports %v)", req.VirtType, n.VirtTypes))
+		}
+	}
+	// 归属过滤：Region / NodeGroup / Cluster 任一不匹配即拒绝。
+	if req.RegionID != "" && n.RegionID != req.RegionID {
+		reason = append(reason, fmt.Sprintf("region %q does not match request", n.RegionID))
+	}
+	if req.NodeGroupID != "" && n.NodeGroupID != req.NodeGroupID {
+		reason = append(reason, fmt.Sprintf("node_group %q does not match request", n.NodeGroupID))
+	}
+	if req.ClusterID != "" {
+		if n.ClusterID != req.ClusterID {
+			// Cluster 同时覆盖 Region：如果 Cluster 配了 RegionIDs，则该 Region 下的节点也视为属于 Cluster。
+			scopeMatches := false
+			if cl, ok := config.FindCluster(req.ClusterID); ok {
+				for _, rid := range cl.RegionIDs {
+					if n.RegionID == rid {
+						scopeMatches = true
+						break
+					}
+				}
+			}
+			if !scopeMatches {
+				reason = append(reason, fmt.Sprintf("cluster %q does not cover node (node.cluster=%q)", req.ClusterID, n.ClusterID))
+			}
+		}
 	}
 	return reason
 }

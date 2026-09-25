@@ -1680,4 +1680,50 @@ export interface MigrateBundle {
   container: MigrateContainer
 }
 
+// ---- Node Group（迁移池/策略池，对应 Virtualizor Server Group / SolusVM Node Group） ----
+export interface NodeGroup {
+  id: string
+  name: string
+  description?: string
+  region_id?: string
+  created_at?: string
+}
+
+export const listNodeGroups = () =>
+  api.get<APIResponse<NodeGroup[]>>('/node-groups')
+
+export const createNodeGroup = (payload: { name: string; description?: string; region_id?: string }) =>
+  api.post<APIResponse<null>>('/node-groups', payload)
+
+export const updateNodeGroup = (id: string, payload: Partial<NodeGroup>) =>
+  api.put<APIResponse<null>>(`/node-groups/${id}`, payload)
+
+export const deleteNodeGroup = (id: string) =>
+  api.delete<APIResponse<null>>(`/node-groups/${id}`)
+
+// ---- Cluster（跨 NodeGroup 的高可用/迁移域，对应 Virtualizor Cluster） ----
+export interface Cluster {
+  id: string
+  name: string
+  description?: string
+  region_ids?: string[]
+  created_at?: string
+}
+
+export const listClusters = () =>
+  api.get<APIResponse<Cluster[]>>('/clusters')
+
+export const createCluster = (payload: { name: string; description?: string; region_ids?: string[] }) =>
+  api.post<APIResponse<null>>('/clusters', payload)
+
+export const updateCluster = (id: string, payload: Partial<Cluster>) =>
+  api.put<APIResponse<null>>(`/clusters/${id}`, payload)
+
+export const deleteCluster = (id: string) =>
+  api.delete<APIResponse<null>>(`/clusters/${id}`)
+
+// ---- 容器迁移 ----
+export const migrateContainer = (id: number, targetNodeID: string, force = false) =>
+  api.put<APIResponse<{ node_id: string }>>(`/containers/${id}/migrate`, { target_node_id: targetNodeID, force })
+
 export default api

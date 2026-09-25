@@ -116,6 +116,7 @@ type Container struct {
 	ID                            int                    `json:"id"`
 	UUID                          string                 `json:"uuid"`
 	Name                          string                 `json:"name"`
+	NodeID                        string                 `json:"node_id,omitempty"`     // 所在节点 ID；空 = 主控本机（向后兼容）
 	Virtualization                string                 `json:"virtualization,omitempty"`
 	LXCName                       string                 `json:"lxc_name,omitempty"`
 	KVMName                       string                 `json:"kvm_name,omitempty"`
@@ -1236,12 +1237,37 @@ type Node struct {
 	DiskTotalGB    float64 `json:"disk_total_gb,omitempty"`
 	DiskUsedGB     float64 `json:"disk_used_gb,omitempty"`
 	ContainerCount int     `json:"container_count,omitempty"`
-	RegionID       string  `json:"region_id,omitempty"` // 所属区域，见 Regions
+	RegionID       string  `json:"region_id,omitempty"`       // 所属区域，见 Regions
+	NodeGroupID    string  `json:"node_group_id,omitempty"`   // 所属节点分组，见 NodeGroups（迁移池/策略池）
+	ClusterID      string  `json:"cluster_id,omitempty"`      // 所属集群，见 Clusters（跨分组 HA/迁移域）
+	VirtTypes      []string `json:"virt_types,omitempty"`      // 节点支持的虚拟化类型: "lxc"/"kvm"/["lxc","kvm"]
 	CreatedAt      string  `json:"created_at,omitempty"`
 	// MaintenanceMode 维护模式：调度器不再把新容器放到该节点（升级/维修前开启）。
 	// 已有容器不受影响，配合 drain 列表手动迁移。
 	MaintenanceMode  bool   `json:"maintenance_mode,omitempty"`
 	MaintenanceSince string `json:"maintenance_since,omitempty"`
+}
+
+// NodeGroup 是一个逻辑节点分组（迁移池 / 策略池）：Virtualizor 叫 Server Group，
+// SolusVM 叫 Node Group。调度器可按 NodeGroup 过滤；同一 NodeGroup 内的节点
+// 共享迁移目标范围与资源策略。
+type NodeGroup struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	RegionID    string `json:"region_id,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// Cluster 是一个跨 NodeGroup 的高可用 / 迁移域：Virtualizor 叫 Cluster。
+// Cluster 内可包含多个 NodeGroup，调度器在 Cluster 范围内挑选目标节点；
+// 容器显式迁移时，默认只允许在同一 Cluster 内跨 NodeGroup 移动。
+type Cluster struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Description string   `json:"description,omitempty"`
+	RegionIDs   []string `json:"region_ids,omitempty"` // Cluster 覆盖的区域（可选）
+	CreatedAt   string   `json:"created_at,omitempty"`
 }
 
 // Region 是一个逻辑区域，用于把节点/存储/容器按地域分组管理。
@@ -1327,6 +1353,8 @@ type EyvescloudConfig struct {
 	PolicyHistory        []PolicyTriggerRecord  `json:"policy_history"`
 	Nodes                []Node                 `json:"nodes,omitempty"`
 	Regions              []Region               `json:"regions,omitempty"`
+	NodeGroups           []NodeGroup            `json:"node_groups,omitempty"`
+	Clusters             []Cluster              `json:"clusters,omitempty"`
 	IPGroups             []IPGroup              `json:"ip_groups,omitempty"`
 	ISOFiles             []ISOFile              `json:"iso_files,omitempty"`
 	MetricRetentionDays  int                    `json:"metric_retention_days"`
@@ -1465,6 +1493,11 @@ func generateRandomString(length int) string {
 	b := make([]byte, length)
 	rand.Read(b)
 	return hex.EncodeToString(b)[:length]
+}
+
+// randomShortID 返回一个 6 字符的小写十六进制短 ID，用于 NodeGroup / Cluster 等内部标识。
+func randomShortID() string {
+	return generateRandomString(6)
 }
 
 func generateUUIDString() string {
@@ -1808,6 +1841,51 @@ func normalizeConfigDefaults(dataDir string) bool {
 	if AppConfig.Regions == nil {
 		AppConfig.Regions = make([]Region, 0)
 		changed = true
+	}
+	if AppConfig.NodeGroups == nil {
+		AppConfig.NodeGroups = make([]NodeGroup, 0)
+		changed = true
+	} else {
+		for i := range AppConfig.NodeGroups {
+			if AppConfig.NodeGroups[i].ID == "" {
+				AppConfig.NodeGroups[i].ID = "ng-" + randomShortID()
+				changed = true
+			}
+		}
+	}
+	if AppConfig.Clusters == nil {
+		AppConfig.Clusters = make([]Cluster, 0)
+		changed = true
+	} else {
+		for i := range AppConfig.Clusters {
+			if AppConfig.Clusters[i].ID == "" {
+				AppConfig.Clusters[i].ID = "cl-" + randomShortID()
+				changed = true
+			}
+		}
+	}
+	// Node 引用完整性：清空不存在的 NodeGroupID / ClusterID；推断空 VirtTypes。
+	nodeGroupIDs := map[string]bool{}
+	for _, ng := range AppConfig.NodeGroups {
+		nodeGroupIDs[ng.ID] = true
+	}
+	clusterIDs := map[string]bool{}
+	for _, cl := range AppConfig.Clusters {
+		clusterIDs[cl.ID] = true
+	}
+	for i := range AppConfig.Nodes {
+		if AppConfig.Nodes[i].NodeGroupID != "" && !nodeGroupIDs[AppConfig.Nodes[i].NodeGroupID] {
+			AppConfig.Nodes[i].NodeGroupID = ""
+			changed = true
+		}
+		if AppConfig.Nodes[i].ClusterID != "" && !clusterIDs[AppConfig.Nodes[i].ClusterID] {
+			AppConfig.Nodes[i].ClusterID = ""
+			changed = true
+		}
+		if len(AppConfig.Nodes[i].VirtTypes) == 0 {
+			AppConfig.Nodes[i].VirtTypes = []string{"lxc", "kvm"}
+			changed = true
+		}
 	}
 	if AppConfig.IPGroups == nil {
 		AppConfig.IPGroups = make([]IPGroup, 0)
@@ -2671,6 +2749,185 @@ func RemoveNode(id string) bool {
 		cfg.Nodes = filtered
 	})
 	return removed
+}
+
+// -------- NodeGroup helpers --------
+
+func FindNodeGroup(id string) (NodeGroup, bool) {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for _, ng := range AppConfig.NodeGroups {
+		if ng.ID == id {
+			return ng, true
+		}
+	}
+	return NodeGroup{}, false
+}
+
+func AddNodeGroup(ng NodeGroup) error {
+	if ng.ID == "" {
+		ng.ID = "ng-" + randomShortID()
+	}
+	if ng.CreatedAt == "" {
+		ng.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
+	}
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		if cfg.NodeGroups == nil {
+			cfg.NodeGroups = make([]NodeGroup, 0)
+		}
+		cfg.NodeGroups = append(cfg.NodeGroups, ng)
+	})
+}
+
+func UpdateNodeGroup(id string, fn func(*NodeGroup)) (NodeGroup, bool) {
+	var found bool
+	var result NodeGroup
+	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+		for i := range cfg.NodeGroups {
+			if cfg.NodeGroups[i].ID == id {
+				fn(&cfg.NodeGroups[i])
+				found = true
+				result = cfg.NodeGroups[i]
+				return
+			}
+		}
+	})
+	return result, found
+}
+
+func RemoveNodeGroup(id string) bool {
+	removed := false
+	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+		filtered := make([]NodeGroup, 0, len(cfg.NodeGroups))
+		for _, ng := range cfg.NodeGroups {
+			if ng.ID == id {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, ng)
+		}
+		cfg.NodeGroups = filtered
+		// 同步清空 Node 上的 NodeGroupID 引用
+		for i := range cfg.Nodes {
+			if cfg.Nodes[i].NodeGroupID == id {
+				cfg.Nodes[i].NodeGroupID = ""
+			}
+		}
+	})
+	return removed
+}
+
+// -------- Cluster helpers --------
+
+func FindCluster(id string) (Cluster, bool) {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for _, cl := range AppConfig.Clusters {
+		if cl.ID == id {
+			return cl, true
+		}
+	}
+	return Cluster{}, false
+}
+
+func AddCluster(cl Cluster) error {
+	if cl.ID == "" {
+		cl.ID = "cl-" + randomShortID()
+	}
+	if cl.CreatedAt == "" {
+		cl.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
+	}
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		if cfg.Clusters == nil {
+			cfg.Clusters = make([]Cluster, 0)
+		}
+		cfg.Clusters = append(cfg.Clusters, cl)
+	})
+}
+
+func UpdateCluster(id string, fn func(*Cluster)) (Cluster, bool) {
+	var found bool
+	var result Cluster
+	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+		for i := range cfg.Clusters {
+			if cfg.Clusters[i].ID == id {
+				fn(&cfg.Clusters[i])
+				found = true
+				result = cfg.Clusters[i]
+				return
+			}
+		}
+	})
+	return result, found
+}
+
+func RemoveCluster(id string) bool {
+	removed := false
+	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+		filtered := make([]Cluster, 0, len(cfg.Clusters))
+		for _, cl := range cfg.Clusters {
+			if cl.ID == id {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, cl)
+		}
+		cfg.Clusters = filtered
+		for i := range cfg.Nodes {
+			if cfg.Nodes[i].ClusterID == id {
+				cfg.Nodes[i].ClusterID = ""
+			}
+		}
+	})
+	return removed
+}
+
+// ListNodeGroupNodes 返回属于指定 NodeGroup 的节点 ID 列表。
+func ListNodeGroupNodes(groupID string) []string {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	var ids []string
+	for _, n := range AppConfig.Nodes {
+		if n.NodeGroupID == groupID {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids
+}
+
+// ListClusterNodes 返回属于指定 Cluster 的节点 ID 列表（通过 Cluster.RegionIDs + Node.ClusterID 双路径）。
+func ListClusterNodes(clusterID string) []string {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	var ids []string
+	cluster, ok := FindCluster(clusterID)
+	if !ok {
+		return ids
+	}
+	regionSet := map[string]bool{}
+	for _, r := range cluster.RegionIDs {
+		regionSet[r] = true
+	}
+	for _, n := range AppConfig.Nodes {
+		if n.ClusterID == clusterID || (regionSet[n.RegionID] && len(cluster.RegionIDs) > 0) {
+			ids = append(ids, n.ID)
+		}
+	}
+	return ids
+}
+
+// NodeSupportsVirt 报告节点是否支持指定虚拟化类型（lxc / kvm）。
+func NodeSupportsVirt(n Node, virtType string) bool {
+	v := strings.ToLower(strings.TrimSpace(virtType))
+	if v == "" {
+		return true
+	}
+	for _, t := range n.VirtTypes {
+		if strings.ToLower(t) == v {
+			return true
+		}
+	}
+	return false
 }
 
 // AllocateContainerID allocates a new container ID
