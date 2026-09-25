@@ -18,6 +18,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"eyvescloud/internal/storage"
+	"eyvescloud/internal/secgroup"
 )
 
 // PortMapping represents a port mapping rule
@@ -163,6 +164,7 @@ type Container struct {
 	IPv6Interface                 string                 `json:"ipv6_interface"`
 	IPv6Addresses                 []IPv6Assignment       `json:"ipv6_addresses,omitempty"`
 	VNCPort                       int                    `json:"vnc_port"`
+	VNCPassword                   string                 `json:"vnc_password,omitempty"`
 	SSHPort                       int                    `json:"ssh_port"`
 	SSHPassword                   string                 `json:"ssh_password"`
 	SSHHostKey                    string                 `json:"ssh_host_key,omitempty"`
@@ -196,6 +198,41 @@ type Container struct {
 	RootVolumeID string `json:"root_volume_id,omitempty"`
 	// DataVolumeIDs 数据卷 ID 列表（P0-1 仅落库记录，挂载流程在后续阶段接入）。
 	DataVolumeIDs []string `json:"data_volume_ids,omitempty"`
+	// SSHKeyIDs 绑定到该容器的 SSH 公钥 ID 列表——容器启动后公钥注入 /root/.ssh/authorized_keys
+	// （Cloud-Init 或 LXC/KVM 模板预注入）。子用户也可在模板中创建容器时指定。
+	SSHKeyIDs   []string `json:"ssh_key_ids,omitempty"`
+	SecGroupIDs []string `json:"sec_group_ids,omitempty"`
+	// Tags 资源标签（企业成本分摊 / 按标签过滤，类比 AWS EC2 Tags）。
+	// key/value 均 ≤128 字符，最多 20 个；克隆时继承，删除容器时随之消亡。
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// SSHKey 是平台托管的 SSH 公钥账户（类比 GitHub SSH Key）。
+// 用户创建公钥后可在创建容器时绑定，容器开机后公钥自动注入 /root/.ssh/authorized_keys。
+type SSHKey struct {
+	ID          string `json:"id"`            // "sk-" 前缀
+	Name        string `json:"name"`          // 用户可识别的标签（如 "my-laptop"）
+	PublicKey   string `json:"public_key"`    // 完整 OpenSSH 公钥行
+	Fingerprint string `json:"fingerprint"`   // SHA256 指纹（服务端计算，防篡改）
+	Type        string `json:"type"`          // "admin" 或 subuser username
+	OwnerID     string `json:"owner_id"`      // subuser ID（admin 时为空）
+	CreatedAt   string `json:"created_at"`
+	LastUsedAt  string `json:"last_used_at,omitempty"`
+}
+
+// Recipe 是用户预定义的 bash 脚本模板（类比 Virtualizor Recipes）。
+// Admin 创建的 recipe 可以标记 scope="shared"，所有 subuser 可见。
+// Subuser 创建的 recipe 默认 scope="private"，仅自己可见。
+type Recipe struct {
+	ID          string `json:"id"`            // "recipe-" 前缀
+	Name        string `json:"name"`          // 用户可识别的名称
+	Description string `json:"description"`   // 可选说明
+	Script      string `json:"script"`        // bash 脚本正文
+	OwnerID     string `json:"owner_id"`      // subuser ID 或 "admin"
+	OwnerType   string `json:"owner_type"`    // "admin" 或 "subuser"
+	Scope       string `json:"scope"`         // "private" 或 "shared"
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 const (
@@ -1349,6 +1386,7 @@ type EyvescloudConfig struct {
 	SSL                  SSLConfig              `json:"ssl"`
 	SSLCertificates      map[string]SSLConfig   `json:"ssl_certificates"`
 	StoragePools         []StoragePool          `json:"storage_pools"`
+	SSHKeys             []SSHKey               `json:"ssh_keys"`
 	PolicyRules          []PolicyRule           `json:"policy_rules"`
 	PolicyHistory        []PolicyTriggerRecord  `json:"policy_history"`
 	Nodes                []Node                 `json:"nodes,omitempty"`
@@ -1357,6 +1395,8 @@ type EyvescloudConfig struct {
 	Clusters             []Cluster              `json:"clusters,omitempty"`
 	IPGroups             []IPGroup              `json:"ip_groups,omitempty"`
 	ISOFiles             []ISOFile              `json:"iso_files,omitempty"`
+	SecGroups            []secgroup.Group       `json:"sec_groups,omitempty"`
+	SecGroupRules        []secgroup.Rule        `json:"sec_group_rules,omitempty"`
 	MetricRetentionDays  int                    `json:"metric_retention_days"`
 	AuditRetentionDays   int                    `json:"audit_retention_days"`
 	BackupSettings       BackupSettings         `json:"backup_settings"`
@@ -1376,6 +1416,32 @@ type EyvescloudConfig struct {
 	// DiskOvercommitRatio 磁盘超售比：磁盘累计配额上限 = 宿主磁盘总量 × 该值（1.0=不超售）。
 	// 用于企业大批量开通时放宽磁盘配额校验，默认 1.0 不超售。
 	DiskOvercommitRatio float64 `json:"disk_overcommit_ratio"`
+	// Recipes 用户自定义 bash 脚本模板（类比 Virtualizor Recipes）。
+	// 支持 admin 和 subuser 创建；subuser 仅能看到自己的 + admin 共享的。
+	Recipes []Recipe `json:"recipes,omitempty"`
+	// Webhooks 事件订阅端点（企业集成：容器状态变更回调，类比 AWS EventBridge / GitHub Webhooks）。
+	// 每次容器状态变化（running/stopped）会向订阅 URL POST 签名 JSON 载荷。
+	Webhooks []WebhookSubscription `json:"webhooks,omitempty"`
+}
+
+// WebhookSubscription 是一个事件订阅端点。
+// 安全模型：
+//   - URL 仅允许 http/https 且长度受限；
+//   - Secret 用于 HMAC-SHA256 签名（X-EyvesCloud-Signature 头），接收方验签防伪造；
+//   - 连续失败 10 次自动停用（AutoDisabledReason 记录原因），防止雪崩重试；
+//   - 重试：3 次指数退避（1s/5s/25s），全部失败计入 ConsecutiveFailures。
+type WebhookSubscription struct {
+	ID                  string   `json:"id"`                    // wh-xxx
+	Name                string   `json:"name"`
+	URL                 string   `json:"url"`                   // 回调端点（http/https）
+	Secret              string   `json:"secret,omitempty"`      // HMAC 签名密钥（创建时生成，仅回显一次）
+	EventTypes          []string `json:"event_types,omitempty"` // 订阅的事件类型；空 = 全部
+	Enabled             bool     `json:"enabled"`
+	ConsecutiveFailures int      `json:"consecutive_failures,omitempty"`
+	LastDeliveryAt      string   `json:"last_delivery_at,omitempty"`  // RFC3339
+	LastDeliveryStatus  string   `json:"last_delivery_status,omitempty"` // ok / error: xxx
+	AutoDisabledReason  string   `json:"auto_disabled_reason,omitempty"`
+	CreatedAt           string   `json:"created_at"`
 }
 
 // KSMTuningConfig 控制 Linux KSM（Kernel Samepage Merging）调优，用于在内存超售
@@ -3212,24 +3278,65 @@ func FindContainerByIdentifier(identifier string) *Container {
 	return nil
 }
 
+// ContainerStatusHook 是容器状态变更回调（Webhook 事件订阅用）。
+// 由 api 包在启动时注入，避免 config → api 的反向 import。
+// 回调在锁外异步触发语义：实现方不得假定同步完成，也不得长时间阻塞。
+var ContainerStatusHook func(containerID int, name string, oldStatus, newStatus string)
+
 // UpdateContainerStatus updates container status by ID
 func UpdateContainerStatus(id int, status string) {
-	AppConfigMu.Lock()
-	defer AppConfigMu.Unlock()
-	if c := findContainerUnlocked(id); c != nil {
-		c.Status = status
-		_ = saveConfigToDB()
+	var name, oldStatus string
+	func() {
+		// 闭包 + defer：panic 时仍能安全释放锁（HTTP 层有 recover 中间件兜底）。
+		AppConfigMu.Lock()
+		defer AppConfigMu.Unlock()
+		if c := findContainerUnlocked(id); c != nil {
+			name, oldStatus = c.Name, c.Status
+			c.Status = status
+			_ = saveConfigToDB()
+		}
+	}()
+	// 锁外触发钩子（Webhook 投递可能耗时，不能占住全局配置锁）。
+	if ContainerStatusHook != nil && name != "" && oldStatus != status {
+		ContainerStatusHook(id, name, oldStatus, status)
 	}
 }
 
+// FireContainerStatusHook 在锁外显式触发容器状态变更钩子。
+// 供 api 层在锁内完成状态变更后、锁外补发事件使用——webhook 投递会
+// 重新获取配置读锁，绝不能在持有 AppConfigMu 写锁时调用，否则死锁。
+func FireContainerStatusHook(id int, name, oldStatus, newStatus string) {
+	if ContainerStatusHook != nil && name != "" && oldStatus != newStatus {
+		ContainerStatusHook(id, name, oldStatus, newStatus)
+	}
+}
+
+// SetContainerStatusAndNotify 供运行时层（lxc/kvm）在已持有容器活指针时
+// 更新状态并触发钩子。不落盘——调用方按原有节奏决定 SaveConfig 时机。
+// 状态未变化时为 no-op（不触发钩子，避免心跳抖动产生事件噪音）。
+func SetContainerStatusAndNotify(c *Container, newStatus string) {
+	if c == nil || c.Status == newStatus {
+		return
+	}
+	old := c.Status
+	c.Status = newStatus
+	FireContainerStatusHook(c.ID, c.Name, old, newStatus)
+}
+
 func UpdateContainerStatusAndRestore(id int, status string, restoreOnHostBoot bool) {
-	AppConfigMu.Lock()
-	defer AppConfigMu.Unlock()
-	c := findContainerUnlocked(id)
-	if c != nil {
-		c.Status = status
-		c.RestoreOnHostBoot = restoreOnHostBoot
-		_ = saveConfigToDB()
+	var name, oldStatus string
+	func() {
+		AppConfigMu.Lock()
+		defer AppConfigMu.Unlock()
+		if c := findContainerUnlocked(id); c != nil {
+			name, oldStatus = c.Name, c.Status
+			c.Status = status
+			c.RestoreOnHostBoot = restoreOnHostBoot
+			_ = saveConfigToDB()
+		}
+	}()
+	if ContainerStatusHook != nil && name != "" && oldStatus != status {
+		ContainerStatusHook(id, name, oldStatus, status)
 	}
 }
 

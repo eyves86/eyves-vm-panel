@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"eyvescloud/internal/api"
@@ -155,6 +156,29 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/backup/download", corsMiddleware(api.AdminMiddleware(api.HandleBackupDownload)))
 	mux.HandleFunc("/api/backup/restore", corsMiddleware(api.AdminMiddleware(api.HandleBackupRestore)))
 
+	// SSH 密钥管理（端用户级：admin + subuser 均可管理自己的 key）
+	mux.HandleFunc("/api/ssh-keys", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeys))))
+	mux.HandleFunc("/api/ssh-keys/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeyItem))))
+
+	// 事件订阅 Webhooks（仅管理员：企业集成回调端点管理）
+	mux.HandleFunc("/api/webhooks", corsMiddleware(api.AdminMiddleware(api.HandleWebhooks)))
+	mux.HandleFunc("/api/webhooks/", corsMiddleware(api.AdminMiddleware(api.HandleWebhookItem)))
+
+	// Recipes（用户自定义 bash 脚本模板，可在容器上执行）
+	mux.HandleFunc("/api/recipes", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleRecipes))))
+	mux.HandleFunc("/api/recipes/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleRecipeItem))))
+
+	// 安全组（Security Group）CRUD + 规则 + 容器绑定
+	mux.HandleFunc("/api/security-groups", corsMiddleware(api.AuthMiddleware(api.HandleSecGroups)))
+	mux.HandleFunc("/api/security-groups/", corsMiddleware(api.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/security-groups/")
+		if strings.Contains(path, "/rules") {
+			api.HandleSecGroupRules(w, r)
+			return
+		}
+		api.HandleSecGroupItem(w, r)
+	})))
+
 	// 企业化：可观测性（健康检查）
 	mux.HandleFunc("/api/health", corsMiddleware(api.HandleHealth))
 	mux.HandleFunc("/api/health/detail", corsMiddleware(api.AdminMiddleware(api.HandleHealthDetail)))
@@ -294,6 +318,29 @@ func setupRoutes(mux *http.ServeMux) {
 		}
 		api.HandleSwapManage(w, r)
 	})))
+
+	// v1 版本化：SSH 密钥管理（端用户级）
+	mux.HandleFunc("/api/v1/ssh-keys", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeys))))
+	mux.HandleFunc("/api/v1/ssh-keys/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeyItem))))
+
+	// v1 版本化：Recipes（用户自定义 bash 脚本模板）
+	mux.HandleFunc("/api/v1/recipes", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleRecipes))))
+	mux.HandleFunc("/api/v1/recipes/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleRecipeItem))))
+
+	// v1 版本化：安全组（Security Group）CRUD + 规则 + 容器绑定
+	mux.HandleFunc("/api/v1/security-groups", corsMiddleware(api.AuthMiddleware(api.HandleSecGroups)))
+	mux.HandleFunc("/api/v1/security-groups/", corsMiddleware(api.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/v1/security-groups/")
+		if strings.Contains(path, "/rules") {
+			api.HandleSecGroupRules(w, r)
+			return
+		}
+		api.HandleSecGroupItem(w, r)
+	})))
+
+	// v1 版本化：事件订阅 Webhooks（仅管理员）
+	mux.HandleFunc("/api/v1/webhooks", corsMiddleware(api.AdminMiddleware(api.HandleWebhooks)))
+	mux.HandleFunc("/api/v1/webhooks/", corsMiddleware(api.AdminMiddleware(api.HandleWebhookItem)))
 
 	// Version (public)
 	mux.HandleFunc("/api/version", corsMiddleware(api.HandleVersion))
@@ -545,13 +592,22 @@ func shouldCompressContentType(ct string) bool {
 
 // apiRateLimitMiddleware applies a per-client-IP rate limit to the versioned
 // API (/api/v1/...) when API governance rate limiting is enabled.
+// 同时输出限流透明度响应头（X-RateLimit-Limit / X-RateLimit-Remaining），
+// 429 时附带精确的 Retry-After（基于滑动窗口最早请求的过期时间），
+// 让企业集成方实现自适应退避而不是盲目重试。
 func apiRateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cfg := config.GetAPIRateLimit()
 		if cfg.Enabled && cfg.PerMinute > 0 && strings.HasPrefix(r.URL.Path, "/api/v1/") && clientAddress(r) != "" {
-			if !api.AllowVersionedRequest(clientAddress(r), cfg.PerMinute) {
-				w.Header().Set("Retry-After", "60")
-				http.Error(w, `{"success":false,"message":"API rate limit exceeded"}`, http.StatusTooManyRequests)
+			allowed, limit, remaining, retryAfter := api.AllowVersionedRequestWithQuota(clientAddress(r), cfg.PerMinute)
+			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(limit))
+			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(remaining))
+			if !allowed {
+				if retryAfter <= 0 {
+					retryAfter = 1
+				}
+				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+				http.Error(w, `{"success":false,"code":"RATE_LIMITED","message":"API rate limit exceeded"}`, http.StatusTooManyRequests)
 				return
 			}
 		}
@@ -571,6 +627,8 @@ func Run() error {
 	api.StartBackupScheduler()
 	api.StartInstanceBackupScheduler()
 	api.StartUptimeTracking()
+	// 事件订阅引擎：容器状态变更 → Webhook 回调（幂等注册）。
+	api.StartWebhookEngine()
 
 	mux := http.NewServeMux()
 	setupRoutes(mux)

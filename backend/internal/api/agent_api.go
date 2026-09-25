@@ -149,6 +149,76 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "SSH password reset successfully", Data: map[string]string{"password": newPassword}})
 		return
+	case "hostname":
+		var req struct {
+			Hostname string `json:"hostname"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		req.Hostname = strings.TrimSpace(req.Hostname)
+		if req.Hostname == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "hostname required"})
+			return
+		}
+		if len(req.Hostname) > 63 {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "hostname too long (max 63 chars)"})
+			return
+		}
+		if err := setHostnameByRuntime(id, req.Hostname); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "hostname changed", Data: map[string]string{"hostname": req.Hostname}})
+		return
+	case "vnc-password":
+		var req struct {
+			Password string `json:"password"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		// 先持久化 VNCPassword 到本机 config.Container
+		if c := config.FindContainer(id); c != nil {
+			if c.IsKVM() {
+				config.MutateContainerNoSave(id, func(cc *config.Container) {
+					cc.VNCPassword = req.Password
+				})
+				_ = config.SaveConfig()
+			} else {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "VNC password is only applicable to KVM VMs"})
+				return
+			}
+		}
+		if err := setVNCPasswordByRuntime(id, req.Password); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		msg := "VNC password changed"
+		if req.Password == "" {
+			msg = "VNC password cleared"
+		}
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: msg})
+		return
+	case "create-account":
+		var req struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Sudo     bool   `json:"sudo"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		if strings.TrimSpace(req.Username) == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "username required"})
+			return
+		}
+		if err := createAccountByRuntime(id, req.Username, req.Password, req.Sudo); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Account created", Data: map[string]interface{}{"username": req.Username, "sudo": req.Sudo}})
+		return
 	case "usage":
 		usage, uErr := usageByRuntime(id)
 		if uErr != nil {
@@ -207,8 +277,6 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: snap})
 		return
 	case "snapshots/delete":
-		snapshotID := strings.TrimPrefix(action, "snapshots/delete")
-		_ = snapshotID
 		var req struct {
 			SnapshotID string `json:"snapshot_id"`
 		}
@@ -241,6 +309,104 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "snapshot restored"})
+		return
+	case "clone":
+		// 主控侧已分配好新容器的全部标识；agent 只执行运行时克隆。
+		var req struct {
+			Name            string `json:"name"`
+			NewID           int    `json:"new_id"`
+			NewUUID         string `json:"new_uuid"`
+			NewLxcName      string `json:"new_lxc_name"`
+			NewVMName       string `json:"new_vm_name"`
+			NewVNCPort      string `json:"new_vnc_port"`
+			NewSSHPort      string `json:"new_ssh_port"`
+			NewMAC          string `json:"new_mac"`
+			Mode            string `json:"mode"`
+			StartAfterClone bool   `json:"start_after_clone"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		if req.Name == "" || req.NewID <= 0 {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "name and new_id required"})
+			return
+		}
+		src := config.FindContainer(id)
+		if src == nil {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Source container not found on agent node"})
+			return
+		}
+		if err := cloneByRuntime(src, req.Name, req.NewLxcName, req.NewVMName,
+			req.NewID, req.NewUUID, req.NewVNCPort, req.NewSSHPort, req.NewMAC,
+			req.Mode, req.StartAfterClone); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Runtime clone failed: " + err.Error()})
+			return
+		}
+		// agent 侧也更新本机 config（主控会同步拉回）
+		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			newC := *src
+			newC.ID = req.NewID
+			newC.UUID = req.NewUUID
+			newC.Name = req.Name
+			newC.LXCName = req.NewLxcName
+			newC.KVMName = req.NewVMName
+			newC.MACAddress = req.NewMAC
+			if p, _ := strconv.Atoi(req.NewVNCPort); p > 0 {
+				newC.VNCPort = p
+			}
+			if p, _ := strconv.Atoi(req.NewSSHPort); p > 0 {
+				newC.SSHPort = p
+			}
+			newC.IP = ""
+			newC.LANIPv4Address = ""
+			newC.PublicIPv4s = []config.PublicIPv4Assignment{}
+			newC.IPv6 = ""
+			newC.IPv6Addresses = []config.IPv6Assignment{}
+			newC.Status = "stopped"
+			cfg.Containers = append(cfg.Containers, newC)
+		})
+		_ = config.SaveConfig()
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "container cloned on agent node"})
+		return
+	case "recipes/execute":
+		var req struct {
+			Script  string `json:"script"`
+			Timeout int    `json:"timeout"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		if strings.TrimSpace(req.Script) == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "script required"})
+			return
+		}
+		timeout := req.Timeout
+		if timeout <= 0 {
+			timeout = 300
+		}
+		c := config.FindContainer(id)
+		if c == nil {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "container not found"})
+			return
+		}
+		output, execErr := agentExecuteRecipe(c, req.Script, timeout)
+		if execErr != nil {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{
+				Success: false,
+				Message: "Recipe execution failed: " + execErr.Error(),
+				Data:    map[string]string{"output": output},
+			})
+			return
+		}
+		jsonResponse(w, http.StatusOK, APIResponse{
+			Success: true,
+			Message: "Recipe executed successfully",
+			Data: map[string]interface{}{
+				"container": c.Name,
+				"output":    output,
+				"exit_code": 0,
+			},
+		})
 		return
 	default:
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Unknown action: " + action})

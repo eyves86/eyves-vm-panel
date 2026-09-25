@@ -26,8 +26,12 @@ type LoginResponse struct {
 }
 
 type APIResponse struct {
-	Success bool        `json:"success"`
-	Message string      `json:"message,omitempty"`
+	Success bool `json:"success"`
+	// Code 是机器可读错误码（企业级 API 契约）：仅在失败时出现，如
+	// INVALID_REQUEST / NOT_FOUND / FORBIDDEN / RATE_LIMITED / BAD_GATEWAY /
+	// INTERNAL_ERROR。成功响应省略该字段，向后兼容。
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
@@ -142,7 +146,7 @@ func requireScope(w http.ResponseWriter, r *http.Request, scope string) bool {
 	if hasScope(r, scope) {
 		return true
 	}
-	jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Insufficient API key scope"})
+	errResponse(w, http.StatusForbidden, "INSUFFICIENT_SCOPE", "Insufficient API key scope: "+scope)
 	return false
 }
 
@@ -173,6 +177,12 @@ func jsonResponse(w http.ResponseWriter, status int, resp APIResponse) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// errResponse 输出带机器可读错误码的失败响应（企业级 API 契约）。
+// code 见 APIResponse.Code 注释。
+func errResponse(w http.ResponseWriter, status int, code, message string) {
+	jsonResponse(w, status, APIResponse{Success: false, Code: code, Message: message})
 }
 
 func tokenFromRequest(r *http.Request) string {

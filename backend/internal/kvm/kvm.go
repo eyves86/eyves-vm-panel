@@ -531,7 +531,7 @@ func (m *Manager) defineContainer(id int, vmName string, cfg lxc.ContainerConfig
 			return nil, err
 		}
 		dataDiskPath, _ := m.prepareCreateDataDisk(vmName, cfg)
-		xml = windowsDomainXML(vmName, int(cfg.VCPU), cfg.RAMMB, diskPath, dataDiskPath, ImagePath(image.ID), unattendPath, mac, cfg.IOReadMBps, cfg.IOWriteMBps, cfg.NetworkDownMbps, cfg.NetworkUpMbps)
+		xml = windowsDomainXML(vmName, int(cfg.VCPU), cfg.RAMMB, diskPath, dataDiskPath, ImagePath(image.ID), unattendPath, mac, cfg.IOReadMBps, cfg.IOWriteMBps, cfg.NetworkDownMbps, cfg.NetworkUpMbps, "")
 	} else {
 		if image.Desktop != "" {
 			if cfg.RAMMB < 2048 {
@@ -550,7 +550,7 @@ func (m *Manager) defineContainer(id int, vmName string, cfg lxc.ContainerConfig
 		if err := createSeedISO(seedPath, vmName, cfg.Name, sshPassword, sshPublicKey, mac, ipv6List, ipv4List, *image, sshAuthMode, cfg.CloudInitUserData, dataDiskMountPath); err != nil {
 			return nil, err
 		}
-		xml = domainXML(vmName, int(cfg.VCPU), cfg.RAMMB, diskPath, dataDiskPath, seedPath, mac, cfg.IOReadMBps, cfg.IOWriteMBps, cfg.NetworkDownMbps, cfg.NetworkUpMbps, "", image.Desktop != "")
+		xml = domainXML(vmName, int(cfg.VCPU), cfg.RAMMB, diskPath, dataDiskPath, seedPath, mac, cfg.IOReadMBps, cfg.IOWriteMBps, cfg.NetworkDownMbps, cfg.NetworkUpMbps, "", image.Desktop != "", "")
 	}
 	xmlPath := filepath.Join(m.instanceDir(vmName), "domain.xml")
 	if err := os.WriteFile(xmlPath, []byte(xml), 0644); err != nil {
@@ -1022,7 +1022,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 	c.IP = ""
 	c.VNCPort = 0
 	normalizeKVMManagementPortMapping(c)
-	c.Status = "stopped"
+	config.SetContainerStatusAndNotify(c, "stopped")
 	config.SaveConfig()
 
 	// system 模式：把保留的数据盘放回并重新挂载到新域。
@@ -1047,6 +1047,122 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 		return nil
 	}
 	return m.StartContainer(id)
+}
+
+// CloneContainer 克隆 KVM VM（类比 Virtualizor Clone VPS）。
+// 流程：
+//  1) 停源 VM（如有）
+//  2) qemu-img convert 磁盘（可选 COW linked 模式）
+//  3) 新生成 domain.xml（新 name / UUID / MAC / disk path）
+//  4) virsh define
+//  5) 启动新 VM（可选）
+func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, newVMName string,
+	newID int, newUUID, newVNCPort, newSSHPort, newMAC, mode string, startAfter bool) error {
+
+	vmName := src.VirshName()
+	if vmName == newVMName {
+		return fmt.Errorf("source and destination VM names must differ")
+	}
+	if src.DiskImage == "" {
+		return fmt.Errorf("source VM has no disk image")
+	}
+
+	// 1) 停源 VM
+	wasRunning := src.Status == "running"
+	if wasRunning {
+		if err := exec.Command("virsh", "shutdown", vmName).Run(); err != nil {
+			return fmt.Errorf("stop source VM before clone: %v", err)
+		}
+		// 等待关机
+		for i := 0; i < 30; i++ {
+			time.Sleep(time.Second)
+			if status, _ := m.GetContainerStatus(vmName); status != "running" {
+				break
+			}
+		}
+		// 强制关机兜底
+		if status, _ := m.GetContainerStatus(vmName); status == "running" {
+			_ = exec.Command("virsh", "destroy", vmName).Run()
+		}
+		defer func() {
+			if wasRunning {
+				_ = exec.Command("virsh", "start", vmName).Run()
+			}
+		}()
+	}
+
+	// 2) 创建新实例目录 + 复制磁盘
+	newInstanceDir := m.instanceDir(newVMName)
+	if err := os.MkdirAll(newInstanceDir, 0755); err != nil {
+		return fmt.Errorf("create instance dir: %v", err)
+	}
+
+	newDiskPath := filepath.Join(newInstanceDir, "rootfs.qcow2")
+	srcDisk := src.DiskImage
+
+	var qemuArgs []string
+	if mode == "linked" {
+		// linked 模式：创建基于原盘的 COW overlay
+		qemuArgs = []string{"create", "-f", "qcow2", "-F", "qcow2", "-b", srcDisk, newDiskPath}
+	} else {
+		// full 模式：完整拷贝
+		qemuArgs = []string{"convert", "-O", "qcow2", srcDisk, newDiskPath}
+	}
+	if out, err := exec.Command("qemu-img", qemuArgs...).CombinedOutput(); err != nil {
+		_ = os.RemoveAll(newInstanceDir)
+		return fmt.Errorf("qemu-img clone (%s): %v: %s", mode, err, strings.TrimSpace(string(out)))
+	}
+
+	// 复制数据盘（如有）
+	var newDataDiskPath string
+	if src.DataDiskGB > 0 {
+		srcDataDisk := filepath.Join(filepath.Dir(src.DiskImage), "datadisk.qcow2")
+		if _, err := os.Stat(srcDataDisk); err == nil {
+			newDataDiskPath = filepath.Join(newInstanceDir, "datadisk.qcow2")
+			if out, err := exec.Command("qemu-img", "convert", "-O", "qcow2", srcDataDisk, newDataDiskPath).CombinedOutput(); err != nil {
+				_ = os.RemoveAll(newInstanceDir)
+				return fmt.Errorf("qemu-img clone data disk: %v: %s", err, strings.TrimSpace(string(out)))
+			}
+		}
+	}
+
+	// 3) 生成新的 domain.xml
+	var xml string
+	if IsWindowsImage(src.Template) {
+		winISO := ImagePath(src.Template)
+		unattendISO := "" // 新 VM 不需要 unattend
+		ddp := newDataDiskPath
+		if ddp == "" {
+			ddp = ""
+		}
+		xml = windowsDomainXML(newVMName, int(src.VCPU), src.RAMMB, newDiskPath, ddp, winISO, unattendISO, newMAC,
+			src.IOReadMBps, src.IOWriteMBps, src.NetworkDownMbps, src.NetworkUpMbps, src.VNCPassword)
+	} else {
+		seedPath := filepath.Join(newInstanceDir, "seed.iso")
+		rescueISOPath := ""
+		xml = domainXML(newVMName, int(src.VCPU), src.RAMMB, newDiskPath, newDataDiskPath, seedPath, newMAC,
+			src.IOReadMBps, src.IOWriteMBps, src.NetworkDownMbps, src.NetworkUpMbps,
+			rescueISOPath, isKVMDesktopTemplate(src.Template), src.VNCPassword)
+	}
+
+	// 4) 写 XML + virsh define
+	xmlPath := filepath.Join(newInstanceDir, "domain.xml")
+	if err := os.WriteFile(xmlPath, []byte(xml), 0644); err != nil {
+		_ = os.RemoveAll(newInstanceDir)
+		return fmt.Errorf("write domain.xml: %v", err)
+	}
+	if out, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+		_ = os.RemoveAll(newInstanceDir)
+		return fmt.Errorf("virsh define: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	// 5) 启动新 VM
+	if startAfter {
+		if out, err := exec.Command("virsh", "start", newVMName).CombinedOutput(); err != nil {
+			return fmt.Errorf("start cloned VM: %v: %s", err, strings.TrimSpace(string(out)))
+		}
+	}
+	return nil
 }
 
 func (m *Manager) ResetSSHPassword(id int, password string) (string, error) {
@@ -1102,6 +1218,50 @@ func (m *Manager) ResetSSHPassword(id int, password string) (string, error) {
 	c.SSHHostKey = ""
 	config.SaveConfig()
 	return password, nil
+}
+
+// SetHostnameBySSH 通过 SSH 进入 KVM 虚机修改 hostname（回退路径；优先走 virsh set-hostname）。
+func (m *Manager) SetHostnameBySSH(id int, hostname string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if c.Status != "running" {
+		return fmt.Errorf("KVM VM must be running to change hostname")
+	}
+	if c.IP == "" {
+		return fmt.Errorf("cannot determine VM IP for SSH access")
+	}
+	sshPassword := c.SSHPassword
+	if sshPassword == "" {
+		return fmt.Errorf("VM SSH password not available")
+	}
+
+	script := fmt.Sprintf(`hostname %s
+echo %s > /etc/hostname
+sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t%s/' /etc/hosts 2>/dev/null || true
+`, hostname, hostname, hostname)
+
+	client, err := ssh.Dial("tcp", net.JoinHostPort(c.IP, "22"), &ssh.ClientConfig{
+		User:            "root",
+		Auth:            []ssh.AuthMethod{ssh.Password(sshPassword)},
+		HostKeyCallback: kvmHostKeyCallback(c),
+		Timeout:         10 * time.Second,
+	})
+	if err != nil {
+		return fmt.Errorf("SSH connect: %v", err)
+	}
+	defer client.Close()
+	session, err := client.NewSession()
+	if err != nil {
+		return fmt.Errorf("SSH session: %v", err)
+	}
+	defer session.Close()
+	out, err := session.CombinedOutput("sh -c " + shellQuote(script))
+	if err != nil {
+		return fmt.Errorf("set hostname via SSH: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 // CreateAccount 在 KVM 客户机内创建新的登录账号。
@@ -1180,6 +1340,101 @@ echo ` + encoded + ` | base64 -d | chpasswd
 ` + sudoPart
 }
 
+// SetVNCPassword 热更新 KVM VM 的 VNC 密码。
+// 1) 重新生成 domain.xml（带新密码的 <graphics> 节点）并写入；
+// 2) 若 VM 正在运行，尝试用 virsh update-device 替换 graphics 设备（libvirt ≥ 1.2 支持）；
+//    失败则降级为 define + 提示用户下次重启生效。
+// 3) 停机 VM 直接 virsh define 即可下次启动生效。
+func (m *Manager) SetVNCPassword(id int, password string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if !c.IsKVM() {
+		return fmt.Errorf("VNC password change is only supported for KVM VMs")
+	}
+
+	vmName := c.VirshName()
+	instanceDir := m.instanceDir(vmName)
+	rescueISOPath := ""
+	if c.RescueEnabled && c.RescueISOPath != "" {
+		rescueISOPath = c.RescueISOPath
+	}
+
+	// 1) 重新生成完整 domain.xml（基于当前容器状态）
+	var xml string
+	if IsWindowsImage(c.Template) {
+		winISO := ImagePath(c.Template)
+		unattendISO := existingWindowsUnattendISO(instanceDir)
+		dataDiskPath := m.resolveDataDiskPath(vmName)
+		xml = windowsDomainXML(vmName, int(c.VCPU), c.RAMMB, c.DiskImage, dataDiskPath, winISO, unattendISO, c.MACAddress,
+			c.IOReadMBps, c.IOWriteMBps, c.NetworkDownMbps, c.NetworkUpMbps, password)
+	} else {
+		seedPath := filepath.Join(instanceDir, "seed.iso")
+		dataDiskPath := m.resolveDataDiskPath(vmName)
+		xml = domainXML(vmName, int(c.VCPU), c.RAMMB, c.DiskImage, dataDiskPath, seedPath, c.MACAddress,
+			c.IOReadMBps, c.IOWriteMBps, c.NetworkDownMbps, c.NetworkUpMbps,
+			rescueISOPath, isKVMDesktopTemplate(c.Template), password)
+	}
+
+	xmlPath := filepath.Join(instanceDir, "domain.xml")
+	if err := os.WriteFile(xmlPath, []byte(xml), 0644); err != nil {
+		return fmt.Errorf("write domain.xml: %w", err)
+	}
+
+	// 2) 先 virsh define 让配置持久化
+	if out, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+		return fmt.Errorf("virsh define: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+
+	// 3) 运行中 VM：尝试热替换 graphics 设备
+	if c.Status == "running" {
+		if password != "" {
+			// 新建一个临时 graphics device XML，用 virsh update-device 替换
+			graphicsXML := fmt.Sprintf(`<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1' passwd='%s'/>`, xmlEscape(password))
+			tmpFile, err := os.CreateTemp("", "vnc-graphics-*.xml")
+			if err != nil {
+				return fmt.Errorf("create temp file: %w", err)
+			}
+			tmpPath := tmpFile.Name()
+			defer os.Remove(tmpPath)
+			if _, err := tmpFile.WriteString(graphicsXML); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("write graphics xml: %w", err)
+			}
+			tmpFile.Close()
+			if out, err := exec.Command("virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
+				return nil // 热更新成功
+			} else {
+				// 热更新失败（可能 libvirt 版本不支持），提示重启生效
+				_ = out
+				return fmt.Errorf("VNC password saved; the VM must be restarted for the new password to take effect")
+			}
+		} else {
+			// 清空密码：尝试 update-device 无密码版本
+			graphicsXML := `<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>`
+			tmpFile, err := os.CreateTemp("", "vnc-graphics-*.xml")
+			if err != nil {
+				return fmt.Errorf("create temp file: %w", err)
+			}
+			tmpPath := tmpFile.Name()
+			defer os.Remove(tmpPath)
+			if _, err := tmpFile.WriteString(graphicsXML); err != nil {
+				tmpFile.Close()
+				return fmt.Errorf("write graphics xml: %w", err)
+			}
+			tmpFile.Close()
+			if out, err := exec.Command("virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
+				return nil
+			} else {
+				_ = out
+				return fmt.Errorf("VNC password cleared; the VM must be restarted for the change to take effect")
+			}
+		}
+	}
+	return nil
+}
+
 func (m *Manager) ApplyContainerLimits(c *config.Container) error {
 	if c == nil || !c.IsKVM() {
 		return nil
@@ -1216,14 +1471,14 @@ func (m *Manager) redefineContainer(c *config.Container) error {
 	if IsWindowsImage(c.Template) {
 		winISO := ImagePath(c.Template)
 		unattendISO := existingWindowsUnattendISO(m.instanceDir(vmName))
-		xml = windowsDomainXML(vmName, int(c.VCPU), c.RAMMB, c.DiskImage, dataDiskPath, winISO, unattendISO, c.MACAddress, c.IOReadMBps, c.IOWriteMBps, c.NetworkDownMbps, c.NetworkUpMbps)
+		xml = windowsDomainXML(vmName, int(c.VCPU), c.RAMMB, c.DiskImage, dataDiskPath, winISO, unattendISO, c.MACAddress, c.IOReadMBps, c.IOWriteMBps, c.NetworkDownMbps, c.NetworkUpMbps, c.VNCPassword)
 	} else {
 		seedPath := filepath.Join(m.instanceDir(vmName), "seed.iso")
 		rescueISOPath := ""
 		if c.RescueEnabled && c.RescueISOPath != "" {
 			rescueISOPath = c.RescueISOPath
 		}
-		xml = domainXML(vmName, int(c.VCPU), c.RAMMB, c.DiskImage, dataDiskPath, seedPath, c.MACAddress, c.IOReadMBps, c.IOWriteMBps, c.NetworkDownMbps, c.NetworkUpMbps, rescueISOPath, isKVMDesktopTemplate(c.Template))
+		xml = domainXML(vmName, int(c.VCPU), c.RAMMB, c.DiskImage, dataDiskPath, seedPath, c.MACAddress, c.IOReadMBps, c.IOWriteMBps, c.NetworkDownMbps, c.NetworkUpMbps, rescueISOPath, isKVMDesktopTemplate(c.Template), c.VNCPassword)
 	}
 	xmlPath := filepath.Join(m.instanceDir(vmName), "domain.xml")
 	if err := os.WriteFile(xmlPath, []byte(xml), 0644); err != nil {
@@ -1412,7 +1667,7 @@ func (m *Manager) RestoreSnapshot(id string) error {
 	}
 	c.DiskImage = filepath.Join(instanceDir, "disk.qcow2")
 	c.StoragePath = instanceDir
-	c.Status = "stopped"
+	config.SetContainerStatusAndNotify(c, "stopped")
 	c.IP = ""
 	config.SaveConfig()
 	if wasRunning {
@@ -1778,7 +2033,9 @@ func (m *Manager) ListContainers(containers []config.Container) []config.Contain
 		}
 		status, err := m.GetContainerStatus(containers[i].VirshName())
 		if err == nil && status != "" {
-			containers[i].Status = status
+			// slice 共享底层数组：这里改的是内存 config，接入钩子，
+			// 否则会吞掉后续真实事件（下次 Update 时 old 已被改写）。
+			config.SetContainerStatusAndNotify(&containers[i], status)
 		}
 		if status == "running" {
 			if _, err := m.RefreshVNCPort(containers[i].ID); err == nil {
@@ -2609,7 +2866,7 @@ func isKVMDesktopTemplate(templateID string) bool {
 	return image != nil && image.Desktop != ""
 }
 
-func domainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, seedPath, mac string, ioReadMBps int, ioWriteMBps int, networkDownMbps int, networkUpMbps int, rescueISOPath string, desktop bool) string {
+func domainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, seedPath, mac string, ioReadMBps int, ioWriteMBps int, networkDownMbps int, networkUpMbps int, rescueISOPath string, desktop bool, vncPassword string) string {
 	if vcpu < 1 {
 		vcpu = 1
 	}
@@ -2704,6 +2961,10 @@ func domainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, seedPat
     </disk>`, xmlEscape(rescueISOPath))
 		}
 	}
+	vncGraphics := "<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>"
+	if vncPassword != "" {
+		vncGraphics = fmt.Sprintf("<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1' passwd='%s'/>", xmlEscape(vncPassword))
+	}
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
   %s
@@ -2743,13 +3004,14 @@ func domainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, seedPat
     <memballoon model='virtio'>
       <stats period='10'/>
     </memballoon>
-    <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>%s
+    %s
+    %s
     %s
   </devices>
-</domain>`, xmlEscape(name), domainUUIDXML(name), ramMB, ramMB, vcpu, vcpu, osAttrs, kvmLibvirtArch(), kvmMachineType(), bootDev, features, xmlEscape(kvmEmulatorPath()), rescueDisk, xmlEscape(diskPath), iotune, seedDisk, dataDisk, xmlEscape(mac), bandwidth, input, video)
+</domain>`, xmlEscape(name), domainUUIDXML(name), ramMB, ramMB, vcpu, vcpu, osAttrs, kvmLibvirtArch(), kvmMachineType(), bootDev, features, xmlEscape(kvmEmulatorPath()), rescueDisk, xmlEscape(diskPath), iotune, seedDisk, dataDisk, xmlEscape(mac), bandwidth, vncGraphics, input, video)
 }
 
-func windowsDomainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, winISOPath, unattendISOPath, mac string, ioReadMBps int, ioWriteMBps int, networkDownMbps int, networkUpMbps int) string {
+func windowsDomainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, winISOPath, unattendISOPath, mac string, ioReadMBps int, ioWriteMBps int, networkDownMbps int, networkUpMbps int, vncPassword string) string {
 	if vcpu < 1 {
 		vcpu = 1
 	}
@@ -2803,6 +3065,10 @@ func windowsDomainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, 
       <target dev='hdd' bus='ide'/>
       <readonly/>
     </disk>`, xmlEscape(unattendISOPath))
+	}
+	vncGraphics := "<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>"
+	if vncPassword != "" {
+		vncGraphics = fmt.Sprintf("<graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1' passwd='%s'/>", xmlEscape(vncPassword))
 	}
 	return fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
@@ -2862,12 +3128,12 @@ func windowsDomainXML(name string, vcpu int, ramMB int, diskPath, dataDiskPath, 
       <target type='virtio' name='org.qemu.guest_agent.0'/>
     </channel>
     <input type='tablet' bus='usb'/>
-    <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'/>
+    %s
     <video><model type='qxl'/></video>
   </devices>
 </domain>`, xmlEscape(name), domainUUIDXML(name), ramMB, ramMB, vcpu, vcpu, vcpu,
 		xmlEscape(diskPath), iotune,
-		xmlEscape(winISOPath), xmlEscape(virtioWinISO), dataDisk, unattendDisk, xmlEscape(mac), bandwidth)
+		xmlEscape(winISOPath), xmlEscape(virtioWinISO), dataDisk, unattendDisk, xmlEscape(mac), bandwidth, vncGraphics)
 }
 
 func xmlEscape(value string) string {
@@ -3436,7 +3702,8 @@ func (m *Manager) syncRunningNetworks() {
 		}
 		status, err := m.GetContainerStatus(c.VirshName())
 		if err == nil && status != "" && c.Status != status {
-			c.Status = status
+			// 面板外被 stop 的权威检测路径：接入钩子让 webhook 感知。
+			config.SetContainerStatusAndNotify(c, status)
 			config.SaveConfig()
 		}
 		if status != "running" && c.Status != "running" {

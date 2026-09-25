@@ -421,6 +421,9 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 		appendAgentMetricPoint(s)
 	}
 
+	// 状态变更收集：锁内记录、锁外触发钩子。这是跨节点容器事件的
+	// 唯一投递路径（agent 侧被 webhookStatusHook 的 agent 守卫跳过）。
+	var statusChanges []containerStatusChange
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		// 1) 标记该节点现有容器为待清理
 		orphaned := make(map[string]bool) // UUID -> true
@@ -441,7 +444,15 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 				if cfg.Containers[i].UUID == s.UUID {
 					// 更新心跳同步的字段（主控侧独占字段如 OwnerSubUserID/SSHPassword 保留）
 					cfg.Containers[i].NodeID = nodeID
-					cfg.Containers[i].Status = s.Status
+					if cfg.Containers[i].Status != s.Status {
+						statusChanges = append(statusChanges, containerStatusChange{
+							id:   cfg.Containers[i].ID,
+							name: cfg.Containers[i].Name,
+							old:  cfg.Containers[i].Status,
+							new:  s.Status,
+						})
+						cfg.Containers[i].Status = s.Status
+					}
 					cfg.Containers[i].Virtualization = s.Virtualization
 					cfg.Containers[i].Suspended = s.Suspended
 					cfg.Containers[i].VCPU = s.VCPU
@@ -472,11 +483,22 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 		// 3) 主控有但 agent 没上报的容器：标记 orphaned=true
 		for i := range cfg.Containers {
 			if orphaned[cfg.Containers[i].UUID] {
-				cfg.Containers[i].Status = "orphaned"
+				if cfg.Containers[i].Status != "orphaned" {
+					statusChanges = append(statusChanges, containerStatusChange{
+						id:   cfg.Containers[i].ID,
+						name: cfg.Containers[i].Name,
+						old:  cfg.Containers[i].Status,
+						new:  "orphaned",
+					})
+					cfg.Containers[i].Status = "orphaned"
+				}
 			}
 		}
 	})
 	_ = config.SaveConfig()
+	for _, ch := range statusChanges {
+		config.FireContainerStatusHook(ch.id, ch.name, ch.old, ch.new)
+	}
 }
 
 // appendAgentMetricPoint 把 agent 心跳上报的指标点写入主控 metric history，

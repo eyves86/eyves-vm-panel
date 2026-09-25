@@ -672,11 +672,56 @@ func allowVersionedRequest(key string, perMinute int) bool {
 	return true
 }
 
+// allowVersionedRequestWithQuota 在判定放行的同时返回本窗口剩余额度与
+// 距离下次放行的秒数（未限流时 retryAfter 为 0），供限流透明度响应头使用
+// （X-RateLimit-Limit / X-RateLimit-Remaining / Retry-After，企业级 API 契约）。
+func allowVersionedRequestWithQuota(key string, perMinute int) (allowed bool, limit, remaining, retryAfterSec int) {
+	now := time.Now()
+	versionedLimiter.mu.Lock()
+	defer versionedLimiter.mu.Unlock()
+	if perMinute <= 0 {
+		perMinute = 120
+	}
+	limit = perMinute
+	cutoff := now.Add(-60 * time.Second)
+	kept := versionedLimiter.win[key][:0]
+	for _, t := range versionedLimiter.win[key] {
+		if t.After(cutoff) {
+			kept = append(kept, t)
+		}
+	}
+	versionedLimiter.win[key] = kept
+	if len(kept) >= perMinute {
+		if len(kept) > 0 {
+			if wait := kept[0].Add(60 * time.Second).Sub(now); wait > 0 {
+				retryAfterSec = int(wait.Round(time.Second) / time.Second)
+			}
+		}
+		return false, limit, 0, retryAfterSec
+	}
+	versionedLimiter.win[key] = append(versionedLimiter.win[key], now)
+	remaining = perMinute - len(versionedLimiter.win[key])
+	if len(versionedLimiter.win) > 5000 {
+		for k, times := range versionedLimiter.win {
+			if len(times) == 0 || times[len(times)-1].Before(cutoff) {
+				delete(versionedLimiter.win, k)
+			}
+		}
+	}
+	return true, limit, remaining, 0
+}
+
 // AllowVersionedRequest is the export used by the server middleware. It accepts
 // the client IP string and the per-minute budget; returns whether the request is
 // within quota. perMinute is derived from config by the caller.
 func AllowVersionedRequest(clientIP string, perMinute int) bool {
 	return allowVersionedRequest(ensureString(clientIP), perMinute)
+}
+
+// AllowVersionedRequestWithQuota 是带配额信息的导出版本：返回
+// (allowed, limit, remaining, retryAfterSec)，供中间件输出限流透明度头。
+func AllowVersionedRequestWithQuota(clientIP string, perMinute int) (bool, int, int, int) {
+	return allowVersionedRequestWithQuota(ensureString(clientIP), perMinute)
 }
 
 func ensureString(s string) string {
@@ -717,6 +762,11 @@ func HandleOpenAPI(w http.ResponseWriter, r *http.Request) {
 						"status":   map[string]interface{}{"type": "string"},
 						"template": map[string]interface{}{"type": "string"},
 						"ipv4":     map[string]interface{}{"type": "string"},
+						"tags": map[string]interface{}{
+							"type": "object",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+							"description":          "资源标签（成本分摊 / 过滤），最多 20 个，key/value ≤128 字符",
+						},
 					},
 				},
 				"ApiKey": map[string]interface{}{

@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"strconv"
 	"strings"
@@ -201,7 +203,43 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:account") {
 			return
 		}
+		if routeToAgent("create-account", r.Body) {
+			return
+		}
 		createContainerAccount(w, r, id)
+	case action == "hostname" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		if routeToAgent("hostname", r.Body) {
+			return
+		}
+		changeContainerHostname(w, r, id, c)
+	case action == "vnc-password" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		if routeToAgent("vnc-password", r.Body) {
+			return
+		}
+		changeContainerVNCPassword(w, r, id, c)
+	case action == "clone" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		cloneContainer(w, r, id)
+	case strings.HasPrefix(action, "security-groups"):
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		HandleContainerSecGroups(w, r)
+	case action == "tags" && r.Method == http.MethodPut:
+		// 资源标签管理（企业成本分摊 / 过滤）：整体替换容器标签集。
+		// 子用户可管理自己容器的标签；key/value ≤128 字符，最多 20 个。
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		updateContainerTags(w, r, id)
 	case action == "tenant" && r.Method == http.MethodPut:
 		if !requireScope(w, r, "container:resize") {
 			return
@@ -435,6 +473,47 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 	case action == "migrate-export" && r.Method == http.MethodGet:
 		HandleContainerMigrateExport(w, r, id)
 	case action == "snapshots" || strings.HasPrefix(action, "snapshots/"):
+		// 多节点路由：快照的运行时操作（创建/删除/恢复）需转发到被控 agent；
+		// schedule / quota / list 是配置侧，由主控处理。
+		if c.NodeID != "" && (
+			(action == "snapshots" && r.Method == http.MethodPost) || // create
+				strings.HasPrefix(action, "snapshots/") && strings.HasSuffix(action, "/restore") && r.Method == http.MethodPost || // restore
+				strings.HasPrefix(action, "snapshots/") && r.Method == http.MethodDelete) { // delete
+			node, ok := config.FindNode(c.NodeID)
+			if !ok || node.Address == "" {
+				jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "容器所属节点不可用: " + c.NodeID})
+				return
+			}
+			var agentPath string
+			var agentBodyStr string
+			switch {
+			case r.Method == http.MethodDelete:
+				sid := strings.TrimPrefix(action, "snapshots/")
+				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshots/delete", id)
+				b, _ := json.Marshal(map[string]interface{}{"snapshot_id": sid})
+				agentBodyStr = string(b)
+			case strings.HasSuffix(action, "/restore"):
+				sid := strings.TrimSuffix(strings.TrimPrefix(action, "snapshots/"), "/restore")
+				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshots/restore", id)
+				b, _ := json.Marshal(map[string]interface{}{"snapshot_id": sid})
+				agentBodyStr = string(b)
+			default:
+				bodyBytes, _ := io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshot", id)
+				agentBodyStr = string(bodyBytes)
+			}
+			data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+				agentPath, strings.NewReader(agentBodyStr))
+			if err != nil {
+				jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write(data)
+			return
+		}
 		handleContainerSnapshots(w, r, id, action)
 	case action == "backups" || strings.HasPrefix(action, "backups/"):
 		handleContainerBackups(w, r, id, action)
@@ -476,10 +555,45 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 func listContainers(w http.ResponseWriter, r *http.Request) {
 	containers, _ := listByRuntime()
 	containers = filterContainersForRequest(r, containers)
+	// 标签过滤（企业成本分摊 / 按标签过滤，类比 AWS DescribeInstances Filters）。
+	// 支持两种形式：?tag=key:value（精确匹配）；?tag-key=key（存在性匹配）。
+	if tagFilter := strings.TrimSpace(r.URL.Query().Get("tag")); tagFilter != "" {
+		if k, v, ok := strings.Cut(tagFilter, ":"); ok {
+			k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+			filtered := containers[:0]
+			for _, c := range containers {
+				if c.Tags[k] == v {
+					filtered = append(filtered, c)
+				}
+			}
+			containers = filtered
+		}
+	}
+	if tagKeyFilter := strings.TrimSpace(r.URL.Query().Get("tag-key")); tagKeyFilter != "" {
+		filtered := containers[:0]
+		for _, c := range containers {
+			if _, ok := c.Tags[tagKeyFilter]; ok {
+				filtered = append(filtered, c)
+			}
+		}
+		containers = filtered
+	}
 	for i := range containers {
 		sanitizeContainerResponse(r, &containers[i])
 		// 列表为只读汇总视图，一律不回显登录口令（detail/console 需要时单独拉取）。
 		containers[i].SSHPassword = ""
+	}
+	// 分页：未传 page/page_size 时保持全量数组返回（向后兼容）。
+	p := parsePagination(r)
+	if p.Invalid {
+		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST",
+			"page must be >= 1 and page_size within [1, 200]")
+		return
+	}
+	if p.Requested {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true,
+			Data: pagedEnvelope(paginate(containers, p), len(containers), p.Page, p.PageSize)})
+		return
 	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: containers})
 }
@@ -597,6 +711,22 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
+
+	// SSH 密钥托管：把用户在 ssh_key_ids 里指定的 SK-xxx 从 config 里查出实际公钥，
+	// 合并到 cfg.SSHPublicKeys（供 ResolveCreateSSHAccess 聚合使用）。
+	// 容器创建成功后，SSHKeyIDs 会被持久化到 config.Container.SSHKeyIDs。
+	if len(cfg.SSHKeyIDs) > 0 {
+		pubKeys, missing := ResolveSSHKeyIDs(cfg.SSHKeyIDs)
+		if len(missing) > 0 {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{
+				Success: false,
+				Message: "部分 SSH Key 不存在: " + strings.Join(missing, ", "),
+			})
+			return
+		}
+		cfg.SSHPublicKeys = append(cfg.SSHPublicKeys, pubKeys...)
+	}
+
 	if err := validateCreateSSHAuth(cfg); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
@@ -618,9 +748,35 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// DryRun（企业级 API 契约）：仅执行全部校验并返回"将要创建"的规划结果，
+	// 不落盘、不调用运行时层。集成方可用它在开通前验证参数（类比 AWS RunInstances DryRun）。
+	if dryRun := parseDryRun(fields, r); dryRun {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Dry run passed (no container was created)", Data: map[string]interface{}{
+			"dry_run":        true,
+			"name":           cfg.Name,
+			"virtualization": cfg.Virtualization,
+			"template_id":    cfg.TemplateID,
+			"vcpu":           cfg.VCPU,
+			"ram_mb":         cfg.RAMMB,
+			"disk_gb":        cfg.DiskGB,
+			"tenant":         cfg.Tenant,
+			"expires_at":     cfg.ExpiresAt,
+		}})
+		return
+	}
+
 	if err := createByRuntime(cfg); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return
+	}
+	// 持久化 SSHKeyIDs 到 config.Container（运行时层不感知此业务字段，需额外同步）。
+	if len(cfg.SSHKeyIDs) > 0 {
+		if created := config.FindContainerByName(cfg.Name); created != nil {
+			config.MutateContainerNoSave(created.ID, func(c *config.Container) {
+				c.SSHKeyIDs = cfg.SSHKeyIDs
+			})
+			config.SaveConfig()
+		}
 	}
 	if idemKey != "" {
 		if created := config.FindContainerByName(cfg.Name); created != nil {
@@ -795,6 +951,58 @@ func updateTrafficLimit(w http.ResponseWriter, r *http.Request, id int) {
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Traffic limit updated"})
 }
 
+// updateContainerTags 整体替换容器标签（企业成本分摊 / 按标签过滤）。
+// 请求体：{"tags": {"team": "infra", "env": "prod"}}；传空对象清除全部标签。
+// 校验：key/value 非空且 ≤128 字符（去除首尾空白），最多 20 个。
+func updateContainerTags(w http.ResponseWriter, r *http.Request, id int) {
+	var req struct {
+		Tags map[string]string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
+		return
+	}
+	if len(req.Tags) > 20 {
+		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST", "too many tags (max 20)")
+		return
+	}
+	for k, v := range req.Tags {
+		k = strings.TrimSpace(k)
+		if k == "" || len(k) > 128 {
+			errResponse(w, http.StatusBadRequest, "INVALID_REQUEST", "tag key must be non-empty and <= 128 chars")
+			return
+		}
+		if len(v) > 128 {
+			errResponse(w, http.StatusBadRequest, "INVALID_REQUEST", "tag value must be <= 128 chars")
+			return
+		}
+	}
+	normalized := make(map[string]string, len(req.Tags))
+	for k, v := range req.Tags {
+		normalized[strings.TrimSpace(k)] = strings.TrimSpace(v)
+	}
+	if len(normalized) == 0 {
+		normalized = nil
+	}
+	updated, c := config.MutateContainerByID(id, func(c *config.Container) {
+		c.Tags = normalized
+	})
+	if !updated {
+		errResponse(w, http.StatusNotFound, "NOT_FOUND", "Container not found")
+		return
+	}
+	if err := config.SaveConfig(); err != nil {
+		errResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save config")
+		return
+	}
+	auditRequest(r, "container.tags", c.Name,
+		fmt.Sprintf("tags=%d", len(normalized)), true, "")
+	if c.Tags == nil {
+		c.Tags = map[string]string{}
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{"tags": c.Tags}})
+}
+
 func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 	var req struct {
 		VCPU            *float64 `json:"vcpu"`
@@ -826,9 +1034,31 @@ func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 			return
 		}
 		if newDiskGB > c.DiskGB {
-			if err := resizeDiskByRuntime(c, newDiskGB); err != nil {
-				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
-				return
+			// 多节点路由：容器在被控节点上时，运行时扩容转发到所属 agent。
+			if c.NodeID != "" {
+				node, ok := config.FindNode(c.NodeID)
+				if !ok || node.Address == "" {
+					jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "容器所属节点不可用: " + c.NodeID})
+					return
+				}
+				agentBody, _ := json.Marshal(map[string]interface{}{"disk_gb": newDiskGB})
+				data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+					fmt.Sprintf("/api/agent/containers/%d/resize", id), strings.NewReader(string(agentBody)))
+				if err != nil {
+					jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
+					return
+				}
+				if status < 200 || status >= 300 {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(status)
+					_, _ = w.Write(data)
+					return
+				}
+			} else {
+				if err := resizeDiskByRuntime(c, newDiskGB); err != nil {
+					jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+					return
+				}
 			}
 		}
 	}
@@ -1280,4 +1510,299 @@ func HandleVersion(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
 		"version": version.Current(),
 	}})
+}
+
+// changeContainerHostname 实时修改运行中容器的 hostname（类比 Virtualizor Change Hostname）。
+// 运行中的 LXC 走 lxc-attach；运行中的 KVM 优先 virsh set-hostname，回退 SSH 进入。
+// 停止的容器报错提示（hostname 需要运行时才能实时生效）。
+func changeContainerHostname(w http.ResponseWriter, r *http.Request, id int, c *config.Container) {
+	var req struct {
+		Hostname string `json:"hostname"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	hostname := strings.TrimSpace(req.Hostname)
+	if hostname == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "hostname is required"})
+		return
+	}
+	if len(hostname) > 63 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "hostname too long (max 63 chars)"})
+		return
+	}
+	// 只允许 [a-z0-9-]（RFC 1123），避免 shell 注入
+	for _, ch := range hostname {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "hostname must match [a-z0-9-] (RFC 1123)"})
+			return
+		}
+	}
+
+	if err := setHostnameByRuntime(id, hostname); err != nil {
+		auditRequest(r, "container.hostname", c.Name, "new="+hostname+" err="+err.Error(), false, err.Error())
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	auditRequest(r, "container.hostname", c.Name, "new="+hostname, true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "hostname changed successfully",
+		Data:    map[string]string{"hostname": hostname},
+	})
+}
+
+// changeContainerVNCPassword 修改 KVM VM 的 VNC 密码（类比 Virtualizor Change VNC Password）。
+// 请求体：{ password: "xxx" } 或 { password: "" } 清空密码。
+// 同时持久化 VNCPassword 到 config。运行中 VM 尝试热更新。
+func changeContainerVNCPassword(w http.ResponseWriter, r *http.Request, id int, c *config.Container) {
+	var req struct {
+		Password string `json:"password"`
+	}
+	if r.Body != nil {
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&req); err != nil && err.Error() != "EOF" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+			return
+		}
+	}
+	password := req.Password
+	if len(password) > 255 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "vnc password too long (max 255 chars)"})
+		return
+	}
+
+	// 持久化 VNCPassword 到 config.Container
+	config.MutateContainerNoSave(id, func(cc *config.Container) {
+		cc.VNCPassword = password
+	})
+	if err := config.SaveConfig(); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
+		return
+	}
+
+	err := setVNCPasswordByRuntime(id, password)
+	if err != nil {
+		auditRequest(r, "container.vnc_password", c.Name, "err="+err.Error(), false, err.Error())
+		// 如果是 LXC 不支持，回滚 config 并返回错误
+		if !c.IsKVM() {
+			config.MutateContainerNoSave(id, func(cc *config.Container) {
+				cc.VNCPassword = ""
+			})
+			config.SaveConfig()
+		}
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+
+	auditDetail := "cleared"
+	if password != "" {
+		auditDetail = "set"
+	}
+	auditRequest(r, "container.vnc_password", c.Name, auditDetail, true, "")
+
+	msg := "VNC password changed successfully"
+	if password == "" {
+		msg = "VNC password cleared successfully"
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: msg})
+}
+
+// cloneContainer 克隆容器（类比 Virtualizor Clone VPS）。
+// 请求体：{ name (必填), mode: "full"|"linked", start_after_clone: bool }
+// 分配新 ID/UUID/MAC/VNCPort/SSHPort，拷贝源容器的配额/网络/快照/SSH Key 绑定等配置。
+func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
+	src := config.FindContainer(srcID)
+	if src == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Source container not found"})
+		return
+	}
+
+	var req struct {
+		Name            string `json:"name"`
+		Mode            string `json:"mode"`
+		StartAfterClone bool   `json:"start_after_clone"`
+		DryRun          bool   `json:"dry_run"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "clone name is required"})
+		return
+	}
+	if len(req.Name) > 63 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "name too long (max 63 chars)"})
+		return
+	}
+	if config.FindContainerByName(req.Name) != nil {
+		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "container with this name already exists"})
+		return
+	}
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = "full"
+	}
+	if mode != "full" && mode != "linked" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "mode must be 'full' or 'linked'"})
+		return
+	}
+	// 查询参数兜底：?dry_run=true（与请求体形式等价，保持与 create 一致）。
+	if !req.DryRun {
+		if v := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("dry_run"))); v == "true" || v == "1" {
+			req.DryRun = true
+		}
+	}
+
+	// DryRun（企业级 API 契约）：验证通过后仅返回克隆规划，不分配 ID、
+	// 不占用端口段、不触碰运行时层。
+	if req.DryRun {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Dry run passed (no clone was performed)", Data: map[string]interface{}{
+			"dry_run":           true,
+			"source_id":         src.ID,
+			"source_name":       src.Name,
+			"clone_name":        req.Name,
+			"mode":              mode,
+			"start_after_clone": req.StartAfterClone,
+			"virtualization":    src.Virtualization,
+			"vcpu":              src.VCPU,
+			"ram_mb":            src.RAMMB,
+			"disk_gb":           src.DiskGB,
+			"ssh_key_ids":       len(src.SSHKeyIDs),
+			"sec_group_ids":     len(src.SecGroupIDs),
+			"tags":              len(src.Tags),
+		}})
+		return
+	}
+
+	// 从 config 分配新容器标识
+	config.AppConfigMu.Lock()
+	newID := config.AppConfig.NextContainerID
+	config.AppConfig.NextContainerID++
+	newVNCPort := config.AppConfig.NextVNCPort
+	config.AppConfig.NextVNCPort++
+	newSSHPort := config.AppConfig.NextSSHPort
+	config.AppConfig.NextSSHPort++
+	newUUID := "c-" + randomHex(12) + "-" + randomHex(4) + "-" + randomHex(4) + "-" + randomHex(4) + "-" + randomHex(12)
+	// 新 MAC（前缀 02:00:00 保留给虚拟化）
+	newMAC := fmt.Sprintf("02:00:00:%02x:%02x:%02x",
+		rand.Intn(256), rand.Intn(256), rand.Intn(256))
+	config.AppConfigMu.Unlock()
+
+	newLxcName := fmt.Sprintf("ct-%d", newID)
+	newVMName := fmt.Sprintf("vm-%d", newID)
+
+	// 多节点路由：源容器在被控节点上时，运行时克隆转发到所属 agent。
+	if src.NodeID != "" {
+		node, ok := config.FindNode(src.NodeID)
+		if !ok || node.Address == "" {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "源容器所属节点不可用: " + src.NodeID})
+			return
+		}
+		agentBody, _ := json.Marshal(map[string]interface{}{
+			"name":              req.Name,
+			"new_id":            newID,
+			"new_uuid":          newUUID,
+			"new_lxc_name":      newLxcName,
+			"new_vm_name":       newVMName,
+			"new_vnc_port":      strconv.Itoa(newVNCPort),
+			"new_ssh_port":      strconv.Itoa(newSSHPort),
+			"new_mac":           newMAC,
+			"mode":              mode,
+			"start_after_clone": req.StartAfterClone,
+		})
+		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+			fmt.Sprintf("/api/agent/containers/%d/clone", src.ID), strings.NewReader(string(agentBody)))
+		if err != nil {
+			auditRequest(r, "container.clone", src.Name, "target="+req.Name+" agent-err="+err.Error(), false, err.Error())
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
+			return
+		}
+		// agent 返回非 2xx 直接透传
+		if status < 200 || status >= 300 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(status)
+			_, _ = w.Write(data)
+			return
+		}
+	} else {
+		// 本机容器：本地运行时克隆
+		if err := cloneByRuntime(src, req.Name, newLxcName, newVMName,
+			newID, newUUID, strconv.Itoa(newVNCPort), strconv.Itoa(newSSHPort), newMAC,
+			mode, req.StartAfterClone); err != nil {
+			auditRequest(r, "container.clone", src.Name, "target="+req.Name+" err="+err.Error(), false, err.Error())
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+	}
+
+	// 运行时克隆成功 → 创建 config.Container 记录（主控是配置权威）
+	now := time.Now().UTC().Format(time.RFC3339)
+	newContainer := *src // 复制源容器所有字段
+	newContainer.ID = newID
+	newContainer.UUID = newUUID
+	newContainer.Name = req.Name
+	newContainer.LXCName = newLxcName
+	newContainer.KVMName = newVMName
+	newContainer.MACAddress = newMAC
+	newContainer.VNCPort = newVNCPort
+	newContainer.SSHPort = newSSHPort
+	newContainer.IP = ""                     // 新容器重新获取
+	newContainer.LANIPv4Address = ""
+	newContainer.PublicIPv4s = []config.PublicIPv4Assignment{} // 需要重新分配或从池取
+	newContainer.IPv6 = ""
+	newContainer.IPv6Addresses = []config.IPv6Assignment{}
+	newContainer.TrafficUsedRX = 0
+	newContainer.TrafficUsedTX = 0
+	newContainer.TrafficResetDate = now
+	newContainer.CreatedAt = now
+	newContainer.ExpiresAt = ""   // 克隆不继承到期时间，由用户重新设置
+	newContainer.Status = "stopped"
+	newContainer.SnapshotScheduleLastRun = ""
+	newContainer.SnapshotScheduleNextRun = ""
+
+	// 拷贝 SSHKeyIDs 绑定（如果源容器有）
+	if len(src.SSHKeyIDs) > 0 {
+		newContainer.SSHKeyIDs = append([]string(nil), src.SSHKeyIDs...)
+	}
+
+	// 拷贝标签（深拷贝：结构体赋值是浅拷贝，共享 map 会让克隆的标签修改污染源容器）
+	if len(src.Tags) > 0 {
+		newContainer.Tags = make(map[string]string, len(src.Tags))
+		for k, v := range src.Tags {
+			newContainer.Tags[k] = v
+		}
+	}
+
+	// 保存
+	var ok bool
+	ok = false
+	config.AppConfigMu.Lock()
+	config.AppConfig.Containers = append(config.AppConfig.Containers, newContainer)
+	config.SaveConfig()
+	config.AppConfigMu.Unlock()
+	_ = ok
+
+	// 给 PublicIPv4s 分配（从池中取，保持与创建流程一致）
+	// 这里简化：不自动分配，让用户后续通过 /api/containers/{id}/public-ipv4 分配
+	// 如果源容器有 public IP 且不冲突，可以复制
+
+	auditRequest(r, "container.clone", src.Name,
+		fmt.Sprintf("target=%s new_id=%d mode=%s", req.Name, newID, mode), true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Container cloned successfully",
+		Data: map[string]interface{}{
+			"new_id":    newID,
+			"new_name":  req.Name,
+			"uuid":      newUUID,
+			"mode":      mode,
+			"lxc_name":  newLxcName,
+			"vnc_port":  newVNCPort,
+			"ssh_port":  newSSHPort,
+		},
+	})
 }

@@ -251,7 +251,7 @@ func testSSHPublicKey(t *testing.T) ssh.PublicKey {
 }
 
 func TestDomainXMLRescueBoot(t *testing.T) {
-	normal := domainXML("test-vm", 1, 1024, "/tmp/disk.qcow2", "", "/tmp/seed.iso", "52:54:00:11:22:33", 0, 0, 0, 0, "", false)
+	normal := domainXML("test-vm", 1, 1024, "/tmp/disk.qcow2", "", "/tmp/seed.iso", "52:54:00:11:22:33", 0, 0, 0, 0, "", false, "")
 	if strings.Contains(normal, "<boot dev='cdrom'/>") || strings.Contains(normal, "boot order='1'") {
 		t.Fatalf("normal domain must boot from disk only:\n%s", normal)
 	}
@@ -259,7 +259,7 @@ func TestDomainXMLRescueBoot(t *testing.T) {
 		t.Fatalf("normal domain must use hd boot dev:\n%s", normal)
 	}
 
-	rescue := domainXML("test-vm", 1, 1024, "/tmp/disk.qcow2", "", "/tmp/seed.iso", "52:54:00:11:22:33", 0, 0, 0, 0, "/tmp/rescue.iso", false)
+	rescue := domainXML("test-vm", 1, 1024, "/tmp/disk.qcow2", "", "/tmp/seed.iso", "52:54:00:11:22:33", 0, 0, 0, 0, "/tmp/rescue.iso", false, "")
 	if !strings.Contains(rescue, "<boot dev='cdrom'/>") {
 		t.Fatalf("rescue domain must boot from cdrom:\n%s", rescue)
 	}

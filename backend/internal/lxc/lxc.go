@@ -272,6 +272,13 @@ type ContainerConfig struct {
 	SSHAuthMode          string                     `json:"ssh_auth_mode,omitempty"`
 	SSHPassword          string                     `json:"ssh_password,omitempty"`
 	SSHPublicKey         string                     `json:"ssh_public_key,omitempty"`
+	// SSHKeyIDs 是平台托管的 SSH 公钥 ID 列表（对应 api/ssh_keys.go 里的 SK-xxx）。
+	// 创建/重装时会从 config 中查出实际公钥，合并到下面的 SSHPublicKeys。
+	SSHKeyIDs            []string                   `json:"ssh_key_ids,omitempty"`
+	// SSHPublicKeys 是聚合后的公钥列表（多行 authorized_keys 格式）。
+	// 由 handler 把 SSHKeyIDs 查到的 + 已有的 SSHPublicKey 合并填充；
+	// 运行时层（cloud-init 或 chroot authorized_keys）直接使用此字段。
+	SSHPublicKeys        []string                   `json:"ssh_public_keys,omitempty"`
 	// ReinstallMode 控制重装范围："system" 只重装系统盘（保留数据盘），
 	// "full" 全盘重装（系统盘与数据盘一起重建）。空值按运行时默认处理。
 	ReinstallMode        string                     `json:"reinstall_mode,omitempty"`
@@ -3679,7 +3686,9 @@ func (m *Manager) ListContainers() ([]config.Container, error) {
 		}
 		status, err := m.GetContainerStatus(containers[i].LxcName())
 		if err == nil {
-			containers[i].Status = status
+			// slice 共享底层数组：这里改的是内存 config，接入钩子，
+			// 否则会吞掉后续真实事件（下次 Update 时 old 已被改写）。
+			config.SetContainerStatusAndNotify(&containers[i], status)
 		}
 		if status == "running" {
 			ip, err := m.GetContainerIP(containers[i].LxcName())
@@ -4015,24 +4024,24 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 	// Update template and keep everything else the same
 	c.Template = templateID
 	c.SSHHostKey = ""
-	c.Status = "running"
+	config.SetContainerStatusAndNotify(c, "running")
 	config.SaveConfig()
 
 	// Start the container to trigger ensureSSH
 	if err := m.ensureDiskImageMounted(lxcName); err != nil {
-		c.Status = "stopped"
+		config.SetContainerStatusAndNotify(c, "stopped")
 		config.SaveConfig()
 		return err
 	}
 	logFile, consoleLog, output, err := m.startLXCContainerDaemon(lxcName)
 	if err != nil {
 		fmt.Printf("Warning: failed to start container after reinstall: %v\n", err)
-		c.Status = "stopped"
+		config.SetContainerStatusAndNotify(c, "stopped")
 		config.SaveConfig()
 		return fmt.Errorf("reinstalled but failed to start: %v, output: %s, lxc log: %s, console: %s", err, string(output), tailFile(logFile, 80), tailFile(consoleLog, 80))
 	}
 	if err := m.waitForLXCStartup(lxcName, logFile, consoleLog); err != nil {
-		c.Status = "stopped"
+		config.SetContainerStatusAndNotify(c, "stopped")
 		config.SaveConfig()
 		return fmt.Errorf("reinstalled but container did not stay running: %v", err)
 	}
@@ -4541,4 +4550,66 @@ func (m *Manager) GetTrafficInfo(id int) map[string]interface{} {
 // ToJSON converts data to JSON bytes
 func ToJSON(v interface{}) ([]byte, error) {
 	return json.MarshalIndent(v, "", "  ")
+}
+
+// CloneContainer 克隆 LXC 容器。
+// mode: "full" 完整拷贝（`lxc copy`），"linked" 秒级克隆（`lxc copy --clone`，底层需要 ZFS/LVM COW）。
+// 返回 error 时新容器已被清理（best effort）。
+func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName string,
+	newID int, newUUID, newVNCPort, newSSHPort, newMAC, mode string, startAfter bool) error {
+
+	srcName := src.LxcName()
+	if srcName == newLxcName {
+		return fmt.Errorf("source and destination names must differ")
+	}
+
+	// 先停源容器（克隆运行中的容器可能导致文件系统不一致；可选快照模式）
+	wasRunning := src.Status == "running"
+	if wasRunning {
+		if err := exec.Command("lxc-stop", "-n", srcName).Run(); err != nil {
+			return fmt.Errorf("stop source container before clone: %v", err)
+		}
+		defer func() {
+			if wasRunning {
+				_ = exec.Command("lxc-start", "-d", "-n", srcName).Run()
+			}
+		}()
+	}
+
+	// 执行克隆
+	args := []string{"copy", srcName, newLxcName}
+	if mode == "linked" {
+		args = append(args, "--clone")
+	}
+	if out, err := exec.Command("lxc", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("lxc clone (%s): %v: %s", mode, err, strings.TrimSpace(string(out)))
+	}
+
+	// 克隆后更新新容器的 LXC config：MAC、hostname、veth 名
+	if newMAC != "" {
+		if err := updateCloneMAC(newLxcName, newMAC); err != nil {
+			_ = exec.Command("lxc-destroy", "-f", "-n", newLxcName).Run()
+			return fmt.Errorf("set clone MAC: %v", err)
+		}
+	}
+	if err := updateCloneHostname(newLxcName, newName); err != nil {
+		_ = exec.Command("lxc-destroy", "-f", "-n", newLxcName).Run()
+		return fmt.Errorf("set clone hostname: %v", err)
+	}
+
+	// 启动新容器
+	if startAfter {
+		if err := exec.Command("lxc-start", "-d", "-n", newLxcName).Run(); err != nil {
+			return fmt.Errorf("start cloned container: %v", err)
+		}
+	}
+	return nil
+}
+
+func updateCloneMAC(lxcName, mac string) error {
+	return exec.Command("lxc-config", "-n", lxcName, "set", "lxc.net.0.hwaddr", mac).Run()
+}
+
+func updateCloneHostname(lxcName, hostname string) error {
+	return exec.Command("lxc-config", "-n", lxcName, "set", "lxc.uts.name", hostname).Run()
 }

@@ -41,6 +41,44 @@ func createByRuntime(cfg lxc.ContainerConfig) error {
 	return lxcManager.CreateContainer(cfg)
 }
 
+// cloneByRuntime 克隆容器（底层：LXC 用 lxc copy，KVM 用 qemu-img convert + virsh define）。
+// srcContainer: 源容器配置（运行时层需从中取 LxcName/VirshName）
+// newName / newLxcName: 新容器名 + 新 LXC/KVM 内部名
+// newID / newUUID / newVNCPort / newSSHPort / newMAC: 已分配的新标识
+// mode: "full" = 完整拷贝；"linked" = 秒级 COW 克隆（LXC ZFS/LVM / KVM qcow2 backing file 支持）
+func cloneByRuntime(srcContainer *config.Container, newName, newLxcName, newVMName string,
+	newID int, newUUID, newVNCPort, newSSHPort, newMAC string,
+	mode string, startAfter bool) error {
+
+	if srcContainer == nil {
+		return fmt.Errorf("source container not found")
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
+	if mode == "" {
+		mode = "full"
+	}
+	if mode != "full" && mode != "linked" {
+		return fmt.Errorf("invalid clone mode %q: expected 'full' or 'linked'", mode)
+	}
+	if newLxcName == "" {
+		newLxcName = fmt.Sprintf("ct-%d", newID)
+	}
+	if newVMName == "" {
+		newVMName = fmt.Sprintf("vm-%d", newID)
+	}
+
+	srcContainer.LXCName = srcContainer.LxcName()
+	srcContainer.KVMName = srcContainer.VirshName()
+
+	if srcContainer.IsKVM() {
+		return kvmManager.CloneContainer(srcContainer, newName, newLxcName, newVMName,
+			newID, newUUID, newVNCPort, newSSHPort, newMAC, mode, startAfter)
+	}
+
+	return lxcManager.CloneContainer(srcContainer, newName, newLxcName, newID, newUUID,
+		newVNCPort, newSSHPort, newMAC, mode, startAfter)
+}
+
 func validateCreateSSHAuth(cfg lxc.ContainerConfig) error {
 	if cfg.Virtualization == config.VirtualizationKVM && kvm.IsWindowsImage(cfg.TemplateID) {
 		return nil
@@ -131,6 +169,76 @@ func createAccountByRuntime(id int, username, password string, sudo bool) error 
 		return kvmManager.CreateAccount(id, username, password, sudo)
 	}
 	return lxcManager.CreateAccount(id, username, password, sudo)
+}
+
+// setHostnameByRuntime 实时修改运行中容器的 hostname。
+// LXC: 通过 lxc-attach 执行 hostname + 写 /etc/hostname + 写 /etc/hosts。
+// KVM: 通过 virsh set-hostname（依赖 QEMU guest agent；不支持则回退 SSH 进入）。
+func setHostnameByRuntime(id int, hostname string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found")
+	}
+	if c.Status != "running" {
+		return fmt.Errorf("container must be running to change hostname")
+	}
+	hostname = strings.TrimSpace(hostname)
+	if hostname == "" {
+		return fmt.Errorf("hostname is required")
+	}
+	if len(hostname) > 63 {
+		return fmt.Errorf("hostname too long (max 63 chars)")
+	}
+	if c.IsKVM() {
+		// virsh set-hostname 是较新 libvirt 才有的命令，先试试；不行再回退
+		if err := kvmSetHostnameVirsh(c.VirshName(), hostname); err == nil {
+			return nil
+		}
+		// 回退：SSH 进入 VM 改 hostname
+		return kvmManager.SetHostnameBySSH(id, hostname)
+	}
+	return lxcSetHostname(c.LxcName(), hostname)
+}
+
+// setVNCPasswordByRuntime 修改 KVM VM 的 VNC 密码（类比 Virtualizor Change VNC Password）。
+// LXC 不支持 VNC（用 WebSSH 代替），返回错误。
+// 运行中 VM 尝试热更新（virsh update-device），停机 VM 下次启动生效。
+func setVNCPasswordByRuntime(id int, password string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found")
+	}
+	if !c.IsKVM() {
+		return fmt.Errorf("VNC password is only applicable to KVM VMs; LXC containers use WebSSH")
+	}
+	if len(password) > 255 {
+		return fmt.Errorf("vnc password too long (max 255 chars)")
+	}
+	return kvmManager.SetVNCPassword(id, password)
+}
+
+func lxcSetHostname(lxcName, hostname string) error {
+	script := fmt.Sprintf(`
+set -e
+hostname %s
+echo %s > /etc/hostname
+sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t%s/' /etc/hosts 2>/dev/null || true
+`, hostname, hostname, hostname)
+	cmd := exec.Command("lxc-attach", "-n", lxcName, "--", "sh", "-c", script)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("lxc-attach hostname: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+func kvmSetHostnameVirsh(domain, hostname string) error {
+	cmd := exec.Command("virsh", "set-hostname", domain, hostname)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("virsh set-hostname: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }
 
 func assignIPv6ByRuntime(id int) (*config.Container, error) {

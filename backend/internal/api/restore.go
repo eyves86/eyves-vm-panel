@@ -22,6 +22,8 @@ func CaptureRuntimeRestoreState() {
 
 	// Mutate the in-memory graph under the write lock; the container statuses
 	// are also read by HTTP handlers and background scanners.
+	// 状态迁移收集：锁内记录、锁外触发钩子（webhook 投递要拿读锁）。
+	var statusChanges []containerStatusChange
 	config.AppConfigMu.Lock()
 	for i := range config.AppConfig.Containers {
 		c := &config.AppConfig.Containers[i]
@@ -36,6 +38,9 @@ func CaptureRuntimeRestoreState() {
 			changed = true
 		}
 		if status != "" && c.Status != status {
+			statusChanges = append(statusChanges, containerStatusChange{
+				id: c.ID, name: c.Name, old: c.Status, new: status,
+			})
 			c.Status = status
 			changed = true
 		}
@@ -45,6 +50,9 @@ func CaptureRuntimeRestoreState() {
 		if err := config.SaveConfig(); err != nil {
 			fmt.Printf("Warning: failed to save host boot restore state: %v\n", err)
 		}
+	}
+	for _, ch := range statusChanges {
+		config.FireContainerStatusHook(ch.id, ch.name, ch.old, ch.new)
 	}
 }
 

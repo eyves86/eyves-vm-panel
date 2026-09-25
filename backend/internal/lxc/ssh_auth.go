@@ -24,10 +24,54 @@ type SSHAccess struct {
 func HasSSHAuthOptions(cfg ContainerConfig) bool {
 	return strings.TrimSpace(cfg.SSHAuthMode) != "" ||
 		strings.TrimSpace(cfg.SSHPassword) != "" ||
-		strings.TrimSpace(cfg.SSHPublicKey) != ""
+		strings.TrimSpace(cfg.SSHPublicKey) != "" ||
+		len(cfg.SSHPublicKeys) > 0
+}
+
+// CollectAllSSHPublicKeys 聚合 ContainerConfig 里所有公钥源（SSHPublicKey 单 key +
+// SSHPublicKeys 多 key + SSHKeyIDs 已提前解析到 SSHPublicKeys），去重后返回规范化列表。
+// 返回的每一行都是合法的 OpenSSH authorized_keys 单行格式。
+func CollectAllSSHPublicKeys(cfg ContainerConfig) ([]string, error) {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(cfg.SSHPublicKeys)+1)
+	add := func(key string) error {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil
+		}
+		normalized, err := NormalizeSSHPublicKey(key)
+		if err != nil {
+			return err
+		}
+		if seen[normalized] {
+			return nil
+		}
+		seen[normalized] = true
+		out = append(out, normalized)
+		return nil
+	}
+	if err := add(cfg.SSHPublicKey); err != nil {
+		return nil, err
+	}
+	for _, k := range cfg.SSHPublicKeys {
+		if err := add(k); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// JoinSSHPublicKeys 把多公钥列表合并成 authorized_keys 多行字符串（\n 分隔）。
+func JoinSSHPublicKeys(keys []string) string {
+	return strings.Join(keys, "\n")
 }
 
 func ResolveCreateSSHAccess(cfg ContainerConfig) (SSHAccess, error) {
+	// 预处理：如果单 SSHPublicKey 为空但多 SSHPublicKeys 有值，用第一个 key 让
+	// resolveSSHAuthMode 能正确判断出 SSHAuthKey 模式；后续再聚合所有 key。
+	if strings.TrimSpace(cfg.SSHPublicKey) == "" && len(cfg.SSHPublicKeys) > 0 {
+		cfg.SSHPublicKey = cfg.SSHPublicKeys[0]
+	}
 	mode, err := resolveSSHAuthMode(cfg.SSHAuthMode, cfg.SSHPassword, cfg.SSHPublicKey, SSHAuthAutoPassword)
 	if err != nil {
 		return SSHAccess{}, err
@@ -49,12 +93,12 @@ func ResolveCreateSSHAccess(cfg ContainerConfig) (SSHAccess, error) {
 		}
 		return SSHAccess{Mode: mode, Password: password}, nil
 	case SSHAuthKey:
-		publicKey, err := NormalizeSSHPublicKey(cfg.SSHPublicKey)
+		allKeys, err := CollectAllSSHPublicKeys(cfg)
 		if err != nil {
 			return SSHAccess{}, err
 		}
-		if publicKey == "" {
-			return SSHAccess{}, fmt.Errorf("请填写 SSH 公钥")
+		if len(allKeys) == 0 {
+			return SSHAccess{}, fmt.Errorf("请填写 SSH 公钥或绑定 SSH Key")
 		}
 		password := strings.TrimSpace(cfg.SSHPassword)
 		if password == "" {
@@ -62,13 +106,16 @@ func ResolveCreateSSHAccess(cfg ContainerConfig) (SSHAccess, error) {
 		} else if err := ValidateCustomSSHPassword(password); err != nil {
 			return SSHAccess{}, err
 		}
-		return SSHAccess{Mode: mode, Password: password, PublicKey: publicKey}, nil
+		return SSHAccess{Mode: mode, Password: password, PublicKey: JoinSSHPublicKeys(allKeys)}, nil
 	default:
 		return SSHAccess{}, fmt.Errorf("不支持的 SSH 登录方式: %s", mode)
 	}
 }
 
 func ResolveReinstallSSHAccess(currentPassword string, cfg ContainerConfig) (SSHAccess, error) {
+	if strings.TrimSpace(cfg.SSHPublicKey) == "" && len(cfg.SSHPublicKeys) > 0 {
+		cfg.SSHPublicKey = cfg.SSHPublicKeys[0]
+	}
 	mode, err := resolveSSHAuthMode(cfg.SSHAuthMode, cfg.SSHPassword, cfg.SSHPublicKey, SSHAuthKeep)
 	if err != nil {
 		return SSHAccess{}, err
@@ -96,12 +143,12 @@ func ResolveReinstallSSHAccess(currentPassword string, cfg ContainerConfig) (SSH
 		}
 		return SSHAccess{Mode: mode, Password: password}, nil
 	case SSHAuthKey:
-		publicKey, err := NormalizeSSHPublicKey(cfg.SSHPublicKey)
+		allKeys, err := CollectAllSSHPublicKeys(cfg)
 		if err != nil {
 			return SSHAccess{}, err
 		}
-		if publicKey == "" {
-			return SSHAccess{}, fmt.Errorf("请填写 SSH 公钥")
+		if len(allKeys) == 0 {
+			return SSHAccess{}, fmt.Errorf("请填写 SSH 公钥或绑定 SSH Key")
 		}
 		password := strings.TrimSpace(cfg.SSHPassword)
 		if password != "" {
@@ -117,7 +164,7 @@ func ResolveReinstallSSHAccess(currentPassword string, cfg ContainerConfig) (SSH
 		if err := validateRootPassword(password); err != nil {
 			return SSHAccess{}, err
 		}
-		return SSHAccess{Mode: mode, Password: password, PublicKey: publicKey}, nil
+		return SSHAccess{Mode: mode, Password: password, PublicKey: JoinSSHPublicKeys(allKeys)}, nil
 	default:
 		return SSHAccess{}, fmt.Errorf("不支持的 SSH 登录方式: %s", mode)
 	}
