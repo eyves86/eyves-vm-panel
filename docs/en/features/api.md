@@ -570,7 +570,7 @@ Returns module metadata: name, display name, version, install path, file list, a
     "display_name": "EYVESCLOUD WHMCS Server Module",
     "version": "1.0.0",
     "install_path": "modules/servers/eyvescloud",
-    "panel_version": "1.6.2",
+    "panel_version": "1.7.0",
     "files": [{ "path": "eyvescloud.php", "size": 12345 }],
     "readme": "# EYVESCLOUD WHMCS Server Module ..."
   }
