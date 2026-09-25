@@ -601,6 +601,19 @@ Module capabilities:
 | Console | WebSSH, VNC (KVM) |
 | Auth | Put the panel API key in the server Access Hash (or password); requests carry `X-API-Key` and `Authorization: Bearer` |
 
+The API key used by the module needs the following scopes (or simply `*`):
+
+```text
+container:read / container:create / container:power / container:delete
+container:password / container:reinstall / container:resize / container:traffic / container:network
+image:read            # list available images/templates when reinstalling
+snapshot:read / snapshot:create / snapshot:restore / snapshot:delete
+terminal:ssh / terminal:vnc / task:read / dashboard:read
+admin:access   # only needed for ISO listing/attach in the KVM client area
+```
+
+When a scope is missing, the corresponding feature returns `INSUFFICIENT_SCOPE`; other features keep working.
+
 For configuration and troubleshooting details, see the module's `README.md` (also returned by the metadata endpoint).
 
 ## Related Documentation

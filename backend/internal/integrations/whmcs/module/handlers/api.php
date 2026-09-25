@@ -131,9 +131,9 @@ if ($selfHost !== '' && $originHost !== '' && $originHost !== $selfHost) {
 $input = eyvescloud_json_input();
 
 $serviceId = 0;
-// 服务 ID 优先取专用键；把 'id' 放到最后，保留给资源级操作（快照/备份）使用，
-// 避免快照 ID 覆盖服务 ID 导致取错服务。
-foreach (['serviceid', 'service_id', 'hostid', 'id'] as $key) {
+// 服务 ID 只从专用键读取：'id' 保留给资源级操作（快照/备份）使用，
+// 若把 'id' 当作服务 ID 回退，快照 ID 可能覆盖服务 ID 从而取错服务。
+foreach (['serviceid', 'service_id', 'hostid'] as $key) {
     if (!empty($input[$key]) && is_numeric($input[$key])) {
         $serviceId = (int)$input[$key];
         break;

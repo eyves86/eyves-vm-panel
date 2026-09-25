@@ -601,6 +601,19 @@ curl -H "Authorization: Bearer $TOKEN" \
 | 控制台 | WebSSH、VNC（KVM） |
 | 认证 | 服务器 Access Hash（或密码）填写面板 API Key，请求携带 `X-API-Key` 与 `Authorization: Bearer` |
 
+模块使用的 API Key 需要授予以下 scope（也可直接授予 `*`）：
+
+```text
+container:read / container:create / container:power / container:delete
+container:password / container:reinstall / container:resize / container:traffic / container:network
+image:read            # 重装系统时读取可用镜像/模板列表
+snapshot:read / snapshot:create / snapshot:restore / snapshot:delete
+terminal:ssh / terminal:vnc / task:read / dashboard:read
+admin:access   # 仅 KVM 客户区的 ISO 列表与挂载需要
+```
+
+缺少某个 scope 时，对应功能返回 `INSUFFICIENT_SCOPE`，其余功能不受影响。
+
 详细配置与排障见模块内 `README.md`（随元信息接口一并返回）。
 
 ## 相关文档

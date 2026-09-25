@@ -63,6 +63,34 @@ Authorization: Bearer eyvescloud_sk_xxxx
 Content-Type: application/json
 ```
 
+### API Key 权限范围（scope）
+
+模块会调用面板的容器生命周期、网络、快照、终端等接口，因此该 API Key 必须授予以下 scope（在面板后台创建 API Key 时勾选）：
+
+```text
+container:read          查看实例、用量、历史指标
+container:create        开通实例
+container:power         开关机 / 重启 / 挂起 / 解除挂起
+container:delete        删除实例
+container:password      重置 SSH 密码
+container:reinstall     重装系统
+container:resize        资源限制与到期时间
+container:traffic       流量限制与流量重置
+container:network       NAT 端口映射、防火墙、随机端口
+image:read              重装系统时读取可用镜像/模板列表
+snapshot:read           查看快照与备份
+snapshot:create         创建快照与备份
+snapshot:restore        还原快照与备份
+snapshot:delete         删除快照与备份
+terminal:ssh            WebSSH 票据
+terminal:vnc            VNC 票据
+task:read               轮询异步开通任务
+dashboard:read          测试连接
+admin:access            ISO 列表与挂载（仅 KVM 客户区需要）
+```
+
+也可以直接授予 `*`（全部权限）。若缺少某个 scope，对应功能会返回「Insufficient API key scope」，其余功能不受影响。`admin:access` 属于管理类 scope，只能由管理员会话授予。
+
 ## 产品配置项
 
 配置项顺序与 `eyvescloud_ConfigOptions()` 中的定义一致：
@@ -102,8 +130,10 @@ Content-Type: application/json
 | --- | --- |
 | `TestConnection` | 调用 `GET /api/v1/dashboard` 测试连通性 |
 | `CreateAccount` | 创建容器（异步任务，返回前有界轮询就绪并写回主机信息） |
-| `SuspendAccount` / `Off` | 停止容器 |
-| `UnsuspendAccount` / `On` | 启动容器 |
+| `SuspendAccount` | 调用 `POST /api/v1/containers/{name}/suspend` 挂起（欠费停机，同时阻断开机/重启/控制台） |
+| `UnsuspendAccount` | 调用 `POST /api/v1/containers/{name}/unsuspend` 解除挂起（不会自动开机） |
+| `Off` | 调用 `POST /api/v1/containers/{name}/stop` 关机 |
+| `On` | 调用 `POST /api/v1/containers/{name}/start` 开机 |
 | `Reboot` | 重启容器 |
 | `TerminateAccount` | 删除容器 |
 | `ChangePassword` | 重置 SSH 密码并写回 WHMCS |
@@ -121,7 +151,7 @@ Content-Type: application/json
 | `dedicatedip` | NAT 外网 IP（优先使用 API 公网字段，否则使用服务器 IP） |
 | `username` | 固定写入 `root` |
 | `password` | 面板返回的 SSH 密码（经 WHMCS 加密函数存储） |
-| `domainstatus` | 面板状态为 `running` 时为 `Active`，否则为 `Suspended` |
+| `domainstatus` | 面板标记 `suspended` / `policy_blocked`（或状态为 `suspended`/`blocked`/`disabled`）时为 `Suspended`，否则为 `Active` |
 
 > WHMCS 主机表没有端口字段，因此模块不会写回 SSH 端口；SSH 端口在客户区「实例信息」中展示。
 
@@ -162,18 +192,22 @@ VNC 控制台（仅 KVM 产品展示）
 - WebSSH 页面：`handlers/webssh.php`，通过 WebSocket `/api/ssh` 连接。
 - WebVNC 页面：`handlers/vnc.php`，通过 WebSocket `/api/vnc` 连接，使用 noVNC（CDN 动态加载）。
 
-两个控制台页面在服务端做了目标校验，只允许转发到可信主机，避免被当作任意内网/公网目标的反向代理（SSRF）。可信主机列表为「当前请求域名」加上环境变量：
+两个控制台页面在服务端做了目标校验，只允许转发到可信主机，避免被当作任意内网/公网目标的反向代理（SSRF）。可信主机列表为「当前请求域名」+「该服务所属面板域名（仅当请求者已登录且拥有该服务或为管理员时加入）」+ 环境变量：
 
 ```text
 EYVESCLOUD_WS_ALLOW=panel.example.com,10.0.0.5
 ```
 
-若面板地址不在当前站点域名下，请把面板主机名加入该环境变量，否则控制台会返回 403。
+面板地址与计费站点不同域名时，正常情况下无需配置该变量：模块会从 WHMCS 的服务器配置里解析面板主机并自动放行。仅在面板主机与服务器配置不一致（例如经由额外反向代理域名访问）时，才需要把额外的面板主机名加入该环境变量，否则控制台会返回 403。
+
+> 控制台页面不会在未登录或无权访问该服务时返回面板主机，因此面板域名不会通过该页面泄露给匿名访客。
 
 ## 使用的面板 API
 
 ```text
 GET    /api/v1/dashboard
+GET    /api/v1/tasks
+GET    /api/v1/routing
 GET    /api/v1/containers
 POST   /api/v1/containers
 GET    /api/v1/containers/{id|uuid|name}
@@ -181,6 +215,8 @@ DELETE /api/v1/containers/{name}/delete
 POST   /api/v1/containers/{name}/start
 POST   /api/v1/containers/{name}/stop
 POST   /api/v1/containers/{name}/restart
+POST   /api/v1/containers/{name}/suspend
+POST   /api/v1/containers/{name}/unsuspend
 POST   /api/v1/containers/{name}/reset-password
 PUT    /api/v1/containers/{name}/resource-limit
 PUT    /api/v1/containers/{name}/traffic-limit
@@ -242,7 +278,8 @@ func        动作名
 | 开通成功但状态一直非 Active | 面板开通为异步任务，稍后在后台点击「同步状态」 |
 | 客户区提示「登录状态已失效」 | WHMCS 会话过期，刷新页面重新登录 |
 | 客户区提示「无权操作该服务」 | 非本人服务或管理员未登录 |
-| 控制台返回 403 | 面板主机名不在可信列表，配置 `EYVESCLOUD_WS_ALLOW` |
+| 控制台返回 403 | 面板主机名不在可信列表：确认已登录且服务属于当前账号；若面板经额外域名访问，把该主机名加入 `EYVESCLOUD_WS_ALLOW` |
+| 客户区提示 `Insufficient API key scope` | API Key 缺少对应 scope，按上文 scope 清单补齐 |
 | VNC 提示无法加载 noVNC | 浏览器无法访问 CDN，检查网络策略 |
 
 调试日志默认关闭。如需开启，在 `helpers.php` 之前定义常量：

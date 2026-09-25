@@ -39,6 +39,9 @@ function eyvescloud_MetaData()
 /**
  * 产品配置项。顺序即 WHMCS configoption1..24 的映射顺序，与 helpers.php 的
  * eyvescloud_option_definitions() 保持同源，避免两处顺序不一致导致取值错位。
+ *
+ * 返回值必须为「关联数组」：WHMCS 9.0 规定外层键 = 配置项名称（用于内部索引），
+ * 字段显示名放在 FriendlyName 中。这里直接用内部键（virtualization 等）作外层键。
  */
 function eyvescloud_ConfigOptions()
 {
@@ -66,7 +69,7 @@ function eyvescloud_ConfigOptions()
             $option['Cols'] = (int)$definition['cols'];
         }
 
-        $options[] = $option;
+        $options[$definition['key']] = $option;
     }
     return $options;
 }
