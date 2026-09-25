@@ -377,6 +377,10 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:read") {
 			return
 		}
+		// 跨节点容器：实时用量由 agent 本机计算并返回
+		if routeToAgent("usage", nil) {
+			return
+		}
 		getUsage(w, r, id)
 	case action == "history" && r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {

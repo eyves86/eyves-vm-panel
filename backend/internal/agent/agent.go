@@ -16,8 +16,11 @@ import (
 	"syscall"
 	"time"
 
+	"eyvescloud/internal/api"
 	"eyvescloud/internal/cli"
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/kvm"
+	"eyvescloud/internal/lxc"
 	"eyvescloud/internal/server"
 	"eyvescloud/internal/version"
 )
@@ -86,6 +89,11 @@ func Run(args []string) {
 	fmt.Printf("EyvesCloud Agent 启动完成，主控: %s，节点: %s\n", ac.Controller, ac.Name)
 
 	go heartbeatLoop(ac)
+
+	// 与主控对称的本机运维循环：被控节点上的容器同样需要到期停机、
+	// 流量统计、计划快照与网络自愈。主控的 expiry scanner 只扫主控本机
+	// config，跨节点容器的生命周期治理必须在 agent 本机执行。
+	startLocalRuntimeLoops()
 
 	// 被控节点自动更新：可选。仅在非交互环境下、且以分钟级间隔启用。
 	if autoUpdateMinutes() > 0 {
@@ -197,6 +205,38 @@ func heartbeatLoop(ac *agentConfig) {
 	}
 }
 
+// startLocalRuntimeLoops 启动被控节点的本机运维循环，与主控 server 模式
+// （main.go）保持对称。缺了这些，agent 上的容器不会到期停机、流量不累计、
+// 计划快照不执行、桥接网络故障不自愈。
+func startLocalRuntimeLoops() {
+	manager := lxc.NewManager()
+	kvmManager := kvm.NewManager()
+
+	// 到期/超流量停机扫描（每 30s）
+	manager.StartExpiryScanner()
+	kvmManager.StartExpiryScanner()
+
+	// 用量采集（CPU/网络/磁盘速率，每 5s；流量累计写入本机 config）
+	manager.StartUsageMonitor()
+	kvmManager.StartUsageMonitor()
+	kvmManager.StartNetworkSyncMonitor()
+	kvmManager.StartIPv6Guard()
+
+	// 计划快照
+	manager.StartSnapshotScheduler()
+	kvmManager.StartSnapshotScheduler()
+
+	// 网络自愈：确保 LXC/KVM 桥就绪（网关 IP + DHCP + 转发/NAT）。
+	lxc.EnsureForwardRules("lxcbr0")
+	lxc.EnsureForwardRules("virbr0")
+	if err := lxc.EnsureLXCBridgeNetwork(); err != nil {
+		fmt.Printf("Warning: agent LXC bridge self-healing incomplete: %v\n", err)
+	}
+	if err := kvm.EnsureKVMDefaultNetwork(); err != nil {
+		fmt.Printf("Warning: agent KVM default network self-healing incomplete: %v\n", err)
+	}
+}
+
 func sendHeartbeat(ac *agentConfig) {
 	payload := collectNodeStatus()
 	payload["version"] = version.Current()
@@ -267,7 +307,8 @@ func collectNodeStatus() map[string]interface{} {
 	if config.AppConfig != nil {
 		config.AppConfigMu.RLock()
 		status["container_count"] = len(config.AppConfig.Containers)
-		// 容器摘要列表（供主控聚合展示）：只传轻量字段，完整详情由主控按需拉取。
+		// 容器摘要列表（供主控聚合展示）：只传轻量字段 + 最新指标 + 流量累计，
+		// 完整详情由主控按需拉取。
 		type containerSummary struct {
 			ID             int    `json:"id"`
 			UUID           string `json:"uuid"`
@@ -278,19 +319,65 @@ func collectNodeStatus() map[string]interface{} {
 			VCPU           float64 `json:"vcpu"`
 			RAMMB          int    `json:"ram_mb"`
 			DiskGB         float64 `json:"disk_gb"`
+			ExpiresAt      string `json:"expires_at,omitempty"`
+			TrafficUsedRX  int64  `json:"traffic_used_rx,omitempty"`
+			TrafficUsedTX  int64  `json:"traffic_used_tx,omitempty"`
+			// 最新实时指标（agent 本机 metric history 的尾采样点）
+			CPU       float64 `json:"cpu,omitempty"`
+			Memory    float64 `json:"memory,omitempty"`
+			NetworkRx float64 `json:"network_rx,omitempty"`
+			NetworkTx float64 `json:"network_tx,omitempty"`
+			DiskRead  float64 `json:"disk_read,omitempty"`
+			DiskWrite float64 `json:"disk_write,omitempty"`
+			MetricTS  int64   `json:"metric_ts,omitempty"`
 		}
 		summaries := make([]containerSummary, 0, len(config.AppConfig.Containers))
 		for _, c := range config.AppConfig.Containers {
-			summaries = append(summaries, containerSummary{
+			s := containerSummary{
 				ID: c.ID, UUID: c.UUID, Name: c.Name, Status: c.Status,
 				Virtualization: c.Virtualization, Suspended: c.Suspended,
 				VCPU: c.VCPU, RAMMB: c.RAMMB, DiskGB: c.DiskGB,
-			})
+				ExpiresAt: c.ExpiresAt, TrafficUsedRX: c.TrafficUsedRX,
+				TrafficUsedTX: c.TrafficUsedTX,
+			}
+			if p, ok := latestLocalContainerMetric(c.UUID); ok {
+				s.CPU, s.Memory = p.CPU, p.Memory
+				s.NetworkRx, s.NetworkTx = p.NetworkRx, p.NetworkTx
+				s.DiskRead, s.DiskWrite = p.DiskRead, p.DiskWrite
+				s.MetricTS = p.TS
+			}
+			summaries = append(summaries, s)
 		}
 		status["containers"] = summaries
 		config.AppConfigMu.RUnlock()
 	}
 	return status
+}
+
+// localMetricPoint 是 agent 本机内存中的最新指标采样点（与 api 包的
+// ContainerMetricPoint 结构对齐，避免 agent 直接依赖 api 包）。
+type localMetricPoint struct {
+	TS        int64
+	CPU       float64
+	Memory    float64
+	NetworkRx float64
+	NetworkTx float64
+	DiskRead  float64
+	DiskWrite float64
+}
+
+// latestLocalContainerMetric 读取 agent 本机指标采样的最新点（由 server.Run
+// 启动的 metric sampler 维护），心跳时随容器摘要上报主控。
+func latestLocalContainerMetric(uuid string) (localMetricPoint, bool) {
+	p, ok := api.LatestContainerMetricByUUID(uuid)
+	if !ok {
+		return localMetricPoint{}, false
+	}
+	return localMetricPoint{
+		TS: p.TS, CPU: p.CPU, Memory: p.Memory,
+		NetworkRx: p.NetworkRx, NetworkTx: p.NetworkTx,
+		DiskRead: p.DiskRead, DiskWrite: p.DiskWrite,
+	}, true
 }
 
 func readMemInfo() (totalKB, availableKB int64, ok bool) {

@@ -295,6 +295,15 @@ func pruneContainerMetricHistory() {
 	}
 }
 
+// LatestContainerMetricByUUID 返回指定容器最新的内存指标采样点（跨包导出，
+// 供 agent 心跳读取本机指标上报主控）。
+func LatestContainerMetricByUUID(uuid string) (ContainerMetricPoint, bool) {
+	if uuid == "" {
+		return ContainerMetricPoint{}, false
+	}
+	return latestContainerMetric("uuid:" + uuid)
+}
+
 func containerMetricKey(c config.Container) string {
 	if c.UUID != "" {
 		return "uuid:" + c.UUID

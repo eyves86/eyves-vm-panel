@@ -387,20 +387,40 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 
 // heartbeatContainerSummary 是 agent 心跳上报的轻量容器摘要。
 type heartbeatContainerSummary struct {
-	ID             int     `json:"id"`
-	UUID           string  `json:"uuid"`
-	Name           string  `json:"name"`
-	Status         string  `json:"status"`
-	Virtualization string  `json:"virtualization"`
-	Suspended      bool    `json:"suspended,omitempty"`
+	ID             int    `json:"id"`
+	UUID           string `json:"uuid"`
+	Name           string `json:"name"`
+	Status         string `json:"status"`
+	Virtualization string `json:"virtualization"`
+	Suspended      bool   `json:"suspended,omitempty"`
 	VCPU           float64 `json:"vcpu"`
-	RAMMB          int     `json:"ram_mb"`
+	RAMMB          int    `json:"ram_mb"`
 	DiskGB         float64 `json:"disk_gb"`
+	ExpiresAt      string `json:"expires_at,omitempty"`
+	TrafficUsedRX  int64  `json:"traffic_used_rx,omitempty"`
+	TrafficUsedTX  int64  `json:"traffic_used_tx,omitempty"`
+	TrafficLimit   int64  `json:"traffic_limit,omitempty"`
+	// 最新实时指标（agent 本机 metric 尾采样点）
+	CPU       float64 `json:"cpu,omitempty"`
+	Memory    float64 `json:"memory,omitempty"`
+	NetworkRx float64 `json:"network_rx,omitempty"`
+	NetworkTx float64 `json:"network_tx,omitempty"`
+	DiskRead  float64 `json:"disk_read,omitempty"`
+	DiskWrite float64 `json:"disk_write,omitempty"`
+	MetricTS  int64   `json:"metric_ts,omitempty"`
 }
 
 // syncAgentContainers 将 agent 心跳上报的容器摘要增量合并到主控容器列表。
 // 策略：按 UUID 匹配（ID 在不同节点可能重复，UUID 全局唯一）。
 func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
+	// 指标写入主控 metric history（跨节点容器详情/监控页数据源）
+	for _, s := range summaries {
+		if s.UUID == "" || s.MetricTS == 0 {
+			continue
+		}
+		appendAgentMetricPoint(s)
+	}
+
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		// 1) 标记该节点现有容器为待清理
 		orphaned := make(map[string]bool) // UUID -> true
@@ -427,6 +447,9 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 					cfg.Containers[i].VCPU = s.VCPU
 					cfg.Containers[i].RAMMB = s.RAMMB
 					cfg.Containers[i].DiskGB = s.DiskGB
+					cfg.Containers[i].ExpiresAt = s.ExpiresAt
+					cfg.Containers[i].TrafficUsedRX = s.TrafficUsedRX
+					cfg.Containers[i].TrafficUsedTX = s.TrafficUsedTX
 					orphaned[s.UUID] = false
 					found = true
 					break
@@ -439,6 +462,8 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 					Status: s.Status, Virtualization: s.Virtualization,
 					Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
 					DiskGB: s.DiskGB, NodeID: nodeID,
+					ExpiresAt: s.ExpiresAt, TrafficUsedRX: s.TrafficUsedRX,
+					TrafficUsedTX: s.TrafficUsedTX,
 				}
 				cfg.Containers = append(cfg.Containers, newC)
 			}
@@ -452,6 +477,36 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 		}
 	})
 	_ = config.SaveConfig()
+}
+
+// appendAgentMetricPoint 把 agent 心跳上报的指标点写入主控 metric history，
+// 让跨节点容器在监控页/详情页与本机容器数据形态一致。
+func appendAgentMetricPoint(s heartbeatContainerSummary) {
+	key := "uuid:" + s.UUID
+	point := ContainerMetricPoint{
+		TS: s.MetricTS, CPU: s.CPU, Memory: s.Memory,
+		NetworkRx: s.NetworkRx, NetworkTx: s.NetworkTx,
+		DiskRead: s.DiskRead, DiskWrite: s.DiskWrite,
+	}
+	containerMetricMu.Lock()
+	history := containerMetricHistory[key]
+	// 去重：agent 心跳 10s 一次，指标采样 30s 一次，相同 TS 不重复追加
+	if len(history) > 0 && history[len(history)-1].TS == point.TS {
+		containerMetricMu.Unlock()
+		return
+	}
+	// 与本机采样一致的保留窗口裁剪
+	cutoff := time.Now().Add(-hostMetricRetention).UnixMilli()
+	keepFrom := 0
+	for keepFrom < len(history) && history[keepFrom].TS < cutoff {
+		keepFrom++
+	}
+	if keepFrom > 0 {
+		copy(history, history[keepFrom:])
+		history = history[:len(history)-keepFrom]
+	}
+	containerMetricHistory[key] = append(history, point)
+	containerMetricMu.Unlock()
 }
 
 // handleNodeInstallScript 生成被控一键安装脚本。

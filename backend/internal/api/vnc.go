@@ -130,6 +130,16 @@ func HandleVNCProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 跨节点容器：级联到所属 agent，主控做透明 WS 中继。
+	if node, ok := nodeForContainer(c); ok {
+		relayTerminalToNode(w, r, *c, node, "vnc", containerName, webVNCResponseProtocol(r))
+		return
+	}
+	if c.NodeID != "" {
+		http.Error(w, "容器所属节点不存在或未配置地址: "+c.NodeID, http.StatusBadGateway)
+		return
+	}
+
 	vncPort, err := kvmManager.RefreshVNCPort(c.ID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("VNC display is not available: %v", err), http.StatusBadRequest)
@@ -226,10 +236,17 @@ func consumeWebVNCTicket(ticket, containerName string, r *http.Request) (webVNCT
 		return webVNCTicket{}, false
 	}
 	delete(webVNCTickets.items, ticket)
-	return item, item.ContainerName == containerName &&
-		item.ClientIP == clientIP(r) &&
-		item.UserAgent == r.UserAgent() &&
-		now.Before(item.ExpiresAt)
+	if item.ContainerName != containerName || !now.Before(item.ExpiresAt) {
+		return webVNCTicket{}, false
+	}
+	// 空绑定字段 = agent 级联票据（仅 /api/agent/vnc-ticket 可发行，node token 保护）
+	if item.ClientIP != "" && item.ClientIP != clientIP(r) {
+		return webVNCTicket{}, false
+	}
+	if item.UserAgent != "" && item.UserAgent != r.UserAgent() {
+		return webVNCTicket{}, false
+	}
+	return item, true
 }
 
 func cleanupExpiredWebVNCTicketsLocked(now time.Time) {

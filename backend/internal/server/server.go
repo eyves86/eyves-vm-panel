@@ -226,6 +226,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent/images", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentImages)))
 	mux.HandleFunc("/api/agent/images/sync", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentImageSync)))
 	mux.HandleFunc("/api/agent/node-backup", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentNodeBackup)))
+	mux.HandleFunc("/api/agent/ssh-ticket", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentSSHTicket)))
+	mux.HandleFunc("/api/agent/vnc-ticket", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentVNCTicket)))
 
 	// Versioned external API routes
 	mux.HandleFunc("/api/v1/dashboard", corsMiddleware(api.AuthMiddleware(api.HandleDashboard)))

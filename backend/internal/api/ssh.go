@@ -129,6 +129,15 @@ func HandleWebSSH(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "container is not running", http.StatusBadRequest)
 		return
 	}
+	// 跨节点容器：级联到所属 agent，主控做透明 WS 中继。
+	if node, ok := nodeForContainer(c); ok {
+		relayTerminalToNode(w, r, *c, node, "ssh", containerName, webSSHTicketProtocol(r))
+		return
+	}
+	if c.NodeID != "" {
+		http.Error(w, "容器所属节点不存在或未配置地址: "+c.NodeID, http.StatusBadGateway)
+		return
+	}
 	// 容器内网 IP 不可用(空/link-local)时无法出网，ssh 也无法直连。
 	// 这里先尝试从运行环境实时刷新 IP；若仍不可用，LXC 触发一次 DHCP 修复，
 	// 让 eth0 从 lxcbr0 拿到正常网段地址，为后续 sshd 的安装提供外网连接。
@@ -366,10 +375,18 @@ func consumeWebSSHTicket(ticket, containerName string, r *http.Request) (webSSHT
 		return webSSHTicket{}, false
 	}
 	delete(webSSHTickets.items, ticket)
-	return item, item.ContainerName == containerName &&
-		item.ClientIP == clientIP(r) &&
-		item.UserAgent == r.UserAgent() &&
-		now.Before(item.ExpiresAt)
+	if item.ContainerName != containerName || !now.Before(item.ExpiresAt) {
+		return webSSHTicket{}, false
+	}
+	// 空绑定字段 = agent 级联票据（主控代理拨号，无法绑定浏览器指纹）。
+	// 该类票据只能通过 node token 保护的 /api/agent/ssh-ticket 发行。
+	if item.ClientIP != "" && item.ClientIP != clientIP(r) {
+		return webSSHTicket{}, false
+	}
+	if item.UserAgent != "" && item.UserAgent != r.UserAgent() {
+		return webSSHTicket{}, false
+	}
+	return item, true
 }
 
 func cleanupExpiredWebSSHTicketsLocked(now time.Time) {

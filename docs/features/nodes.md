@@ -62,17 +62,37 @@ eyvescloud agent \
 - 版本号、操作系统。
 - CPU 核数、内存用量、磁盘用量。
 - 容器数量。
+- **容器清单增量同步**：心跳携带被控全部容器的轻量摘要（UUID/名称/状态/资源/到期时间/流量累计/实时指标），主控按 UUID 增量合并——被控新建的容器自动出现在主控容器列表，被控已删除的容器标记 `orphaned`，实时指标（CPU/内存/网络/磁盘速率）写入主控指标历史，监控页与容器详情页跨节点数据与本机一致。
 
-超过心跳间隔未上报的节点会显示为「离线」。
+超过心跳间隔未上报的节点会显示为「离线」。主控另有主动探活循环（每 30 秒 HTTP 探测，连续 3 次失败判定离线并告警）。
 
 ## 查看与操作被控容器
 
 节点状态为「在线」且配置了面板地址时，主控可以：
 
-- 查看被控的容器列表（名称、模板、资源、状态、IP）。
-- 对被控容器执行开机、关机、重启。
+- 查看被控的容器列表（名称、模板、资源、状态、IP）——心跳同步后与主控本机容器在统一列表展示，并显示来源节点。
+- 对被控容器执行**全生命周期操作**：开机、关机、重启、删除、重装系统、挂起/恢复、重置密码、磁盘扩容、快照创建/恢复/删除、实时用量查询。
 
 这些操作由主控以被控节点 token 代理调用被控的 `/api/agent/*` 接口完成，被控会校验 token，未接入的节点无法被访问。
+
+### 控制台级联（WebSSH / VNC）
+
+跨节点容器同样支持 Web 终端与 VNC 控制台：主控作为透明 WebSocket 中继（浏览器 ↔ 主控 ↔ 被控），浏览器侧票据与子协议流程与本机容器完全一致，前端无需任何改动。链路：
+
+```text
+浏览器 ──WS── 主控 /api/ssh|/api/vnc ──WS── 被控 /api/ssh|/api/vnc（本机容器）
+```
+
+主控先凭节点 token 向被控申请一次性控制台票据（`/api/agent/{ssh,vnc}-ticket`，60 秒有效），再以 WS 客户端身份拨被控。挂起状态的容器在票据发行与连接两层均被拦截。
+
+### 被控本机自治
+
+被控 Agent 与主控运行对称的本机运维循环，即使与主控断连也能自治：
+
+- 到期/超流量停机扫描（每 30 秒）。
+- 用量采集（CPU/网络/磁盘速率，每 5 秒）与流量累计。
+- 计划快照调度。
+- LXC/KVM 桥接网络自愈（网关 IP + DHCP + 转发/NAT）。
 
 ### 在主控开通被控容器（发机）
 
@@ -123,4 +143,22 @@ systemctl disable --now eyvescloud-agent
 | POST | `/api/nodes/{id}/images/sync` | 下发主控镜像清单并触发被控同步 |
 | POST | `/api/nodes/{id}/backup` | 节点级冷备份（被控全量容器备份） |
 | GET | `/api/agent/containers` | 被控容器列表（主控 token） |
-| POST | `/api/agent/containers/{cid}/{action}` | 被控容器操作（主控 token） |
+| POST | `/api/agent/containers/{cid}/{action}` | 被控容器操作（主控 token）。action：`start`/`stop`/`restart`/`destroy`/`reinstall`/`suspend`/`unsuspend`/`reset-password`/`usage`/`resize`/`snapshot`/`snapshots/delete`/`snapshots/restore` |
+| POST | `/api/agent/ssh-ticket` | 发行被控 WebSSH 一次性票据（主控 token，级联拨号用） |
+| POST | `/api/agent/vnc-ticket` | 发行被控 VNC 一次性票据（主控 token，级联拨号用） |
+
+### 主控统一容器 API（跨节点自动路由）
+
+对容器的标准操作无需感知节点位置——`Container.node_id` 非空时主控自动转发到所属被控：
+
+| 方法 | 路径 | 跨节点行为 |
+| --- | --- | --- |
+| POST | `/api/containers/{id}/start|stop|restart` | 转发被控执行 |
+| POST | `/api/containers/{id}/reinstall` | 转发被控执行 |
+| POST | `/api/containers/{id}/suspend|unsuspend` | 转发被控执行 |
+| DELETE | `/api/containers/{id}` | 转发被控销毁 |
+| POST | `/api/containers/{id}/reset-password` | 转发被控执行 |
+| GET | `/api/containers/{id}/usage` | 被控本机计算实时用量并返回 |
+| GET | `/api/containers/{id}/history` | 心跳聚合的指标历史（主控本地） |
+| GET | `/api/containers/{id}/traffic` | 心跳同步的流量累计（主控本地） |
+| WS | `/api/ssh`、`/api/vnc` | 主控透明中继到被控控制台 |
