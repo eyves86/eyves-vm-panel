@@ -1403,6 +1403,8 @@ type EyvescloudConfig struct {
 	InstanceBackupSettings InstanceBackupSettings `json:"instance_backup_settings"`
 	Backups              []BackupRecord         `json:"backups,omitempty"`
 	InstanceBackups      []InstanceBackup       `json:"instance_backups,omitempty"`
+	// BackupPlans 定时备份计划（每计划独立 cron / 目标 / 保留份数）。
+	BackupPlans []BackupPlan `json:"backup_plans,omitempty"`
 	APIRateLimit         APIRateLimitConfig     `json:"api_rate_limit"`
 	SMTPSettings         SMTPSettings           `json:"smtp_settings"`
 	Tenants              []Tenant               `json:"tenants,omitempty"`

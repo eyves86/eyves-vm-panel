@@ -6,12 +6,14 @@ import {
   ChevronRight,
   Code2,
   Cpu,
+  CalendarClock,
   Camera,
   Building2,
   Database,
   Globe,
   HardDrive,
   LayoutDashboard,
+  ListChecks,
   LogOut,
   Moon,
   Network,
@@ -43,7 +45,7 @@ import AppIcon from './AppIcon'
 // 侧边栏按「业务域」分组，而不是把所有入口平铺成一长条：
 //   容器/监控/节点/迁移/策略 → 计算；存储/镜像/ISO/快照 → 存储与镜像；
 //   路由/IP组/区域 → 网络；安全告警/操作日志 → 安全与审计；
-//   子用户/租户/管理员 → 用户与租户；宿主机/指标/API/设置 → 系统与集成。
+//   子用户/租户/管理员 → 用户与租户；任务中心/宿主机/指标/API/设置 → 系统与集成。
 // 每个分组可折叠，默认只展开当前页面所在分组，降低一次性认知负担。
 interface NavItem {
   path: string
@@ -87,6 +89,7 @@ const NAV_GROUPS: NavGroup[] = [
       { path: '/images', label: '镜像管理', icon: Package, match: startsWithSegment('/images') },
       { path: '/isos', label: 'ISO 镜像', icon: Disc3, match: startsWithSegment('/isos') },
       { path: '/snapshots', label: '快照管理', icon: Camera, match: startsWithSegment('/snapshots') },
+      { path: '/backup-plans', label: '备份计划', icon: CalendarClock, match: startsWithSegment('/backup-plans') },
     ],
   },
   {
@@ -119,6 +122,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: 'system',
     label: '系统与集成',
     items: [
+      { path: '/tasks', label: '任务中心', icon: ListChecks, match: startsWithSegment('/tasks') },
       { path: '/host-report', label: '宿主机信息', icon: Cpu, match: startsWithSegment('/host-report') },
       { path: '/metric-retention', label: '指标留存', icon: Database, match: startsWithSegment('/metric-retention') },
       { path: '/api-integration', label: 'API 集成', icon: Code2, match: startsWithSegment('/api-integration') },

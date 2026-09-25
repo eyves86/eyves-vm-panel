@@ -949,6 +949,16 @@ func SubUserMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			next(w, r)
 			return
 		}
+		// 任务历史与单任务详情允许子用户 GET 访问：
+		// 列表在 HandleTaskHistory 内按 actor 过滤，详情在 HandleTaskDetail 内按容器可见性二次校验，
+		// 因此这里只放行形状匹配的读请求，避免历史/详情对子用户完全不可见。
+		if r.Method == http.MethodGet && strings.HasPrefix(path, tasksPath+"/") {
+			rest := strings.Trim(path[len(tasksPath)+1:], "/")
+			if rest == "history" || (rest != "" && !strings.Contains(rest, "/")) {
+				next(w, r)
+				return
+			}
+		}
 
 		imagesEnabledPath := "/api/images/enabled"
 		if strings.HasPrefix(path, "/api/v1/") {

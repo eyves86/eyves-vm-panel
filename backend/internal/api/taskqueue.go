@@ -35,6 +35,7 @@ type Task struct {
 	StageDetail   string              `json:"stage_detail,omitempty"`
 	Percent       int                 `json:"percent"`
 	CreatedAt     string              `json:"created_at"`
+	StartedAt     string              `json:"started_at,omitempty"` // 任务开始执行的时间（RFC3339）
 	TemplateID    string              `json:"template_id,omitempty"`
 	Config        lxc.ContainerConfig `json:"config,omitempty"`
 	Name          string              `json:"name,omitempty"`
@@ -334,7 +335,6 @@ func (q *TaskQueue) opDispatcher() {
 
 func (q *TaskQueue) takeNextTask(create bool) *Task {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	cond := q.opCond
 	if create {
 		cond = q.createCond
@@ -357,6 +357,8 @@ func (q *TaskQueue) takeNextTask(create bool) *Task {
 				task.Error = ""
 				task.Stage = "preparing"
 				task.StageDetail = "准备初始化环境"
+				// 记录任务实际开始执行的时间，供历史留档计算耗时。
+				task.StartedAt = time.Now().UTC().Format(time.RFC3339)
 				if percent, ok := taskStagePercent(task.Config.Virtualization, "preparing"); ok && percent > task.Percent {
 					task.Percent = percent
 				}
@@ -364,6 +366,10 @@ func (q *TaskQueue) takeNextTask(create bool) *Task {
 				q.activeTargets[task.activeKey] = true
 				q.activeTasks++
 				q.persistTasks()
+				taskID := task.ID
+				q.mu.Unlock()
+				// 锁外落库：追加"任务开始执行"日志，避免持锁做 IO 造成阻塞。
+				_ = config.AppendTaskLog(taskID, "INFO", "任务开始执行")
 				return task
 			}
 		}
@@ -424,7 +430,60 @@ func (q *TaskQueue) finishTask(task *Task, status string, taskErr error) {
 	}
 	q.persistTasks()
 	q.signalDispatchers()
+	// 在锁内拷贝落库所需数据，锁外再写历史/日志，避免持锁做 IO 造成阻塞。
+	entry := config.TaskHistoryEntry{
+		ID:            task.ID,
+		Type:          string(task.Type),
+		ContainerID:   task.ContainerID,
+		ContainerName: task.ContainerName,
+		Status:        taskHistoryStatus(status),
+		Error:         task.Error,
+		Stage:         task.Stage,
+		StageDetail:   task.StageDetail,
+		Percent:       task.Percent,
+		User:          task.User,
+		IP:            task.IP,
+		UserAgent:     task.UserAgent,
+		CreatedAt:     task.CreatedAt,
+		StartedAt:     task.StartedAt,
+	}
 	q.mu.Unlock()
+	// 锁外落库：写入终态留档与结束日志。
+	persistFinishedTask(entry, taskErr)
+}
+
+// taskHistoryStatus 把内存中的任务状态映射为历史表使用的终态字符串。
+// 内存里成功状态是 "done"，历史表统一记作 "completed"。
+func taskHistoryStatus(status string) string {
+	switch strings.TrimSpace(status) {
+	case "failed":
+		return "failed"
+	case "cancelled":
+		return "cancelled"
+	case "completed", "done":
+		return "completed"
+	case "":
+		return "completed"
+	default:
+		return status
+	}
+}
+
+// persistFinishedTask 在释放队列锁之后落库：补全结束时间与耗时，写入历史并追加日志。
+func persistFinishedTask(entry config.TaskHistoryEntry, taskErr error) {
+	endedAt := time.Now().UTC()
+	entry.EndedAt = endedAt.Format(time.RFC3339)
+	if start, err := time.Parse(time.RFC3339, entry.StartedAt); err == nil {
+		entry.DurationMs = endedAt.Sub(start).Milliseconds()
+	}
+	_ = config.UpsertTaskHistory(entry)
+	level := "INFO"
+	message := "任务完成"
+	if taskErr != nil {
+		level = "ERROR"
+		message = taskErr.Error()
+	}
+	_ = config.AppendTaskLog(entry.ID, level, message)
 }
 
 // createStageOrderLXC / createStageOrderKVM 列出各自运行时创建流程的阶段顺序。
@@ -471,7 +530,14 @@ func (q *TaskQueue) updateTaskStage(task *Task, stage, detail string) {
 	if percent, ok := taskStagePercent(task.Config.Virtualization, stage); ok && percent > task.Percent {
 		task.Percent = percent
 	}
+	taskID := task.ID
 	q.mu.Unlock()
+	// 锁外落库：追加阶段日志，避免持锁做 IO 造成阻塞。
+	message := "阶段: " + stage
+	if strings.TrimSpace(detail) != "" {
+		message += " " + detail
+	}
+	_ = config.AppendTaskLog(taskID, "INFO", message)
 }
 
 // runCreateTask handles lxc-create, resource setup, start, and SSH init. A
@@ -1112,7 +1178,6 @@ func HandleTasks(w http.ResponseWriter, r *http.Request) {
 // RestoreTasks restores task queue from config
 func RestoreTasks() {
 	globalQueue.mu.Lock()
-	defer globalQueue.mu.Unlock()
 	for _, st := range config.AppConfig.Tasks {
 		if st.Type == string(TaskStop) && st.User == "system:security" && !config.AppConfig.SecurityAutoShutdown {
 			continue
@@ -1162,6 +1227,9 @@ func RestoreTasks() {
 	}
 	// Clear persisted tasks from disk (they're now in memory)
 	config.SaveTasks([]config.SavedTask{})
+	globalQueue.mu.Unlock()
+	// 启动时清理历史留档，只保留最近 1000 条；失败不影响启动流程。
+	_, _ = config.PruneTaskHistory(1000)
 }
 
 func parseIDNum(id string) int {

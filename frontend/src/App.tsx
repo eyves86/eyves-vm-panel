@@ -16,6 +16,7 @@ import HostReport from './pages/HostReport'
 import Settings from './pages/Settings'
 import ImageManagement from './pages/ImageManagement'
 import Snapshots from './pages/Snapshots'
+import BackupPlans from './pages/BackupPlans'
 import Routing from './pages/Routing'
 import Storage from './pages/Storage'
 import SubUserManagement from './pages/SubUserManagement'
@@ -30,6 +31,7 @@ import IPGroups from './pages/IPGroups'
 import ISOs from './pages/ISOs'
 import MetricRetention from './pages/MetricRetention'
 import Monitoring from './pages/Monitoring'
+import TaskCenter from './pages/TaskCenter'
 
 function LoadingScreen() {
   return (
@@ -74,11 +76,13 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="containers" element={<Containers />} />
           <Route path="monitoring" element={<Monitoring />} />
+          <Route path="tasks" element={<TaskCenter />} />
           <Route path="container/:id" element={<ContainerDetail />} />
 
           <Route path="images" element={<ImageManagement />} />
           <Route path="security" element={<Security />} />
           <Route path="snapshots" element={<Snapshots />} />
+          <Route path="backup-plans" element={<BackupPlans />} />
           <Route path="routing" element={<Routing />} />
           <Route path="migration" element={<NodeMigration />} />
           <Route path="nodes" element={<NodeManagement />} />
