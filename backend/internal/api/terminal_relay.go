@@ -97,7 +97,13 @@ func relayTerminalToNode(w http.ResponseWriter, r *http.Request, c config.Contai
 }
 
 // relayWebSockets 在两个 WebSocket 连接间做双向透明转发（保留消息类型）。
+// 两端都装读超时/读上限与 ping/pong 保活，避免任一端静默掉线时泄漏 goroutine。
 func relayWebSockets(a, b *websocket.Conn) {
+	stopA := hardenWebSocket(a)
+	stopB := hardenWebSocket(b)
+	defer stopA()
+	defer stopB()
+
 	done := make(chan struct{}, 2)
 	var aMu, bMu sync.Mutex
 
@@ -108,10 +114,7 @@ func relayWebSockets(a, b *websocket.Conn) {
 			if err != nil {
 				return
 			}
-			dstMu.Lock()
-			writeErr := dst.WriteMessage(msgType, msg)
-			dstMu.Unlock()
-			if writeErr != nil {
+			if writeErr := writeConsoleMessage(dst, dstMu, msgType, msg); writeErr != nil {
 				return
 			}
 		}

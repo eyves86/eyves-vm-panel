@@ -75,6 +75,11 @@ func HandleVNCTicket(w http.ResponseWriter, r *http.Request) {
 	ticket := randomHex(32)
 	webVNCTickets.Lock()
 	cleanupExpiredWebVNCTicketsLocked(time.Now())
+	if len(webVNCTickets.items) >= webVNCTicketLimit {
+		webVNCTickets.Unlock()
+		jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "控制台票据请求过于频繁，请稍后重试"})
+		return
+	}
 	webVNCTickets.items[ticket] = webVNCTicket{
 		ContainerName: c.Name,
 		ContainerUUID: c.UUID,
@@ -129,6 +134,12 @@ func HandleVNCProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "container is not running", http.StatusBadRequest)
 		return
 	}
+	// 限制单容器并发控制台会话，避免同一虚拟机被大量控制台连接拖垮。
+	if !acquireConsoleSession(containerName) {
+		http.Error(w, "该容器的并发控制台会话已达上限，请稍后重试", http.StatusTooManyRequests)
+		return
+	}
+	defer releaseConsoleSession(containerName)
 
 	// 跨节点容器：级联到所属 agent，主控做透明 WS 中继。
 	if node, ok := nodeForContainer(c); ok {
@@ -163,6 +174,9 @@ func HandleVNCProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer ws.Close()
+	// 读超时 + ping/pong 保活：浏览器标签页被强杀或网络中断时，会话会被自动回收。
+	stopKeepalive := hardenWebSocket(ws)
+	defer stopKeepalive()
 
 	log.Printf("WebVNC connected for container %s as %s (sub_user=%t) -> 127.0.0.1:%d", containerName, item.Username, item.SubUser, vncPort)
 
@@ -262,10 +276,8 @@ func streamVNCToWebSocket(ws *websocket.Conn, writeMu *sync.Mutex, src io.Reader
 	for {
 		n, err := src.Read(buf)
 		if n > 0 {
-			writeMu.Lock()
-			writeErr := ws.WriteMessage(websocket.BinaryMessage, buf[:n])
-			writeMu.Unlock()
-			if writeErr != nil {
+			// 带写超时，避免慢客户端把该 goroutine 永久阻塞在写入上。
+			if writeErr := writeConsoleMessage(ws, writeMu, websocket.BinaryMessage, buf[:n]); writeErr != nil {
 				done <- fmt.Sprintf("browser websocket write failed: %v", writeErr)
 				return
 			}

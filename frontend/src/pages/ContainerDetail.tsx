@@ -7,6 +7,7 @@ import {
   Clock,
   Copy,
   Cpu,
+  Globe,
   HardDrive,
   Key,
   LifeBuoy,
@@ -55,9 +56,11 @@ import {
   TrafficInfo,
   getEnabledImages,
   getFirewall,
+  getReverseDNS,
   PortMapping,
   PublicIPv4Info,
   FirewallRule,
+  ReverseDNSRecord,
   updatePublicIPv4Assignments,
   updateIPv6Assignments,
   reinstallContainer,
@@ -73,6 +76,7 @@ import {
   Template,
   updateContainerExpiry,
   updateFirewall,
+  updateReverseDNS,
   updateSnapshotQuota,
   updateSnapshotSchedule,
   restoreContainerSnapshot,
@@ -231,6 +235,11 @@ export default function ContainerDetail() {
   const [firewallMessage, setFirewallMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [editingFirewallRule, setEditingFirewallRule] = useState<FirewallRule | null>(null)
   const [showFirewallEditor, setShowFirewallEditor] = useState(false)
+  const [showReverseDNS, setShowReverseDNS] = useState(false)
+  const [rdnsRecords, setRdnsRecords] = useState<ReverseDNSRecord[]>([])
+  const [rdnsLoading, setRdnsLoading] = useState(false)
+  const [rdnsSaving, setRdnsSaving] = useState(false)
+  const [rdnsMessage, setRdnsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const fetchContainer = useCallback(async () => {
     if (!containerIdentifier) return
@@ -608,6 +617,42 @@ export default function ContainerDetail() {
 
   const toggleFirewallRule = (ruleId: string) => {
     setFirewallRules(firewallRules.map(r => r.id === ruleId ? { ...r, enabled: !r.enabled } : r))
+  }
+
+  const openReverseDNS = async () => {
+    setShowReverseDNS(true)
+    setRdnsMessage(null)
+    setRdnsRecords([])
+    setRdnsLoading(true)
+    try {
+      const res = await getReverseDNS(containerIdentifier)
+      setRdnsRecords(res.data.data?.records || [])
+    } catch (err) {
+      console.error('Failed to load reverse DNS:', err)
+      setRdnsMessage({ type: 'error', text: '加载反向 DNS 记录失败，请稍后重试' })
+    } finally {
+      setRdnsLoading(false)
+    }
+  }
+
+  const saveReverseDNS = async () => {
+    setRdnsSaving(true)
+    setRdnsMessage(null)
+    try {
+      const res = await updateReverseDNS(containerIdentifier, rdnsRecords)
+      const records = res.data.data?.records
+      if (records) setRdnsRecords(records)
+      setRdnsMessage({ type: 'success', text: '反向 DNS 已保存' })
+    } catch (err) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setRdnsMessage({ type: 'error', text: error.response?.data?.message || '保存失败，请检查主机名格式' })
+    } finally {
+      setRdnsSaving(false)
+    }
+  }
+
+  const updateRdnsHostname = (address: string, hostname: string) => {
+    setRdnsRecords(rdnsRecords.map(record => record.address === address ? { ...record, hostname } : record))
   }
 
   const openReinstall = async () => {
@@ -1443,6 +1488,10 @@ export default function ContainerDetail() {
               <FirewallIcon className="w-3.5 h-3.5" />
               防火墙
             </ActionButton>
+            <ActionButton onClick={openReverseDNS} disabled={isSubUserPolicyBlocked || readOnly}>
+              <Globe className="w-3.5 h-3.5" />
+              反向DNS
+            </ActionButton>
             <ActionButton onClick={() => setShowSnapshots(true)} disabled={!!taskStatus || !!snapshotBusy || isSubUserPolicyBlocked || readOnly}>
               <Camera className="w-3.5 h-3.5" />
               快照
@@ -2183,6 +2232,58 @@ export default function ContainerDetail() {
                   {snapshotBusy === 'schedule' ? '保存中...' : '保存'}
                 </button>
               </div>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showReverseDNS && (
+        <Modal title="反向 DNS（PTR）" onClose={() => setShowReverseDNS(false)} wide>
+          <div className="space-y-4">
+            <p className="text-xs text-gray-500">
+              为实例的公网 IP 设置反向解析主机名。主机名需为合法 FQDN（例如 mail.example.com），留空表示清除该 IP 的 PTR 记录。
+            </p>
+
+            {rdnsLoading ? (
+              <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-6 text-center text-sm text-gray-500">加载中...</div>
+            ) : rdnsRecords.length === 0 ? (
+              <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-6 text-center text-sm text-gray-500">当前实例没有可配置反向 DNS 的公网 IP</div>
+            ) : (
+              <div className="space-y-3">
+                {rdnsRecords.map((record) => (
+                  <div key={record.address} className="flex flex-col gap-1.5">
+                    <label className="flex items-center gap-2 text-xs font-medium text-gray-600">
+                      <span className="rounded bg-gray-100 px-1.5 py-0.5 uppercase text-gray-500">{record.family}</span>
+                      <span className="font-mono">{record.address}</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={record.hostname}
+                      onChange={(e) => updateRdnsHostname(record.address, e.target.value)}
+                      placeholder="mail.example.com"
+                      className={inputClass}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {rdnsMessage && (
+              <div className={`rounded-md px-3 py-2 text-xs ${rdnsMessage.type === 'success' ? 'border border-emerald-100 bg-emerald-50 text-emerald-700' : 'border border-red-100 bg-red-50 text-red-700'}`}>
+                {rdnsMessage.text}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowReverseDNS(false)} className="rounded-md px-4 py-2 text-sm text-gray-600 hover:bg-gray-100">关闭</button>
+              <button
+                onClick={saveReverseDNS}
+                disabled={rdnsSaving || rdnsLoading || rdnsRecords.length === 0 || readOnly || isSubUserPolicyBlocked}
+                className="inline-flex items-center gap-1.5 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {rdnsSaving ? '保存中...' : '保存'}
+              </button>
             </div>
           </div>
         </Modal>

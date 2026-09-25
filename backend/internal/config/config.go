@@ -47,12 +47,17 @@ type PublicIPv4Assignment struct {
 	Interface string `json:"interface,omitempty"`
 	PrefixLen int    `json:"prefix_len,omitempty"`
 	Gateway   string `json:"gateway,omitempty"`
+	// RDNS 用户自助设置的反向 DNS（PTR）主机名。仅记录期望值，实际 PTR 由上游
+	// DNS / 机房侧按该字段生效；留空表示未设置。
+	RDNS string `json:"rdns,omitempty"`
 }
 
 type IPv6Assignment struct {
 	Address   string `json:"address"`
 	PrefixLen int    `json:"prefix_len"`
 	Interface string `json:"interface,omitempty"`
+	// RDNS 同 PublicIPv4Assignment.RDNS，用于 IPv6 地址的反向解析记录。
+	RDNS string `json:"rdns,omitempty"`
 }
 
 type PublicIPv6Prefix struct {

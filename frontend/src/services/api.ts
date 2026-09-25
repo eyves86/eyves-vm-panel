@@ -73,12 +73,20 @@ export interface PublicIPv4Assignment {
   interface?: string
   prefix_len?: number
   gateway?: string
+  rdns?: string
 }
 
 export interface IPv6Assignment {
   address: string
   prefix_len: number
   interface?: string
+  rdns?: string
+}
+
+export interface ReverseDNSRecord {
+  address: string
+  family: 'ipv4' | 'ipv6'
+  hostname: string
 }
 
 export interface Container {
@@ -968,6 +976,12 @@ export const getFirewall = (id: ContainerIdentifier) =>
 
 export const updateFirewall = (id: ContainerIdentifier, data: { enabled?: boolean; default_action?: 'ACCEPT' | 'DROP'; rules?: FirewallRule[] }) =>
   api.put<APIResponse<{ enabled: boolean; default_action: 'ACCEPT' | 'DROP'; rules: FirewallRule[] }>>(`/containers/${id}/firewall`, data)
+
+export const getReverseDNS = (id: ContainerIdentifier) =>
+  api.get<APIResponse<{ records: ReverseDNSRecord[] }>>(`/containers/${id}/rdns`)
+
+export const updateReverseDNS = (id: ContainerIdentifier, records: ReverseDNSRecord[]) =>
+  api.put<APIResponse<{ records: ReverseDNSRecord[] }>>(`/containers/${id}/rdns`, { records })
 
 export const updateContainerExpiry = (id: ContainerIdentifier, expiresAt: string) =>
   api.put<APIResponse>(`/containers/${id}/expiry`, { expires_at: expiresAt })

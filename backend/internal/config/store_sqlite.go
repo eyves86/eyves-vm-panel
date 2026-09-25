@@ -274,6 +274,7 @@ func ensureSchema() error {
 			interface TEXT,
 			prefix_len INTEGER,
 			gateway TEXT,
+			rdns TEXT,
 			PRIMARY KEY (container_id, position)
 		)`,
 		`CREATE TABLE IF NOT EXISTS container_ipv6_addresses (
@@ -282,6 +283,7 @@ func ensureSchema() error {
 			address TEXT NOT NULL,
 			prefix_len INTEGER,
 			interface TEXT,
+			rdns TEXT,
 			PRIMARY KEY (container_id, position)
 		)`,
 		`CREATE TABLE IF NOT EXISTS sub_users (
@@ -559,6 +561,8 @@ func ensureSchemaMigrations() error {
 		{"port_mappings", "host_ip", "TEXT"},
 		{"container_public_ipv4s", "prefix_len", "INTEGER"},
 		{"container_public_ipv4s", "gateway", "TEXT"},
+		{"container_public_ipv4s", "rdns", "TEXT"},
+		{"container_ipv6_addresses", "rdns", "TEXT"},
 		{"sub_users", "allowed_image_ids", "TEXT"},
 		{"sub_users", "image_limit_configured", "INTEGER NOT NULL DEFAULT 0"},
 		{"sub_users", "role", "TEXT NOT NULL DEFAULT 'operator'"},
@@ -1047,14 +1051,14 @@ func saveContainers(tx *sql.Tx) error {
 			}
 		}
 		for i, ip := range c.PublicIPv4s {
-			if _, err := tx.Exec(`INSERT INTO container_public_ipv4s(container_id, position, address, interface, prefix_len, gateway)
-				VALUES (?, ?, ?, ?, ?, ?)`, c.ID, i, ip.Address, ip.Interface, ip.PrefixLen, ip.Gateway); err != nil {
+			if _, err := tx.Exec(`INSERT INTO container_public_ipv4s(container_id, position, address, interface, prefix_len, gateway, rdns)
+				VALUES (?, ?, ?, ?, ?, ?, ?)`, c.ID, i, ip.Address, ip.Interface, ip.PrefixLen, ip.Gateway, ip.RDNS); err != nil {
 				return err
 			}
 		}
 		for i, ip := range c.IPv6Addresses {
-			if _, err := tx.Exec(`INSERT INTO container_ipv6_addresses(container_id, position, address, prefix_len, interface)
-				VALUES (?, ?, ?, ?, ?)`, c.ID, i, ip.Address, ip.PrefixLen, ip.Interface); err != nil {
+			if _, err := tx.Exec(`INSERT INTO container_ipv6_addresses(container_id, position, address, prefix_len, interface, rdns)
+				VALUES (?, ?, ?, ?, ?, ?)`, c.ID, i, ip.Address, ip.PrefixLen, ip.Interface, ip.RDNS); err != nil {
 				return err
 			}
 		}
@@ -1519,7 +1523,7 @@ func loadPortMappings(containerID int) ([]PortMapping, error) {
 }
 
 func loadContainerPublicIPv4s(containerID int) ([]PublicIPv4Assignment, error) {
-	rows, err := db.Query(`SELECT address, interface, prefix_len, gateway FROM container_public_ipv4s WHERE container_id = ? ORDER BY position`, containerID)
+	rows, err := db.Query(`SELECT address, interface, prefix_len, gateway, rdns FROM container_public_ipv4s WHERE container_id = ? ORDER BY position`, containerID)
 	if err != nil {
 		return nil, err
 	}
@@ -1530,7 +1534,8 @@ func loadContainerPublicIPv4s(containerID int) ([]PublicIPv4Assignment, error) {
 		var iface sql.NullString
 		var prefixLen sql.NullInt64
 		var gateway sql.NullString
-		if err := rows.Scan(&item.Address, &iface, &prefixLen, &gateway); err != nil {
+		var rdns sql.NullString
+		if err := rows.Scan(&item.Address, &iface, &prefixLen, &gateway, &rdns); err != nil {
 			return nil, err
 		}
 		item.Interface = iface.String
@@ -1538,13 +1543,14 @@ func loadContainerPublicIPv4s(containerID int) ([]PublicIPv4Assignment, error) {
 			item.PrefixLen = int(prefixLen.Int64)
 		}
 		item.Gateway = gateway.String
+		item.RDNS = rdns.String
 		result = append(result, item)
 	}
 	return result, rows.Err()
 }
 
 func loadContainerIPv6Addresses(containerID int) ([]IPv6Assignment, error) {
-	rows, err := db.Query(`SELECT address, prefix_len, interface FROM container_ipv6_addresses WHERE container_id = ? ORDER BY position`, containerID)
+	rows, err := db.Query(`SELECT address, prefix_len, interface, rdns FROM container_ipv6_addresses WHERE container_id = ? ORDER BY position`, containerID)
 	if err != nil {
 		return nil, err
 	}
@@ -1554,13 +1560,15 @@ func loadContainerIPv6Addresses(containerID int) ([]IPv6Assignment, error) {
 		var item IPv6Assignment
 		var prefixLen sql.NullInt64
 		var iface sql.NullString
-		if err := rows.Scan(&item.Address, &prefixLen, &iface); err != nil {
+		var rdns sql.NullString
+		if err := rows.Scan(&item.Address, &prefixLen, &iface, &rdns); err != nil {
 			return nil, err
 		}
 		if prefixLen.Valid {
 			item.PrefixLen = int(prefixLen.Int64)
 		}
 		item.Interface = iface.String
+		item.RDNS = rdns.String
 		result = append(result, item)
 	}
 	return result, rows.Err()

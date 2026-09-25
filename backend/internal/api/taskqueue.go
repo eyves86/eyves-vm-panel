@@ -405,14 +405,24 @@ func taskConcurrencyKey(task *Task) string {
 
 func (q *TaskQueue) finishTask(task *Task, status string, taskErr error) {
 	q.mu.Lock()
+	// 运行期间被标记取消的任务必须保留 cancelled 终态：任务没有强制中断能力，
+	// 若让执行结果把状态改回 done/failed，取消操作会被静默吞掉，历史留档里
+	// 已经写入的取消记录也会被覆盖。这里以用户意图为准，实际执行结果仍进审计日志。
+	wasCancelled := task.Status == "cancelled"
+	if wasCancelled {
+		status = "cancelled"
+	}
 	task.Status = status
-	if taskErr != nil {
+	switch {
+	case taskErr != nil:
 		task.Error = taskErr.Error()
-		if task.Type == TaskCreate {
+		if task.Type == TaskCreate && !wasCancelled {
 			task.Stage = "failed"
 			task.StageDetail = "初始化失败"
 		}
-	} else {
+	case wasCancelled:
+		// 取消优先：保留取消时的阶段与进度，不标记完成。
+	default:
 		task.Error = ""
 		if task.Type == TaskCreate {
 			task.Stage = "completed"
