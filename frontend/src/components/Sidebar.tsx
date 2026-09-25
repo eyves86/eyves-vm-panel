@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Code2,
   Cpu,
   Camera,
   Building2,
+  Database,
   Globe,
   HardDrive,
   LayoutDashboard,
@@ -17,7 +19,9 @@ import {
   Route,
   ScrollText,
   Server,
+  Settings2,
   ShieldAlert,
+  ShieldCheck,
   SlidersHorizontal,
   Sun,
   UserCog,
@@ -27,11 +31,111 @@ import {
   Activity,
   X,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import { useTheme } from '../contexts/ThemeContext'
+import { adminBase, adminUrl } from '../services/panelPath'
 import { checkUpdate, getVersion, listUpdateReleases, updatePanel, type UpdateRelease } from '../services/api'
 import AppIcon from './AppIcon'
+
+// ---- 管理端导航结构 ------------------------------------------------------------
+// 侧边栏按「业务域」分组，而不是把所有入口平铺成一长条：
+//   容器/监控/节点/迁移/策略 → 计算；存储/镜像/ISO/快照 → 存储与镜像；
+//   路由/IP组/区域 → 网络；安全告警/操作日志 → 安全与审计；
+//   子用户/租户/管理员 → 用户与租户；宿主机/指标/API/设置 → 系统与集成。
+// 每个分组可折叠，默认只展开当前页面所在分组，降低一次性认知负担。
+interface NavItem {
+  path: string
+  label: string
+  icon: LucideIcon
+  // match 用于判定当前路由是否命中该入口（避免 startsWith 前缀误判，如 /nodes 与 /node-groups）。
+  match?: (pathname: string) => boolean
+}
+
+interface NavGroup {
+  id: string
+  label: string
+  items: NavItem[]
+}
+
+const startsWithSegment = (prefix: string) => (p: string) =>
+  p === prefix || p.startsWith(prefix + '/')
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'compute',
+    label: '计算',
+    items: [
+      {
+        path: '/containers',
+        label: '容器管理',
+        icon: Server,
+        match: (p) => p === '/containers' || p.startsWith('/containers/') || p.startsWith('/container/'),
+      },
+      { path: '/monitoring', label: '容器监控', icon: Activity, match: startsWithSegment('/monitoring') },
+      { path: '/nodes', label: '节点管理', icon: Network, match: startsWithSegment('/nodes') },
+      { path: '/migration', label: '节点迁移', icon: MoveRight, match: startsWithSegment('/migration') },
+      { path: '/policies', label: '策略管理', icon: SlidersHorizontal, match: startsWithSegment('/policies') },
+    ],
+  },
+  {
+    id: 'storage',
+    label: '存储与镜像',
+    items: [
+      { path: '/storage', label: '存储管理', icon: HardDrive, match: startsWithSegment('/storage') },
+      { path: '/images', label: '镜像管理', icon: Package, match: startsWithSegment('/images') },
+      { path: '/isos', label: 'ISO 镜像', icon: Disc3, match: startsWithSegment('/isos') },
+      { path: '/snapshots', label: '快照管理', icon: Camera, match: startsWithSegment('/snapshots') },
+    ],
+  },
+  {
+    id: 'network',
+    label: '网络',
+    items: [
+      { path: '/routing', label: '路由管理', icon: Route, match: startsWithSegment('/routing') },
+      { path: '/ip-groups', label: 'IP 组', icon: Layers, match: startsWithSegment('/ip-groups') },
+      { path: '/regions', label: '区域管理', icon: Globe, match: startsWithSegment('/regions') },
+    ],
+  },
+  {
+    id: 'security',
+    label: '安全与审计',
+    items: [
+      { path: '/security', label: '安全告警', icon: ShieldAlert, match: startsWithSegment('/security') },
+      { path: '/audit-logs', label: '操作日志', icon: ScrollText, match: startsWithSegment('/audit-logs') },
+    ],
+  },
+  {
+    id: 'identity',
+    label: '用户与租户',
+    items: [
+      { path: '/sub-users', label: '子用户管理', icon: UserCog, match: startsWithSegment('/sub-users') },
+      { path: '/tenants', label: '多租户', icon: Building2, match: startsWithSegment('/tenants') },
+      { path: '/admins', label: '管理员账号', icon: ShieldCheck, match: startsWithSegment('/admins') },
+    ],
+  },
+  {
+    id: 'system',
+    label: '系统与集成',
+    items: [
+      { path: '/host-report', label: '宿主机信息', icon: Cpu, match: startsWithSegment('/host-report') },
+      { path: '/metric-retention', label: '指标留存', icon: Database, match: startsWithSegment('/metric-retention') },
+      { path: '/api-integration', label: 'API 集成', icon: Code2, match: startsWithSegment('/api-integration') },
+      { path: '/settings', label: '面板设置', icon: Settings2, match: startsWithSegment('/settings') },
+    ],
+  },
+]
+
+// 子用户门户只暴露自己的容器，沿用同一入口样式。
+const SUBUSER_ITEM: NavItem = {
+  path: '/containers',
+  label: '容器管理',
+  icon: Server,
+  match: (p) => p === '/containers' || p.startsWith('/containers/') || p.startsWith('/container/'),
+}
+
+const NAV_GROUP_STATE_KEY = 'eyvescloud_sidebar_groups'
 
 interface SidebarProps {
   collapsed: boolean
@@ -175,30 +279,61 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     }
   }
 
-  const isContainerPage =
-    location.pathname.startsWith('/containers') ||
-    location.pathname.startsWith('/container')
+  // 管理员入口可能是自定义路径（如 /mypanel-x9k2），路由与高亮都必须基于
+  // 去掉该前缀后的**相对路径**判断，否则自定义入口下导航会跳错页面。
+  const base = adminBase()
+  const basePath = base || ''
+  const relPath =
+    basePath && (location.pathname === basePath || location.pathname.startsWith(basePath + '/'))
+      ? location.pathname.slice(basePath.length) || '/'
+      : location.pathname
 
-  const isNodesPage = location.pathname.startsWith('/nodes')
+  const groups = isSubUser
+    ? [{ id: 'compute', label: '', items: [SUBUSER_ITEM] }]
+    : NAV_GROUPS
 
-  const isMonitoringPage = location.pathname.startsWith('/monitoring')
+  const isItemActive = (item: NavItem) =>
+    item.match ? item.match(relPath) : relPath === item.path
 
-  const isImagesPage = location.pathname.startsWith('/images')
+  const activeGroupId = groups.find((g) => g.items.some(isItemActive))?.id
 
-  const isSnapshotsPage = location.pathname.startsWith('/snapshots')
-  const isRoutingPage = location.pathname.startsWith('/routing')
-  const isStoragePage = location.pathname.startsWith('/storage')
-  const isAuditLogsPage = location.pathname.startsWith('/audit-logs')
-  const isApiIntegrationPage = location.pathname.startsWith('/api-integration')
-  const isHostReportPage = location.pathname.startsWith('/host-report')
-  const isSecurityPage = location.pathname.startsWith('/security')
-  const isSettingsPage = location.pathname.startsWith('/settings')
-  const isMigrationPage = location.pathname.startsWith('/migration')
-  const isPolicyPage = location.pathname.startsWith('/policies')
+  // 分组展开态：默认只展开当前页面所在分组；用户手动开关后写入 localStorage。
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    try {
+      const raw = localStorage.getItem(NAV_GROUP_STATE_KEY)
+      return raw ? (JSON.parse(raw) as Record<string, boolean>) : {}
+    } catch {
+      return {}
+    }
+  })
+
+  const isGroupOpen = (id: string) => openGroups[id] ?? id === activeGroupId
+
+  const toggleGroup = (id: string) => {
+    setOpenGroups((prev) => {
+      const next = { ...prev, [id]: !(prev[id] ?? id === activeGroupId) }
+      try {
+        localStorage.setItem(NAV_GROUP_STATE_KEY, JSON.stringify(next))
+      } catch {
+        /* 忽略存储失败（隐私模式等），仅影响记忆能力 */
+      }
+      return next
+    })
+  }
+
+  // 导航到管理端入口：拼接自定义前缀（默认根路径时即 /xxx，行为不变）。
+  const go = (path: string) => navigate(adminUrl(path.replace(/^\//, '')) || path)
 
   // 展开态：桌面端跟随 collapsed；移动端抽屉打开时（mobileOpen）强制展开，
   // 否则左下角的语言/版本/有更新/登出等文字会被 collapsed 判据隐藏掉。
   const expanded = mobileOpen || !collapsed
+
+  const itemClass = (active: boolean) =>
+    `w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
+      active
+        ? 'bg-black text-white dark:bg-white dark:text-black'
+        : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+    }`
 
   return (
     <>
@@ -249,282 +384,63 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         </button>
       </div>
 
-      <nav className="flex-1 overflow-y-auto overscroll-contain py-4 px-2 space-y-1">
+      <nav className="flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-3">
+        {/* 控制面板：作为最顶层的单入口，不归属任何业务分组。 */}
         {!isSubUser && (
           <button
-            onClick={() => navigate('/')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-              location.pathname === '/'
-                ? 'bg-black text-white dark:bg-white dark:text-black'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-            }`}
+            onClick={() => go('/')}
+            title="控制面板"
+            className={itemClass(relPath === '/')}
           >
-            <LayoutDashboard className="w-4 h-4" />
+            <LayoutDashboard className="h-4 w-4 shrink-0" />
             {expanded && <span>控制面板</span>}
           </button>
         )}
 
-        <button
-          onClick={() => navigate('/containers')}
-          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-            isContainerPage
-              ? 'bg-black text-white dark:bg-white dark:text-black'
-              : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-          }`}
-        >
-          <Server className="w-4 h-4" />
-          {expanded && <span>容器管理</span>}
-        </button>
+        {groups.map((group, index) => {
+          const open = isGroupOpen(group.id)
+          const hasHeader = expanded && !!group.label
+          return (
+            <div key={group.id} className={hasHeader ? 'pt-2' : 'pt-1'}>
+              {/* 分组标题：展开态显示且可折叠；折叠态仅以分隔线体现分组。 */}
+              {hasHeader ? (
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group.id)}
+                  aria-expanded={open}
+                  className="mb-0.5 flex w-full items-center justify-between rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+                >
+                  <span>{group.label}</span>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 shrink-0 transition-transform duration-200 ${open ? '' : '-rotate-90'}`}
+                  />
+                </button>
+              ) : index > 0 ? (
+                <div className="mx-3 mb-1 border-t border-gray-100 dark:border-gray-800" />
+              ) : null}
 
-        {!isSubUser && (
-          <button
-            onClick={() => navigate('/monitoring')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-              isMonitoringPage
-                ? 'bg-black text-white dark:bg-white dark:text-black'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-            }`}
-          >
-            <Activity className="w-4 h-4" />
-            {expanded && <span>容器监控</span>}
-          </button>
-        )}
-
-        {!isSubUser && (
-          <button
-            onClick={() => navigate('/nodes')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-              isNodesPage
-                ? 'bg-black text-white dark:bg-white dark:text-black'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-            }`}
-          >
-            <Network className="w-4 h-4" />
-            {expanded && <span>节点管理</span>}
-          </button>
-        )}
-
-        {!isSubUser && (
-          <button
-            onClick={() => navigate('/images')}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-              isImagesPage
-                ? 'bg-black text-white dark:bg-white dark:text-black'
-                : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-            }`}
-          >
-            <Package className="w-4 h-4" />
-            {expanded && <span>镜像管理</span>}
-          </button>
-        )}
-
-        {!isSubUser && (
-          <>
-            <button
-              onClick={() => navigate('/security')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isSecurityPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <ShieldAlert className="w-4 h-4" />
-              {expanded && <span>安全告警</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/snapshots')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isSnapshotsPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Camera className="w-4 h-4" />
-              {expanded && <span>快照管理</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/routing')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isRoutingPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Route className="w-4 h-4" />
-              {expanded && <span>路由管理</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/migration')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isMigrationPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <MoveRight className="w-4 h-4" />
-              {expanded && <span>节点迁移</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/policies')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isPolicyPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-              {expanded && <span>策略管理</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/storage')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isStoragePage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <HardDrive className="w-4 h-4" />
-              {expanded && <span>存储管理</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/audit-logs')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isAuditLogsPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <ScrollText className="w-4 h-4" />
-              {expanded && <span>操作日志</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/sub-users')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/sub-users')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <UserCog className="w-4 h-4" />
-              {expanded && <span>子用户管理</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/admins')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/admins')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <ShieldAlert className="w-4 h-4" />
-              {expanded && <span>管理员账号</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/tenants')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/tenants')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              {expanded && <span>多租户</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/regions')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/regions')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Globe className="w-4 h-4" />
-              {expanded && <span>区域管理</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/ip-groups')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/ip-groups')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Layers className="w-4 h-4" />
-              {expanded && <span>IP 组</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/isos')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/isos')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Disc3 className="w-4 h-4" />
-              {expanded && <span>ISO 镜像</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/metric-retention')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                location.pathname.startsWith('/metric-retention')
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Activity className="w-4 h-4" />
-              {expanded && <span>指标留存</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/api-integration')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isApiIntegrationPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Code2 className="w-4 h-4" />
-              {expanded && <span>API 集成</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/host-report')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isHostReportPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <Cpu className="w-4 h-4" />
-              {expanded && <span>宿主机信息</span>}
-            </button>
-
-            <button
-              onClick={() => navigate('/settings')}
-              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
-                isSettingsPage
-                  ? 'bg-black text-white dark:bg-white dark:text-black'
-                  : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
-              }`}
-            >
-              <UserCog className="w-4 h-4" />
-              {expanded && <span>面板设置</span>}
-            </button>
-          </>
-        )}
+              {(!hasHeader || open) && (
+                <div className="space-y-1">
+                  {group.items.map((item) => {
+                    const Icon = item.icon
+                    return (
+                      <button
+                        key={item.path}
+                        onClick={() => go(item.path)}
+                        title={item.label}
+                        aria-current={isItemActive(item) ? 'page' : undefined}
+                        className={itemClass(isItemActive(item))}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        {expanded && <span>{item.label}</span>}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </nav>
 
       <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 p-2 space-y-1">
