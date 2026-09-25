@@ -5,6 +5,11 @@
 <h1 align="center">EyvesCloud</h1>
 
 <p align="center">
+  <strong>企业级多节点虚拟化云管理平台 · Enterprise Multi-Node Virtualization Platform</strong><br/>
+  <sub>面向 LXC / KVM 混合工作负载的开箱即用基础设施管理方案</sub>
+</p>
+
+<p align="center">
   <img alt="Go" src="https://img.shields.io/badge/Go-1.25-00ADD8?style=flat-square&logo=go&logoColor=white">
   <img alt="React" src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=111111">
   <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript&logoColor=white">
@@ -28,52 +33,92 @@
   <img alt="TLS" src="https://img.shields.io/badge/TLS-Let's_Encrypt-003A70?style=flat-square&logo=letsencrypt&logoColor=white">
 </p>
 
-**EyvesCloud**（项目仓库 `eyves-vm-panel`）是一个面向 LXC / KVM 的轻量虚拟化管理面板。它将常见的宿主机运维动作收敛到 Web 控制台与命令行中，并额外提供「主控-被控」多节点、REST API、NAT/IPv6 网络、WebSSH/WebVNC、资源配额、流量限制、快照、安全告警和子用户授权等能力，适合 VPS 商家、实验室、开发者自建虚拟化节点，以及需要批量开通和分发容器访问权限的场景。
+---
 
-EyvesCloud is a lightweight virtualization management panel for LXC and KVM. It consolidates common host administration tasks into a web console and a CLI, and adds controller-agent multi-node management, a versioned REST API, NAT/IPv6 networking, WebSSH/WebVNC access, resource quotas, traffic limits, snapshots, security alerting, and delegated sub-user access.
+## 产品定位 / Product Positioning
 
-![EyvesCloud 系统架构 / Architecture](/img/architecture.svg)
+**EyvesCloud** 将分散的宿主机运维动作收敛为统一控制平面：以 Web 控制台、CLI 与版本化 REST API 三种形态，对跨节点的 LXC 容器与 KVM 虚拟机实施全生命周期管理。平台内置调度引擎、多租户隔离、计量对接与安全审计能力，帮助 VPS 服务商、企业基础设施团队与研究实验室以极低的运维成本交付自服务平台（Self-Service Portal）。
+
+EyvesCloud unifies host administration into a single control plane — delivering full lifecycle management of LXC containers and KVM virtual machines across nodes via a web console, a CLI, and a versioned REST API. With a built-in scheduler, multi-tenant isolation, metering integration, and security auditing, it enables VPS providers, enterprise infra teams, and labs to run self-service portals at minimal operational cost.
 
 ---
 
-## 功能 / Features
+## 核心价值 / Why EyvesCloud
 
-| 模块 | 能力 |
+| | |
 | --- | --- |
-| 虚拟化管理 | 在同一个面板里管理 LXC 容器和 KVM 虚拟机，支持创建、重装、开机、关机、重启、删除、重置密码、到期时间和批量操作。 |
-| 主控-被控节点 | 在主控面板无限添加被控节点，生成一键安装脚本；被控接入后主控可直接查看并操作被控容器。 |
-| 镜像与模板 | 内置 Ubuntu / Debian / Alpine / CentOS / Arch Linux / Fedora / Rocky Linux 等模板管理，支持启用、禁用、下载、取消下载、清理缓存与自定义镜像。 |
-| 网络能力 | NAT4 端口配额、随机可用端口、TCP/UDP 端口映射、公网 IPv4 池、IPv6 前缀检测、IPv6 状态检查与容器级 IPv6 分配。 |
-| 资源控制 | CPU、内存、磁盘、Swap、独立上下行带宽、读写 I/O 限速、流量重置与流量限制；到期或超额自动关机。 |
-| 远程控制 | 内置 WebSSH / WebVNC 票据访问，浏览器直接打开终端或控制台，无需手动交换连接信息。 |
-| 快照 | 快照总览、创建 / 删除 / 恢复、计划快照与快照配额。 |
-| 安全告警 | 基于 conntrack 检测端口扫描、横向扫描、爆破倾向、SMTP 滥用、UDP 反射、挖矿端口、代理 / VPN / Tor 与 ARP 欺骗。 |
-| 账号与审计 | 子用户管理链接、密码轮换、按容器授权、操作日志、登录日志与 API Key 管理。 |
-| 自动化 | 全量接口统一 `/api/v1`，覆盖容器、镜像、网络、流量、安全、任务队列与批量操作；提供财务计费系统对接模块。 |
-| 运维入口 | Dashboard 统计、主机资源、路由概览、Swap 管理、CLI-only 模式与自动发布产物。 |
+| **统一控制平面** | 单一主控纳管无限被控节点，控制台 / CLI / API 三端一致，跨节点操作无需逐台登录。 |
+| **开箱即用的交付速度** | 一键安装脚本 + 一键被控接入，5 分钟内完成单节点到多节点集群的搭建。 |
+| **企业级多租户** | 子用户（operator / viewer 角色）按容器授权、租户配额、独立面板入口、会话与令牌版本控制。 |
+| **计量与财务就绪** | 全量用量导出 API（资源配置 + 实时用量 + 到期/流量），配合 `usage:read` scope 的 API Key 即可对接计费系统。 |
+| **安全纵深** | JWT 双 Issuer/Audience 校验、scope 细粒度授权、conntrack 威胁检测、全量操作审计与登录日志。 |
+| **平滑运维** | 节点维护模式（drain/evacuate）、主动探活、面板内自升级（可选仓库与目标版本）、快照与到期自动回收。 |
 
-| Area | What EyvesCloud provides |
+---
+
+## 产品能力矩阵 / Capability Matrix
+
+### 计算与编排 / Compute & Orchestration
+
+- **统一工作负载管理**：同一控制台管理 LXC 容器与 KVM 虚拟机 —— 创建、重装、电源控制、删除、密码重置、到期策略与批量操作。
+- **智能调度引擎**：过滤（在线 / 容量 / 存储后端 / 维护模式）→ 评分（RAM 60% + Disk 40% + 租户分散度）→ 决策留痕，支持诊断信息输出。
+- **主控-被控架构**：主控一键生成被控安装脚本，Agent 注册后自动心跳接入，主控可直查并操作被控工作负载。
+- **生命周期治理**：挂起/恢复（suspend）阻断启动与远程访问；到期或流量超额自动关机。
+
+### 网络与存储 / Networking & Storage
+
+- **NAT 网关**：NAT4 端口配额、随机可用端口分配、TCP/UDP 端口映射。
+- **公网地址池**：公网 IPv4 池管理与容器级分配。
+- **原生 IPv6**：前缀检测、状态巡检与容器级 IPv6 地址分配。
+- **存储后端**：dir / ZFS / LVM / RBD / CephFS / NFS 多后端支持，按节点能力调度。
+
+### 资源治理 / Resource Governance
+
+- **配额体系**：CPU、内存、磁盘、Swap、独立上下行带宽、读写 I/O 限速。
+- **流量管理**：流量重置、流量限制、超额自动处置。
+- **快照策略**：总览、创建 / 删除 / 恢复、计划快照与配额控制。
+
+### 安全与合规 / Security & Compliance
+
+- **威胁检测**：基于 conntrack 的端口扫描、横向移动、爆破、SMTP 滥用、UDP 反射、挖矿端口、代理 / VPN / Tor 与 ARP 欺骗告警。
+- **访问控制**：JWT 签发与校验（Issuer/Audience 绑定）、API Key scope 细粒度授权、容器绑定型密钥。
+- **审计追溯**：全量操作日志（含 actor / IP / UA）、登录日志、面板访问策略与 WebSSH 来源白名单。
+- **传输安全**：内置 Let's Encrypt 自动签发与续期。
+
+### 计量与集成 / Metering & Integration
+
+- **版本化 API**：全量接口统一 `/api/v1`，覆盖容器、镜像、网络、流量、安全、任务队列与批量操作。
+- **财务对接**：`GET /api/v1/usage` 全量用量导出（租户过滤、配置 + 实时用量聚合），专为计费系统插件化对接设计。
+- **幂等开通**：`Idempotency-Key` 机制防止计费回调超时导致的双开。
+- **运维入口**：Dashboard 统计、主机资源、路由概览、CLI-only 模式。
+
+---
+
+## 典型场景 / Use Cases
+
+| 场景 | 说明 |
 | --- | --- |
-| Virtualization | Manage LXC containers and KVM virtual machines from one panel: create, reinstall, start, stop, restart, delete, password reset, expiry control, and batch actions. |
-| Controller-Agent nodes | Add unlimited worker nodes from the controller panel, get a one-click install script, then view and operate worker containers from the controller. |
-| Images & templates | Built-in template/image management for Ubuntu, Debian, Alpine, CentOS, Arch, Fedora, Rocky Linux and more; enable, disable, download, cancel or purge cache. |
-| Networking | NAT4 port quotas, random available ports, TCP/UDP port mappings, public IPv4 pool, IPv6 prefix detection/status, and per-container IPv6 assignment. |
-| Resource control | CPU, memory, disk, swap, independent up/down bandwidth, R/W I/O rate limits, traffic reset and limits; auto-shutdown on expiry or quota breach. |
-| Console access | Browser-based WebSSH and WebVNC ticket access without manually exchanging credentials. |
-| Snapshots | Overview, per-container snapshots, create/delete/restore, scheduled snapshots, and quota controls. |
-| Security | Conntrack-based alerts for port scans, lateral scans, brute-force, SMTP abuse, UDP reflection, mining ports, proxy/VPN/Tor and ARP spoofing. |
-| Accounts & audit | Delegated sub-user links, password rotation, per-container permissions, audit logs, login logs, and API key management. |
-| Automation | Versioned REST API under `/api/v1`, task queue, batch create/action, and a billing-system integration module. |
-| Operations | Dashboard stats, host resource overview, routing overview, swap management, CLI-only mode, and CI-built release artifacts. |
+| **VPS 服务商** | 主控纳管多机房节点，子用户自助管理名下实例，用量 API 对接财务计费，实现开通-计量-停复机闭环。 |
+| **企业基础设施团队** | 多租户隔离 + 角色授权 + 全量审计，为开发/测试团队交付自服务平台，安全策略集中管控。 |
+| **实验室与教育机构** | 批量开通 + 模板管理 + 到期自动回收，低成本支撑批量实验环境。 |
+| **开发者自托管** | 单节点 5 分钟部署，WebSSH/WebVNC 浏览器直连，无需额外跳板机。 |
 
-## 技术栈 / Technology Stack
+---
 
-- 后端 / Backend：Go (`net/http`)，SQLite，LXC，KVM/libvirt，cgroup v2，iptables，conntrack
-- 前端 / Frontend：React 18，TypeScript 5，Vite 5，Tailwind CSS，lucide-react，xterm.js，noVNC
-- 运行时 / Runtime：Linux，systemd / OpenRC，LXC，KVM/QEMU
-- 构建 / Build：GitHub Actions，Node.js 20，Go 1.25
+## 架构 / Architecture
 
-## 安装 / Installation
+![EyvesCloud 系统架构 / Architecture](/img/architecture.svg)
+
+**技术栈 / Stack**
+
+- **控制面**：Go（net/http）、SQLite、调度引擎
+- **虚拟化层**：LXC、KVM/QEMU（libvirt）、cgroup v2、iptables、conntrack
+- **数据面**：React 18、TypeScript 5、Vite 5、Tailwind CSS、xterm.js、noVNC
+- **交付**：Linux（systemd / OpenRC）、GitHub Actions 自动构建 Linux amd64/arm64
+
+---
+
+## 快速开始 / Quick Start
 
 一键安装（脚本默认从本仓库 Release 拉取发行版，也可通过 `EYVESCLOUD_REPO` 指定其它来源）：
 
@@ -97,9 +142,11 @@ EYVESCLOUD_KVM_SUBNET=192.168.122.0/24
 
 更多说明见 [docs/guide/installation.md](docs/guide/installation.md) 与 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
-## 界面截图 / Screenshots
+---
 
-> 以下均来自真实运行的 EyvesCloud Web 控制台（含 Docker/沙箱演示环境），点击可放大。更多运行细节可自行部署后体验。
+## 界面 / Product Tour
+
+> 以下均来自真实运行的 EyvesCloud Web 控制台（含 Docker/沙箱演示环境），点击可放大。
 
 | | |
 | --- | --- |
@@ -110,7 +157,7 @@ EYVESCLOUD_KVM_SUBNET=192.168.122.0/24
 | **节点管理 / Nodes** | **操作日志 / Audit Logs** |
 | ![节点管理](/img/screenshot-nodes.png) | ![操作日志](/img/screenshot-audit.png) |
 
-架构与数据流见文首的 [系统架构图](/img/architecture.svg)。
+---
 
 ## 文档 / Documentation
 
@@ -124,6 +171,8 @@ EYVESCLOUD_KVM_SUBNET=192.168.122.0/24
 - 构建：`go build` + `npm run build` 双端通过；GitHub Actions 自动构建 `Linux amd64/arm64` 产物并发布 Release（自动生成于 `v*` 版本标签，见 `.github/workflows`）。
 - 文档站：VitePress 静态站，`main` 分支推送后自动部署到 GitHub Pages（见 `.github/workflows/docs.yml`）。
 - 安全审计记录见 [docs/AUDIT.md](docs/AUDIT.md)。
+
+---
 
 ## 免责声明 / Disclaimer
 

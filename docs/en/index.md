@@ -3,8 +3,8 @@ layout: home
 
 hero:
   name: EyvesCloud
-  text: Lightweight LXC/KVM Virtualization Panel
-  tagline: Web console, CLI, Controller-Agent multi-node management, container orchestration, NAT/IPv6, snapshots, policies, security alerts, sub-users, and API automation.
+  text: Enterprise Multi-Node Virtualization Platform
+  tagline: Manage cross-node LXC / KVM workloads from a unified control plane — scheduling engine, multi-tenant isolation, metering integration, and security auditing, out of the box.
   actions:
     - theme: brand
       text: Get Started
@@ -12,18 +12,21 @@ hero:
     - theme: alt
       text: View API
       link: /en/features/api
+    - theme: alt
+      text: Capabilities
+      link: /en/features/containers
 
 features:
-  - title: Built for Small Hosts
-    details: Manage LXC containers and KVM virtual machines on a single VPS or dedicated server.
-  - title: Controller-Agent Multi-node
-    details: The Controller generates a one-line install script; the Agent auto-registers after running it, and its containers can be viewed and operated from the Controller.
-  - title: Web and CLI in Parallel
-    details: Administrators can use the web panel or drop into the eyvescloud CLI for maintenance tasks.
-  - title: Automation Friendly
-    details: /api/v1 provides management APIs for containers, images, snapshots, security, logs, sub-users, and API keys.
-  - title: Policies and Quotas
-    details: Storage pools, resource quotas, traffic limits, a policy engine, and automatic reclamation on expiry.
-  - title: Security and Audit
-    details: Built-in security alerts, operation audit logs, and login logs for compliance and operations.
+  - title: Unified Control Plane
+    details: One controller manages unlimited worker nodes with a consistent web console, CLI, and versioned REST API — no more logging into each host.
+  - title: Intelligent Scheduling
+    details: Filtering (online/capacity/storage backend/maintenance) → scoring (RAM + disk + tenant spread) → decision trail, fully diagnosable.
+  - title: Enterprise Multi-Tenancy
+    details: Sub-users with operator/viewer roles, per-container authorization, tenant quotas, dedicated portal entry, and token version control.
+  - title: Metering & Billing Ready
+    details: Full usage export API (resource config + live usage + expiry/traffic), plus idempotent provisioning for seamless billing integration.
+  - title: Defense in Depth
+    details: Conntrack-based threat detection, JWT issuer/audience binding, fine-grained API key scopes, and full operation & login auditing.
+  - title: Smooth Operations
+    details: Node maintenance mode (drain/evacuate), proactive health probing with alerts, in-panel self-update (selectable repo and version), snapshots, and automatic expiry reclamation.
 ---

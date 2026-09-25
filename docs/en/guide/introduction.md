@@ -1,34 +1,60 @@
 # Introduction
 
-EyvesCloud is a lightweight virtualization management panel for LXC/KVM. It consolidates common host operations into a web console and CLI, and adds "Controller-Agent" multi-node management, making it suitable for VPS providers, labs, developers running their own virtualization nodes, and scenarios where container access needs to be distributed in batches.
+**EyvesCloud** is an enterprise-grade multi-node virtualization platform for LXC / KVM workloads. It unifies scattered host operations into a single control plane, delivering full lifecycle management of cross-node workloads through a web console, a CLI, and a versioned REST API. With a built-in scheduling engine, multi-tenant isolation, metering integration, and security auditing, it serves VPS providers, enterprise infrastructure teams, research labs, and scenarios where container access needs to be distributed in batches.
+
+## Positioning
+
+- **Unified control plane**: one controller manages unlimited worker nodes with a consistent web console, CLI, and API.
+- **Metering & billing ready**: full usage export API (resource config + live usage + expiry/traffic) plus idempotent provisioning, ready for direct billing integration.
+- **Enterprise multi-tenancy**: sub-users with operator/viewer roles, per-container authorization, tenant quotas, dedicated portal entry, and token version control.
+- **Defense in depth**: conntrack threat detection, JWT issuer/audience binding, fine-grained API key scopes, and full operation & login auditing.
 
 ## Core Capabilities
 
-- Manage LXC containers and KVM virtual machines: create, start, stop, restart, reinstall, delete, reset passwords, and batch operations.
-- Controller-Agent multi-node: the Controller generates a one-line install script; after the worker server runs it, it registers automatically, and the Controller can view/operate its containers directly.
-- Configure CPU, memory, disk, Swap, independent download/upload bandwidth, read/write I/O limits, traffic limits, and expiration time, with automatic shutdown on overage.
-- Manage NAT4 port mappings and assign public IPv6 when the host has IPv6 routing.
-- Open WebSSH or WebVNC from the browser.
-- Manage image downloads, enablement status, and local cache.
-- Create, restore, and delete snapshots, plus scheduled snapshots and snapshot quotas.
-- Storage pool management, resource quotas, and a policy engine, with tenant isolation and per-container authorization.
-- Generate security alerts based on connection behavior, and keep audit logs and login logs.
-- Create sub-user access links for specific containers, with view/operate scope limits.
-- Integrate automation through API keys and the `/api/v1` interface.
+### Compute & Orchestration
+
+- Unified management of LXC containers and KVM virtual machines: create, start, stop, restart, reinstall, delete, reset passwords, suspend/unsuspend, and batch operations.
+- Intelligent scheduling: filtering (online / capacity / storage backend / maintenance) → scoring (RAM + disk + tenant spread) → decision trail.
+- Controller-Agent multi-node: the Controller generates a one-line install script; workers register automatically, and the Controller can view/operate their workloads directly.
+- Lifecycle governance: automatic shutdown on expiry or traffic overage.
+
+### Networking & Storage
+
+- NAT4 port quotas, random available ports, TCP/UDP port mappings, and public IPv4 pool management.
+- Public IPv6 assignment when the host has IPv6 routing, with prefix detection and status checks.
+- Storage pools (dir / ZFS / LVM / RBD / CephFS / NFS), resource quotas, and a policy engine with tenant isolation and per-container authorization.
+
+### Resource Governance
+
+- CPU, memory, disk, Swap, independent download/upload bandwidth, read/write I/O limits, and traffic limits.
+- Snapshot create/restore/delete, scheduled snapshots, and snapshot quotas.
+
+### Security & Compliance
+
+- Connection-behavior security alerts (port scans, brute force, SMTP abuse, mining ports, etc.).
+- Operation audit logs and login logs, WebSSH origin whitelisting, and panel access policies.
+
+### Self-Service & Integration
+
+- Sub-user access links for specific containers, with view/operate roles and image restrictions.
+- Automation via API keys and the `/api/v1` interface; `GET /api/v1/usage` for metering.
+- WebSSH and WebVNC directly in the browser.
 
 ## Use Cases
 
-- Quickly allocate multiple Linux containers on a single host.
-- Unify multiple standalone servers under one Controller panel (like the node mode of MagicCloud).
-- Grant users temporary access to container consoles, SSH, VNC, or NAT port management.
-- Automate container creation, resource adjustments, password resets, or resource reclamation through the API.
-- Need a panel that is more intuitive than pure CLI but not a heavyweight platform.
+| Scenario | Description |
+| --- | --- |
+| VPS providers | One controller across datacenters; sub-users self-manage their instances; usage API feeds billing for a provision-meter-suspend loop. |
+| Enterprise infra teams | Multi-tenant isolation, role-based authorization, and full auditing deliver a self-service portal for dev/test teams. |
+| Labs & education | Batch provisioning, template management, and automatic expiry reclamation at low cost. |
+| Developer self-hosting | Single-node deployment in minutes; browser-based WebSSH/WebVNC with no jump host. |
 
 ## Tech Stack
 
-- Backend: Go, `net/http`, SQLite, systemd, LXC, KVM/libvirt, cgroup v2, iptables, conntrack.
-- Frontend: React, TypeScript, Vite, Tailwind CSS, lucide-react, xterm.js, noVNC.
-- Release: GitHub Actions builds Linux AMD64/ARM64 release artifacts; the install script fetches the latest Release by default.
+- **Control plane**: Go (`net/http`), SQLite, scheduling engine.
+- **Virtualization layer**: LXC, KVM/libvirt, cgroup v2, iptables, conntrack.
+- **Data plane**: React, TypeScript, Vite, Tailwind CSS, lucide-react, xterm.js, noVNC.
+- **Delivery**: Linux (systemd / OpenRC); GitHub Actions builds Linux AMD64/ARM64 release artifacts; the install script fetches the latest Release by default.
 
 ## Originality
 
