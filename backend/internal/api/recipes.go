@@ -118,6 +118,9 @@ func currentUserRecipeScope(r *http.Request) (ownerType, ownerID string) {
 // ---- CRUD ----
 
 func listRecipes(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "container:read") {
+		return
+	}
 	ownerType, ownerID := currentUserRecipeScope(r)
 	config.AppConfigMu.RLock()
 	defer config.AppConfigMu.RUnlock()
@@ -142,6 +145,9 @@ func listRecipes(w http.ResponseWriter, r *http.Request) {
 }
 
 func getRecipe(w http.ResponseWriter, r *http.Request, id string) {
+	if !requireScope(w, r, "container:read") {
+		return
+	}
 	recipe, ok := findRecipe(id)
 	if !ok {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Recipe not found"})
@@ -155,6 +161,9 @@ func getRecipe(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func createRecipe(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "container:power") {
+		return
+	}
 	var req struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -232,6 +241,9 @@ func createRecipe(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateRecipe(w http.ResponseWriter, r *http.Request, id string) {
+	if !requireScope(w, r, "container:power") {
+		return
+	}
 	existing, ok := findRecipe(id)
 	if !ok {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Recipe not found"})
@@ -292,6 +304,9 @@ func updateRecipe(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func deleteRecipe(w http.ResponseWriter, r *http.Request, id string) {
+	if !requireScope(w, r, "container:power") {
+		return
+	}
 	existing, ok := findRecipe(id)
 	if !ok {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Recipe not found"})

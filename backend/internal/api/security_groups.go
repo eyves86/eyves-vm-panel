@@ -14,8 +14,22 @@ import (
 	"eyvescloud/internal/secgroup"
 )
 
+// secGroupScopeForMethod 依据 HTTP 方法返回安全组操作所需 scope。
+// 安全组是**全局**的主机防火墙配置（非按租户隔离），因此读用 secgroup:read、
+// 写用 secgroup:write；子用户不含这两个 scope，会被 requireScope 拒绝，避免
+// 任意已认证主体（含只读子用户、无关 scope 的 API Key）改动全局安全策略。
+func secGroupScopeForMethod(method string) string {
+	if method == http.MethodGet {
+		return "secgroup:read"
+	}
+	return "secgroup:write"
+}
+
 // HandleSecGroups 处理 /api/security-groups（列表 + 创建）。
 func HandleSecGroups(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, secGroupScopeForMethod(r.Method)) {
+		return
+	}
 	switch r.Method {
 	case http.MethodGet:
 		listSecGroups(w, r)
@@ -28,6 +42,9 @@ func HandleSecGroups(w http.ResponseWriter, r *http.Request) {
 
 // HandleSecGroupItem 处理 /api/security-groups/{id}（获取 + 更新 + 删除）。
 func HandleSecGroupItem(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, secGroupScopeForMethod(r.Method)) {
+		return
+	}
 	rest := strings.TrimPrefix(r.URL.Path, "/api/security-groups/")
 	if rest == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "security group id required"})
@@ -48,6 +65,9 @@ func HandleSecGroupItem(w http.ResponseWriter, r *http.Request) {
 
 // HandleSecGroupRules 处理 /api/security-groups/{id}/rules（规则列表 + 添加）。
 func HandleSecGroupRules(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, secGroupScopeForMethod(r.Method)) {
+		return
+	}
 	path := strings.TrimPrefix(r.URL.Path, "/api/security-groups/")
 	parts := strings.SplitN(path, "/", 3) // [id, "rules", ruleId?]
 	if len(parts) < 1 || parts[0] == "" {
