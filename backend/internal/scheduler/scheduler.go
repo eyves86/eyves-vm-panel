@@ -85,9 +85,12 @@ func DefaultPolicy() Policy {
 	}
 }
 
-// defaultFilter 检查节点是否满足硬性条件：状态、容量、存储后端。
+// defaultFilter 检查节点是否满足硬性条件：状态、容量、存储后端、维护模式。
 func defaultFilter(n config.Node, req Request) []string {
 	reason := []string{}
+	if n.MaintenanceMode {
+		reason = append(reason, "node is in maintenance mode")
+	}
 	if !node.AllowsContainerOps(node.Status(n.Status)) {
 		reason = append(reason, fmt.Sprintf("status %q disallows container ops", n.Status))
 	}

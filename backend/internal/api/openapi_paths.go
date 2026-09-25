@@ -25,6 +25,8 @@ func openAPIExtraPaths() map[string]map[string]string {
 		"/containers/{id}/stop":           {"post": "关机"},
 		"/containers/{id}/restart":        {"post": "重启"},
 		"/containers/{id}/reinstall":      {"post": "重装系统（body: template_id）"},
+		"/containers/{id}/suspend":        {"post": "挂起容器（欠费停机：强制关机并阻断 start/restart/reinstall/WebSSH/VNC，body: reason 可选）"},
+		"/containers/{id}/unsuspend":      {"post": "解除挂起（复机，不自动开机）"},
 		"/containers/{id}/delete":         {"delete": "删除容器"},
 		"/containers/{id}/reset-password": {"post": "重置 SSH 密码（body: password 可选）"},
 		"/containers/{id}/create-account": {"post": "创建容器内账号"},
@@ -40,6 +42,7 @@ func openAPIExtraPaths() map[string]map[string]string {
 		"/containers/{id}/usage":   {"get": "实时用量（CPU/内存/磁盘/网络/磁盘 IO）"},
 		"/containers/{id}/traffic": {"get": "流量统计（已用/上限）"},
 		"/containers/{id}/history": {"get": "历史指标时序（原始采样 + 小时聚合），用于绘制曲线"},
+		"/usage":                   {"get": "全量用量导出（供财务系统拉取：按租户过滤，含每容器配置/实时用量/流量/到期/挂起状态）"},
 
 		// ---- 容器：网络 ----
 		"/containers/{id}/random-port":   {"get": "获取一个可用 NAT 端口"},

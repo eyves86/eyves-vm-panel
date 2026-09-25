@@ -11,6 +11,7 @@ import (
 
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/lxc"
+	"eyvescloud/internal/notify"
 	"eyvescloud/internal/version"
 )
 
@@ -125,6 +126,16 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		HandleSingleTaskAction(w, r, id, "reinstall")
+	case action == "suspend" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		suspendContainer(w, r, id, true)
+	case action == "unsuspend" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		suspendContainer(w, r, id, false)
 	case action == "delete" && r.Method == http.MethodDelete:
 		if !requireScope(w, r, "container:delete") {
 			return
@@ -421,6 +432,80 @@ func getContainer(w http.ResponseWriter, r *http.Request, id int) {
 	res := *c
 	sanitizeContainerResponse(r, &res)
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: res})
+}
+
+// suspendContainer 实现 suspend / unsuspend（欠费停机 / 复机，供财务系统或管理员调用）。
+// suspend：标记容器为挂起态；若正在运行则排入 stop 任务强制停机。
+// unsuspend：清除挂起标记（不自动开机，由调用方决定是否 start）。
+func suspendContainer(w http.ResponseWriter, r *http.Request, id int, suspend bool) {
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if suspend && r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	reason := strings.TrimSpace(req.Reason)
+
+	var name string
+	var wasRunning bool
+	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID != id {
+				continue
+			}
+			name = cfg.Containers[i].Name
+			wasRunning = cfg.Containers[i].Status == "running"
+			if suspend {
+				cfg.Containers[i].Suspended = true
+				cfg.Containers[i].SuspendedAt = time.Now().Format(time.RFC3339)
+				cfg.Containers[i].SuspendedReason = reason
+			} else {
+				cfg.Containers[i].Suspended = false
+				cfg.Containers[i].SuspendedAt = ""
+				cfg.Containers[i].SuspendedReason = ""
+			}
+			return
+		}
+	}); err != nil || name == "" {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	if err := config.SaveConfig(); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
+		return
+	}
+
+	// suspend 时对运行中的容器排入强制停机任务（走统一任务队列，含审计）
+	if suspend && wasRunning {
+		globalQueue.EnqueueWithAudit(id, name, TaskStop, "", nil, requestActor(r), clientIP(r), r.UserAgent())
+	}
+
+	action := "container.suspend"
+	message := "Container suspended"
+	if !suspend {
+		action = "container.unsuspend"
+		message = "Container unsuspended"
+	}
+	auditRequest(r, action, name, "reason="+reason, true, "")
+	// 邮件通知容器属主（配置了 SMTP 且属主有邮箱时）
+	if suspend {
+		notifyContainerOwner(name, "服务器已挂起："+name,
+			"您的服务器 "+name+" 已被挂起。"+reasonNotice(reason)+"期间服务器将保持关机且无法开机。如有疑问请联系管理员。",
+			notify.SeverityWarning)
+	} else {
+		notifyContainerOwner(name, "服务器已恢复："+name,
+			"您的服务器 "+name+" 已解除挂起，现在可以正常开机使用了。",
+			notify.SeverityInfo)
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: message})
+}
+
+// reasonNotice 把挂起原因转成邮件里的自然语言片段。
+func reasonNotice(reason string) string {
+	if reason == "" {
+		return ""
+	}
+	return "原因：" + reason + "。"
 }
 
 func getUsage(w http.ResponseWriter, r *http.Request, id int) {

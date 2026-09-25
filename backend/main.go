@@ -135,6 +135,7 @@ func main() {
 		// Clean up stale container configs (LXC dir was deleted but config remains)
 		config.CleanStaleContainers()
 		api.StartHostBootRestore()
+		api.InitSMTPSender()
 		lxc.EnsureAllRunningPortMappings()
 
 		// Pre-warm SSH for containers already running after host boot or service restart.

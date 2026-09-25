@@ -2226,6 +2226,18 @@ install_service() {
     fi
 }
 
+harden_data_dir_perms() {
+    local dir="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}"
+    # 服务刚启动，data dir 里 config.db / WAL / shm / 首启凭据文件可能还没显式 chmod
+    # 后端每次 openConfigDB 也会 chmod 0600，这里作为安装时的兜底。
+    if [ -d "$dir" ]; then
+        chmod 0700 "$dir" 2>/dev/null || true
+        chmod 0600 "$dir"/*.db "$dir"/*.db-wal "$dir"/*.db-shm 2>/dev/null || true
+        chmod 0600 "$dir"/*.json 2>/dev/null || true
+        chmod 0600 "$dir"/initial-admin-credentials.txt 2>/dev/null || true
+    fi
+}
+
 set_panel_language() {
     lang="$EYVESCLOUD_LANG_DETECTED"
     db="/root/.eyvescloud/config.db"
@@ -2297,14 +2309,16 @@ print_summary() {
     echo "====================================="
     echo ""
     echo "$(tr_msg "首次安装时的初始账号信息：")"
-    if is_systemd; then
-        journalctl -u eyvescloud --no-pager -n 80 | grep -E "Username:|Password:" || true
+    first_creds="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}/initial-admin-credentials.txt"
+    if [ -f "$first_creds" ]; then
+        cat "$first_creds"
+        echo ""
+        echo "$(tr_msg "⚠️  以上是一次性凭据，登录成功后会被后端自动删除。")"
+        echo "$(tr_msg "   若文件仍在，说明后端还未成功启动；可手动查看。")"
     else
-        grep -E "Username:|Password:" /var/log/eyvescloud.log /var/log/eyvescloud.err 2>/dev/null || true
+        echo "$(tr_msg "  服务器已有 /root/.eyvescloud/config.db，初始凭据文件不存在。")"
+        echo "$(tr_msg "  管理员密码使用 bcrypt 存储，无法反查；请使用面板内修改密码或重置配置。")"
     fi
-    echo ""
-    echo "$(tr_msg "如果没有显示密码，说明服务器已有") /root/.eyvescloud/config.db."
-    echo "$(tr_msg "已有管理员密码使用 bcrypt 存储，无法反查；请使用面板内修改密码或重置配置。")"
 }
 
 run_step "兼容性检查" check_os_compatibility
@@ -2324,6 +2338,7 @@ run_step "检查升级兼容性" check_upgrade_compatibility
 run_step "下载发行版包" download_release_if_needed
 run_step "安装 EYVESCLOUD 二进制" install_binary
 run_step "安装并启动 EYVESCLOUD 服务" install_service
+run_step "加固数据目录权限" harden_data_dir_perms
 run_step "写入面板语言" set_panel_language
 sleep 2
 print_summary

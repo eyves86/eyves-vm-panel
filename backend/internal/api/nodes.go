@@ -13,9 +13,11 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/notify"
 )
 
 // 主控（Controller）节点管理 API。
@@ -72,6 +74,10 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeItem(w, r, nodeID) })(w, r)
 	case rest == "heartbeat":
 		handleNodeHeartbeat(w, r, nodeID)
+	case rest == "maintenance" && r.Method == http.MethodPost:
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeMaintenance(w, r, nodeID) })(w, r)
+	case rest == "drain" && r.Method == http.MethodGet:
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeDrain(w, r, nodeID) })(w, r)
 	case rest == "install-script":
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScript(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodGet:
@@ -86,6 +92,10 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 			}
 			if node.Status != "" && node.Status != "online" {
 				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "节点不在线，无法发机"})
+				return
+			}
+			if node.MaintenanceMode {
+				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "节点处于维护模式，禁止发机；请先关闭维护模式或选择其他节点"})
 				return
 			}
 			if node.Address == "" {
@@ -606,6 +616,102 @@ func handleNodeContainers(w http.ResponseWriter, r *http.Request, nodeID string)
 	_, _ = w.Write(data)
 }
 
+// handleNodeMaintenance 切换节点维护模式（POST /api/nodes/{id}/maintenance）。
+// 开启后调度器不再把新容器放到该节点，用于系统升级 / 硬件维修前的排空准备。
+func handleNodeMaintenance(w http.ResponseWriter, r *http.Request, nodeID string) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	found := false
+	err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Nodes {
+			if cfg.Nodes[i].ID == nodeID {
+				cfg.Nodes[i].MaintenanceMode = req.Enabled
+				if req.Enabled {
+					cfg.Nodes[i].MaintenanceSince = time.Now().Format(time.RFC3339)
+				} else {
+					cfg.Nodes[i].MaintenanceSince = ""
+				}
+				found = true
+				return
+			}
+		}
+	})
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	if !found {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
+		return
+	}
+	state := "off"
+	if req.Enabled {
+		state = "on"
+	}
+	auditRequest(r, "node.maintenance", nodeID, "maintenance="+state, true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Maintenance mode " + state})
+}
+
+// handleNodeDrain 节点排空清单（GET /api/nodes/{id}/drain）：
+// 返回该节点上的容器列表 + 可接收迁移的候选节点（在线、非维护、有余量）。
+// 热迁移驱动（TransferDriver）落地前，管理员按此清单用迁移导出/导入完成搬移。
+func handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID string) {
+	node, ok := config.FindNode(nodeID)
+	if !ok {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
+		return
+	}
+	if node.Address == "" {
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "节点未配置地址，无法代理访问"})
+		return
+	}
+	// 拉取被控节点容器清单
+	data, status, err := proxyNodeRequest(r, node, http.MethodGet, "/api/agent/containers", nil)
+	if err != nil {
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理请求被控节点失败: " + err.Error()})
+		return
+	}
+	var containers interface{}
+	if status == http.StatusOK {
+		_ = json.Unmarshal(data, &containers)
+	}
+	// 候选目标节点：在线、非维护
+	config.AppConfigMu.RLock()
+	candidates := []map[string]interface{}{}
+	for _, n := range config.AppConfig.Nodes {
+		if n.ID == nodeID || n.MaintenanceMode || n.Status != "online" {
+			continue
+		}
+		candidates = append(candidates, map[string]interface{}{
+			"id":             n.ID,
+			"name":           n.Name,
+			"region_id":      n.RegionID,
+			"ram_free_mb":    n.RAMTotalMB - n.RAMUsedMB,
+			"disk_free_gb":   n.DiskTotalGB - n.DiskUsedGB,
+			"container_count": n.ContainerCount,
+		})
+	}
+	maintenance := node.MaintenanceMode
+	config.AppConfigMu.RUnlock()
+
+	auditRequest(r, "node.drain", nodeID, "list", true, "")
+	w.Header().Set("Content-Type", "application/json")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"node_id":          nodeID,
+			"maintenance_mode": maintenance,
+			"containers":       containers,
+			"candidate_nodes":  candidates,
+			"hint":             "开启 maintenance 后调度器不会再放置新容器；按 containers 清单配合迁移导出/导入把存量容器搬往 candidate_nodes。",
+		},
+	})
+}
+
 func handleNodeContainerAction(w http.ResponseWriter, r *http.Request, nodeID, rest string) {
 	node, ok := config.FindNode(nodeID)
 	if !ok {
@@ -709,4 +815,124 @@ func validateNodeAddress(value string) error {
 
 func shellEscape(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+// ---- 主动节点探活（HA 前置）----
+
+// healthProbeTimeout 单次探活请求超时。
+const healthProbeTimeout = 5 * time.Second
+
+// nodeHealthFailures 记录每个节点连续探活失败次数（内存态，重启清零）。
+var nodeHealthFailures = struct {
+	sync.Mutex
+	counts map[string]int
+}{counts: map[string]int{}}
+
+// nodeHealthFailureThreshold 连续失败达到该次数才判定离线，避免单次网络抖动误报。
+const nodeHealthFailureThreshold = 3
+
+// StartNodeHealthMonitor 启动后台主动探活循环：每 30s 直接 HTTP 探测每个
+// 被控节点的 agent API。心跳超时检测（reconcileNodeOnlineStatuses）只在
+// 有人读节点列表时被动触发；这个循环保证故障在无人访问面板时也能被
+// 及时发现、落审计并（配置了 SMTP 时）邮件告警管理员。
+func StartNodeHealthMonitor() {
+	go func() {
+		for {
+			time.Sleep(30 * time.Second)
+			probeAllNodes()
+		}
+	}()
+}
+
+// probeNode 对单个节点做一次 HTTP 探活（GET agent containers，同时验证认证可用）。
+func probeNode(n config.Node) bool {
+	if n.Address == "" {
+		return false
+	}
+	client := &http.Client{Timeout: healthProbeTimeout}
+	req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(n.Address, "/")+"/api/agent/containers", nil)
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Authorization", "Bearer "+n.Token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	// 401/403 表示 agent 活着但认证配置有误——节点本身在线，但值得在状态里暴露
+	return resp.StatusCode < 500
+}
+
+func probeAllNodes() {
+	config.AppConfigMu.RLock()
+	nodes := append([]config.Node(nil), config.AppConfig.Nodes...)
+	config.AppConfigMu.RUnlock()
+
+	for _, n := range nodes {
+		healthy := probeNode(n)
+		nodeHealthFailures.Lock()
+		if healthy {
+			delete(nodeHealthFailures.counts, n.ID)
+		} else {
+			nodeHealthFailures.counts[n.ID]++
+		}
+		failures := nodeHealthFailures.counts[n.ID]
+		nodeHealthFailures.Unlock()
+
+		if healthy {
+			// 恢复路径：之前被探活判为 offline（心跳停了但 HTTP 活着）→ 修正
+			if n.Status == "offline" {
+				config.UpdateNode(n.ID, func(x *config.Node) {
+					x.Status = "online"
+					x.LastSeen = time.Now().Format("2006-01-02 15:04:05")
+				})
+				config.AddAuditLog("node.health", n.Name, "节点恢复在线（主动探活成功）", "admin")
+				notifyAdminByEmail("节点恢复在线："+n.Name,
+					"被控节点 "+n.Name+"（"+n.Address+"）已恢复在线。", notify.SeverityInfo)
+			}
+			continue
+		}
+
+		if failures >= nodeHealthFailureThreshold && n.Status == "online" {
+			// 连续多次失败且仍标记 online：标记离线 + 审计 + 邮件告警
+			config.UpdateNode(n.ID, func(x *config.Node) { x.Status = "offline" })
+			config.AddAuditLog("node.health", n.Name,
+				fmt.Sprintf("节点连续 %d 次探活失败，标记离线", failures), "admin")
+			notifyAdminByEmail("节点离线告警："+n.Name,
+				fmt.Sprintf("被控节点 %s（%s）连续 %d 次探活失败，已标记离线。该节点上的容器可能不可用，请尽快检查。", n.Name, n.Address, failures),
+				notify.SeverityCritical)
+		}
+	}
+}
+
+// notifyAdminByEmail 给主管理员发告警邮件（配置了 SMTP 时）。HA 事件属于
+// 面板级告警，走管理员通道而非容器属主通道。
+func notifyAdminByEmail(subject, body string, severity notify.Severity) {
+	if !smtpConfigured() {
+		return
+	}
+	adminEmail := func() string {
+		config.AppConfigMu.RLock()
+		defer config.AppConfigMu.RUnlock()
+		// 管理员邮箱暂无专字段；退而求其次用 SMTP From 作为兜底收件人，
+		// 避免告警静默丢失。
+		return strings.TrimSpace(config.AppConfig.SMTPSettings.From)
+	}()
+	if adminEmail == "" {
+		return
+	}
+	eventType := "node.health"
+	go func() {
+		failed := smtpDispatcher.Dispatch(notify.Message{
+			Subject:   subject,
+			Body:      body,
+			Severity:  severity,
+			EventType: eventType,
+			Recipient: adminEmail,
+		}, eventType)
+		for _, err := range failed {
+			fmt.Printf("notify: admin email failed: %v\n", err)
+		}
+	}()
 }

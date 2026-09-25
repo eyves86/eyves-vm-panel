@@ -2435,8 +2435,14 @@ func powerShellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
+// shellQuoteWindows 将任意值安全地嵌入 Windows PowerShell 字符串上下文。
+// 改用单引号包装（PowerShell 单引号为字面量，不展开 `$`/`` ` ``/变量），
+// 只需要把内嵌的单引号 `'` 翻倍成 `''` 即可。
+//
+// 之前版本用双引号 + \" 转义，对 PowerShell 来说双引号仍会展开 `` ` `` / `$()`，
+// 如果口令里恰好含这些字符就会导致命令被截断甚至意外执行。
 func shellQuoteWindows(value string) string {
-	return `"` + strings.ReplaceAll(value, `"`, `\"`) + `"`
+	return "'" + strings.ReplaceAll(value, "'", "''") + "'"
 }
 
 func createSeedISO(seedPath, instanceID, hostname, password, publicKey, mac string, ipv6s []string, ipv4s []string, image Image, sshAuthMode, customUserData, dataMountPath string) error {
@@ -3736,8 +3742,31 @@ func (m *Manager) StartExpiryScanner() {
 			m.AccumulateTraffic()
 			m.StopExpiredContainers(now)
 			m.StopTrafficExceededContainers(now)
+			m.StopSuspendedContainers()
 		}
 	}()
+}
+
+// StopSuspendedContainers 持续把"已挂起（欠费停机）但仍在运行"的 KVM 虚拟机停掉。
+// 挂起通常在 API 层已入队 stop 任务，这里是兜底：覆盖 stop 失败重试与
+// 挂起瞬间正在启动等竞态场景。
+func (m *Manager) StopSuspendedContainers() {
+	for _, container := range config.AppConfig.Containers {
+		if !container.IsKVM() || !container.Suspended {
+			continue
+		}
+		status, err := m.GetContainerStatus(container.VirshName())
+		if err != nil {
+			status = container.Status
+		}
+		if status != "running" {
+			continue
+		}
+		fmt.Printf("KVM VM %s (ID=%d) is suspended, stopping...\n", container.Name, container.ID)
+		if err := m.StopContainer(container.ID); err != nil {
+			fmt.Printf("Warning: failed to stop suspended KVM VM %s: %v\n", container.Name, err)
+		}
+	}
 }
 
 func (m *Manager) StopExpiredContainers(now time.Time) {

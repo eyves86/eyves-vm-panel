@@ -25,6 +25,7 @@ import {
   Layers,
   Disc3,
   Activity,
+  X,
 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
@@ -36,6 +37,7 @@ interface SidebarProps {
   collapsed: boolean
   onToggle: () => void
   mobileOpen: boolean
+  onMobileClose: () => void
 }
 
 function GitHubIcon({ className = '' }: { className?: string }) {
@@ -66,7 +68,7 @@ function LanguageIcon({ className = '' }: { className?: string }) {
   )
 }
 
-export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProps) {
+export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const { logout, isSubUser } = useAuth()
@@ -153,14 +155,17 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
   return (
     <>
     <aside
-      className={`fixed left-0 top-0 z-30 flex h-full flex-col border-r border-gray-200 bg-white transition-all duration-300 dark:border-gray-700 dark:bg-gray-900 ${
+      className={`fixed left-0 top-0 z-30 flex h-dvh flex-col border-r border-gray-200 bg-white transition-all duration-300 dark:border-gray-700 dark:bg-gray-900 ${
         expanded ? 'w-60' : 'w-16'
       } ${
         // 移动端默认隐藏为抽屉，桌面端(md+)始终显示
         mobileOpen ? 'translate-x-0' : '-translate-x-full'
       } md:translate-x-0`}
+      role={mobileOpen ? 'dialog' : undefined}
+      aria-modal={mobileOpen ? 'true' : undefined}
+      aria-label={mobileOpen ? '导航菜单' : undefined}
     >
-      <div className="flex items-center justify-between h-14 px-4 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-gray-200 px-4 dark:border-gray-700">
         {expanded && (
           <div className="flex items-center gap-2">
             <div className="w-7 h-7 flex items-center justify-center">
@@ -174,9 +179,18 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
             <AppIcon className="w-5 h-5" />
           </div>
         )}
+        {/* 移动端抽屉：显示关闭按钮（折叠 chevron 仅桌面端有意义） */}
+        <button
+          onClick={onMobileClose}
+          className="-mr-1 rounded p-1.5 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800 md:hidden"
+          title={t('关闭菜单')}
+          aria-label={t('关闭菜单')}
+        >
+          <X className="h-4 w-4" />
+        </button>
         <button
           onClick={onToggle}
-          className="p-1 rounded hover:bg-gray-100 text-gray-500 dark:hover:bg-gray-800 dark:text-gray-400"
+          className="hidden p-1 rounded hover:bg-gray-100 text-gray-500 dark:hover:bg-gray-800 dark:text-gray-400 md:block"
           title={t('切换侧边栏')}
         >
           {collapsed ? (
@@ -187,7 +201,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
         </button>
       </div>
 
-      <nav className="flex-1 py-4 px-2 space-y-1">
+      <nav className="flex-1 overflow-y-auto overscroll-contain py-4 px-2 space-y-1">
         {!isSubUser && (
           <button
             onClick={() => navigate('/')}
@@ -465,7 +479,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen }: SidebarProp
         )}
       </nav>
 
-      <div className="border-t border-gray-200 dark:border-gray-700 p-2 space-y-1">
+      <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 p-2 space-y-1">
         {/* Theme Toggle */}
         <div className={expanded ? 'flex items-center gap-1' : 'space-y-1'}>
           <button

@@ -368,6 +368,13 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 主管理员首次成功登录后，删除 DataDir 下的一次性首启凭据文件。
+	// 额外管理员（handleExtraAdminLogin 分支）不会持有这份文件，所以只在
+	// 命中主管理员凭据校验的分支里触发。
+	if req.Username == adminUser {
+		config.DeleteFirstBootCredentialsIfExists()
+	}
+
 	jsonResponse(w, http.StatusOK, APIResponse{
 		Success: true,
 		Data: LoginResponse{

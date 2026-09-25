@@ -14,13 +14,20 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// clientAddress extracts the network peer address (host only) for rate limiting.
+// clientAddress 返回真实客户端 IP，用于 API 治理限流。
+// 与 api.clientIP 完全同逻辑：仅当直接对端落在 TrustedProxies 范围内时
+// 才信任 X-Forwarded-For / X-Real-IP / CF-Connecting-IP。
 func clientAddress(r *http.Request) string {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	direct := strings.TrimSpace(r.RemoteAddr)
+	if host, _, err := net.SplitHostPort(direct); err == nil {
+		direct = host
 	}
-	return host
+	direct = strings.TrimPrefix(strings.TrimSuffix(direct, "]"), "[")
+
+	if forwarded, ok := config.ResolveForwardedIPForRequest(direct, r); ok {
+		return forwarded
+	}
+	return direct
 }
 
 // webFS holds embedded frontend files
@@ -109,6 +116,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sub-user/create", corsMiddleware(api.AdminMiddleware(api.HandleSubUserCreate)))
 	mux.HandleFunc("/api/sub-user/login", corsMiddleware(api.HandleSubUserLogin))
 	mux.HandleFunc("/api/sub-user/access", corsMiddleware(api.HandleSubUserAccessCode))
+	mux.HandleFunc("/api/sub-user/change-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserChangePassword)))
 	mux.HandleFunc("/api/sub-users", corsMiddleware(api.AdminMiddleware(api.HandleSubUserList)))
 	mux.HandleFunc("/api/sub-users/", corsMiddleware(api.AdminMiddleware(api.HandleSubUserAction)))
 	mux.HandleFunc("/api/audit-logs", corsMiddleware(api.AdminMiddleware(api.HandleAuditLogs)))
@@ -229,7 +237,11 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/task-queue/settings", corsMiddleware(api.AdminMiddleware(api.HandleTaskQueueSettings)))
 	mux.HandleFunc("/api/v1/batch-create", corsMiddleware(api.AuthMiddleware(api.HandleBatchCreate)))
 	mux.HandleFunc("/api/v1/batch-action", corsMiddleware(api.AuthMiddleware(api.HandleBatchAction)))
-	mux.HandleFunc("/api/v1/sub-user/create", corsMiddleware(api.AuthMiddleware(api.HandleSubUserCreate)))
+	mux.HandleFunc("/api/v1/sub-user/create", corsMiddleware(api.AdminMiddleware(api.HandleSubUserCreate)))
+	mux.HandleFunc("/api/v1/sub-user/change-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserChangePassword)))
+	mux.HandleFunc("/api/v1/usage", corsMiddleware(api.AuthMiddleware(api.HandleUsageExport)))
+	mux.HandleFunc("/api/v1/smtp", corsMiddleware(api.AdminMiddleware(api.HandleSMTPSettings)))
+	mux.HandleFunc("/api/v1/smtp/test", corsMiddleware(api.AdminMiddleware(api.HandleSMTPTest)))
 	mux.HandleFunc("/api/v1/sub-users", corsMiddleware(api.AuthMiddleware(api.HandleSubUserList)))
 	mux.HandleFunc("/api/v1/sub-users/", corsMiddleware(api.AuthMiddleware(api.HandleSubUserAction)))
 	mux.HandleFunc("/api/v1/audit-logs", corsMiddleware(api.AuthMiddleware(api.HandleAuditLogs)))

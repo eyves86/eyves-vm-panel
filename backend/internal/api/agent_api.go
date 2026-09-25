@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 // 被控节点（agent 模式）专用 API，仅供主控（Controller）通过节点 token 调用。
 
 // AgentTokenMiddleware 校验请求携带的主控 token。
+// 比较使用常数时间，避免逐字节提前返回形成的时序侧信道。
 func AgentTokenMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		agentToken := config.AgentToken()
@@ -21,7 +23,7 @@ func AgentTokenMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		token := tokenFromRequest(r)
-		if token == "" || token != agentToken {
+		if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(agentToken)) != 1 {
 			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid agent token"})
 			return
 		}

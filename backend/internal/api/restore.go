@@ -74,6 +74,10 @@ func RestoreHostBootState() {
 			fmt.Printf("Skipping host boot restore for %s: expired at %s\n", c.Name, c.ExpiresAt)
 			continue
 		}
+		if c.Suspended {
+			fmt.Printf("Skipping host boot restore for %s: suspended\n", c.Name)
+			continue
+		}
 
 		status, err := runtimeStatus(c, lxcManager, kvmManager)
 		if err == nil && status == "running" {

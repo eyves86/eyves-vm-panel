@@ -429,7 +429,7 @@ func HandleISOs(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: fmt.Sprintf("download returned HTTP %d", resp.StatusCode)})
 			return
 		}
-		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
 		if err != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 			return

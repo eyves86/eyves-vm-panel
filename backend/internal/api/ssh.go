@@ -29,6 +29,8 @@ type terminalResizeMessage struct {
 type webSSHTicket struct {
 	ContainerName string
 	SubUser       bool
+	ClientIP      string
+	UserAgent     string
 	ExpiresAt     time.Time
 }
 
@@ -69,6 +71,10 @@ func HandleWebSSHTicket(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: policyBlockedMessage(c)})
 		return
 	}
+	if c.Suspended {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起，WebSSH 访问被暂停"})
+		return
+	}
 
 	ticket := randomHex(32)
 	webSSHTickets.Lock()
@@ -76,6 +82,8 @@ func HandleWebSSHTicket(w http.ResponseWriter, r *http.Request) {
 	webSSHTickets.items[ticket] = webSSHTicket{
 		ContainerName: req.ContainerName,
 		SubUser:       isSubUserRequest(r),
+		ClientIP:      clientIP(r),
+		UserAgent:     r.UserAgent(),
 		ExpiresAt:     time.Now().Add(60 * time.Second),
 	}
 	webSSHTickets.Unlock()
@@ -100,7 +108,7 @@ func HandleWebSSH(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	item, ok := consumeWebSSHTicket(ticket, containerName)
+	_, ok := consumeWebSSHTicket(ticket, containerName, r)
 	if !ok {
 		http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
 		return
@@ -111,8 +119,10 @@ func HandleWebSSH(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "container not found", http.StatusNotFound)
 		return
 	}
-	if item.SubUser && c.PolicyBlocked {
-		http.Error(w, "虚拟机被策略临时封禁", http.StatusForbidden)
+	if c.PolicyBlocked {
+		// 容器级 PolicyBlocked 对所有持有者（管理员 + 子用户 + API Key）一律生效，
+		// 避免 ticket 先发出去再封策略的时序窗口。
+		http.Error(w, policyBlockedMessage(c), http.StatusForbidden)
 		return
 	}
 	if c.Status != "running" {
@@ -346,7 +356,7 @@ func writeWebSocketText(ws *websocket.Conn, writeMu *sync.Mutex, msg string) {
 	_ = ws.WriteMessage(websocket.TextMessage, []byte(msg))
 }
 
-func consumeWebSSHTicket(ticket, containerName string) (webSSHTicket, bool) {
+func consumeWebSSHTicket(ticket, containerName string, r *http.Request) (webSSHTicket, bool) {
 	now := time.Now()
 	webSSHTickets.Lock()
 	defer webSSHTickets.Unlock()
@@ -356,7 +366,10 @@ func consumeWebSSHTicket(ticket, containerName string) (webSSHTicket, bool) {
 		return webSSHTicket{}, false
 	}
 	delete(webSSHTickets.items, ticket)
-	return item, item.ContainerName == containerName && now.Before(item.ExpiresAt)
+	return item, item.ContainerName == containerName &&
+		item.ClientIP == clientIP(r) &&
+		item.UserAgent == r.UserAgent() &&
+		now.Before(item.ExpiresAt)
 }
 
 func cleanupExpiredWebSSHTicketsLocked(now time.Time) {

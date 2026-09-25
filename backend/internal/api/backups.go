@@ -94,6 +94,12 @@ func createInstanceBackup(containerID int, createdBy string, keep int, scheduled
 		_ = os.RemoveAll(archive)
 		return nil, fmt.Errorf("archive backup: %w", err)
 	}
+	// 强制归档文件只有 owner 可读写（0600），避免任何可访问 DataDir 的本地用户
+	// 看到客户机 rootfs / qcow2 内容。tar 命令自身按 umask 创建，会是 0644。
+	if err := os.Chmod(archive, 0600); err != nil {
+		_ = os.RemoveAll(archive)
+		return nil, fmt.Errorf("chmod backup archive: %w", err)
+	}
 	info, err := os.Stat(archive)
 	if err != nil {
 		_ = os.RemoveAll(archive)

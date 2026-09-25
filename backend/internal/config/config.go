@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -142,6 +143,12 @@ type Container struct {
 	IOReadMBps                    int                    `json:"io_read_mbps"`
 	IOWriteMBps                   int                    `json:"io_write_mbps"`
 	Status                        string                 `json:"status"`
+	// Suspended 表示容器被财务/管理员挂起（欠费停机语义）：
+	// 运行中的容器会被强制停机，且 start/restart/reinstall 与
+	// WebSSH/WebVNC 访问全部被拒绝，直到 unsuspend。
+	Suspended      bool   `json:"suspended,omitempty"`
+	SuspendedAt    string `json:"suspended_at,omitempty"`
+	SuspendedReason string `json:"suspended_reason,omitempty"`
 	RestoreOnHostBoot             bool                   `json:"restore_on_host_boot,omitempty"`
 	IP                            string                 `json:"ip"`
 	LANIPv4Mode                   string                 `json:"lan_ipv4_mode,omitempty"`
@@ -178,6 +185,7 @@ type Container struct {
 	PolicyBlocked                 bool                   `json:"policy_blocked"`
 	PolicyBlockedReason           string                 `json:"policy_blocked_reason,omitempty"`
 	PolicyBlockedAt               string                 `json:"policy_blocked_at,omitempty"`
+	OwnerSubUserID                string                 `json:"owner_sub_user_id,omitempty"`
 	CloudInitUserData             string                 `json:"cloud_init_user_data,omitempty"`
 	RescueEnabled                 bool                   `json:"rescue_enabled,omitempty"`  // 是否处于救援模式（KVM 从救援 ISO 引导）
 	RescueISOID                   string                 `json:"rescue_iso_id,omitempty"`   // 当前使用的救援 ISO 目录条目 ID
@@ -897,6 +905,7 @@ func AdminUsernameTaken(username string, exceptID string) bool {
 type SubUser struct {
 	ID                   string   `json:"id"`
 	Username             string   `json:"username"`
+	Email                string   `json:"email,omitempty"`
 	Password             string   `json:"password,omitempty"`
 	PassHash             string   `json:"pass_hash"`
 	Role                 string   `json:"role"`             // operator(默认，可操作) / viewer(只读)
@@ -917,6 +926,70 @@ func subUserRoleForStorage(role string) string {
 		return "viewer"
 	}
 	return "operator"
+}
+
+// NormalizeEmail 规范化邮箱：trim + lowercase；空串返回空；非法邮箱返回 error。
+// 只接受纯邮箱形式（name@domain.tld），不接受带 DisplayName 的 RFC 822 格式。
+func NormalizeEmail(email string) (string, error) {
+	email = strings.TrimSpace(strings.ToLower(email))
+	if email == "" {
+		return "", nil
+	}
+	// 拒绝含空格的输入，保证只能是纯 "local@domain.tld"。
+	if strings.ContainsAny(email, " \t\n\r") {
+		return "", fmt.Errorf("email must not contain whitespace")
+	}
+	addr, err := mail.ParseAddress(email)
+	if err != nil {
+		return "", fmt.Errorf("invalid email address: %w", err)
+	}
+	// mail.ParseAddress 接受 "Name <email>" 和纯 "email"，我们只要纯邮箱。
+	if addr.Name != "" {
+		return "", fmt.Errorf("email must be plain address only, no display name")
+	}
+	return addr.Address, nil
+}
+
+// FindSubUserByNameOrEmail 按 Username 或 Email 查找 SubUser。
+// 返回找到的指针副本 + 是否存在。调用方只读即可；如需修改请用 MutateGlobal。
+func FindSubUserByNameOrEmail(identifier string) (*SubUser, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return nil, false
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	lower := strings.ToLower(identifier)
+	for i := range AppConfig.SubUsers {
+		su := &AppConfig.SubUsers[i]
+		if strings.EqualFold(su.Username, identifier) || strings.ToLower(strings.TrimSpace(su.Email)) == lower {
+			cp := *su
+			return &cp, true
+		}
+	}
+	return nil, false
+}
+
+// SubUserUsernameOrEmailExists 检查 Username 或 Email 是否已存在（不区分大小写）。
+// 可选排除某个 ID（编辑场景排除自己）。
+func SubUserUsernameOrEmailExists(username, email, excludeID string) bool {
+	username = strings.TrimSpace(username)
+	email = strings.ToLower(strings.TrimSpace(email))
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for i := range AppConfig.SubUsers {
+		su := &AppConfig.SubUsers[i]
+		if excludeID != "" && su.ID == excludeID {
+			continue
+		}
+		if username != "" && strings.EqualFold(su.Username, username) {
+			return true
+		}
+		if email != "" && strings.ToLower(strings.TrimSpace(su.Email)) == email {
+			return true
+		}
+	}
+	return false
 }
 
 type Snapshot struct {
@@ -1103,6 +1176,20 @@ type APIRateLimitConfig struct {
 	PerMinute int  `json:"per_minute"`
 }
 
+// SMTPSettings 邮件发送（SMTP）配置：用于子用户账号通知
+// （挂起/复机/到期提醒等）。密码只存于此处并随 config.db 0600 权限保护，
+// API 读取时Password 字段不回显（见 api 层 smtp 设置端点）。
+type SMTPSettings struct {
+	Enabled  bool   `json:"enabled"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username,omitempty"`
+	Password string `json:"password,omitempty"`
+	From     string `json:"from"`
+	// TLSMode: "starttls"（默认，587）或 "smtps"（465 隐式 TLS）
+	TLSMode string `json:"tls_mode,omitempty"`
+}
+
 // Tenant represents a tenant group with resource quotas.
 type Tenant struct {
 	ID             string `json:"id"`
@@ -1151,6 +1238,10 @@ type Node struct {
 	ContainerCount int     `json:"container_count,omitempty"`
 	RegionID       string  `json:"region_id,omitempty"` // 所属区域，见 Regions
 	CreatedAt      string  `json:"created_at,omitempty"`
+	// MaintenanceMode 维护模式：调度器不再把新容器放到该节点（升级/维修前开启）。
+	// 已有容器不受影响，配合 drain 列表手动迁移。
+	MaintenanceMode  bool   `json:"maintenance_mode,omitempty"`
+	MaintenanceSince string `json:"maintenance_since,omitempty"`
 }
 
 // Region 是一个逻辑区域，用于把节点/存储/容器按地域分组管理。
@@ -1245,6 +1336,7 @@ type EyvescloudConfig struct {
 	Backups              []BackupRecord         `json:"backups,omitempty"`
 	InstanceBackups      []InstanceBackup       `json:"instance_backups,omitempty"`
 	APIRateLimit         APIRateLimitConfig     `json:"api_rate_limit"`
+	SMTPSettings         SMTPSettings           `json:"smtp_settings"`
 	Tenants              []Tenant               `json:"tenants,omitempty"`
 	MemoryOvercommitRatio float64                `json:"memory_overcommit_ratio"` // 内存超售比：可分配内存 = 物理内存 × 该值（1.0=不变，2.0=2倍）
 	MemoryOvercommitEnabled bool                `json:"memory_overcommit_enabled"` // 是否启用内存超售（默认关闭，保守）
@@ -1326,6 +1418,10 @@ func AgentToken() string {
 var AppConfigMu sync.RWMutex
 
 const DefaultSnapshotLimit = 3
+
+// FirstBootCredsFile 是首次启动时写入 DataDir 下的临时凭据文件名。
+// 主管理员首次成功登录后应由 HandleLogin 删除，避免密钥长期留盘。
+const FirstBootCredsFile = "initial-admin-credentials.txt"
 
 const (
 	DefaultTaskConcurrency = 2
@@ -1535,16 +1631,37 @@ func InitConfig() (*EyvescloudConfig, error) {
 		return nil, err
 	}
 
-	fmt.Println("\n========================================")
-	fmt.Println("  EyvesCloud - LXC Container Manager")
-	fmt.Println("========================================")
-	fmt.Printf("  Username: %s\n", adminUser)
-	fmt.Printf("  Password: %s\n", adminPass)
-	fmt.Println("========================================")
-	fmt.Println("  Please save these credentials!")
-	fmt.Println("  Web Interface: http://0.0.0.0:8999")
-	fmt.Println("========================================")
-	fmt.Println()
+	// 安全加固：首次启动生成的随机口令不应走 stdout（会被 systemd/journald / Docker
+	// 日志 捕获）。改为写入 DataDir 下 0600 权限的凭据文件，由安装脚本 / 运维人员
+	// 手动查看并立即删除。
+	firstBootCreds := filepath.Join(dataDir, FirstBootCredsFile)
+	if err := os.WriteFile(firstBootCreds, []byte(fmt.Sprintf(
+		"# EyvesCloud initial admin credentials - DELETE after first login\nUsername: %s\nPassword: %s\nChangedAt: \n",
+		adminUser, adminPass)), 0600); err == nil {
+		// 目录已经是 0700；额外 chmod 一道以防 umask 意外放开。
+		_ = os.Chmod(firstBootCreds, 0600)
+		fmt.Println("\n========================================")
+		fmt.Println("  EyvesCloud - First Boot Credentials")
+		fmt.Println("========================================")
+		fmt.Printf("  Credentials file: %s (mode 0600)\n", firstBootCreds)
+		fmt.Println("  Read it once, then delete the file.")
+		fmt.Println("  Log in at: http://0.0.0.0:8999")
+		fmt.Println("  AND change the password / enable 2FA immediately.")
+		fmt.Println("========================================")
+		fmt.Println()
+	} else {
+		// 凭据文件落盘失败时，退回到 stdout 但用醒目红字提示风险。
+		fmt.Println("\n========================================")
+		fmt.Println("  EyvesCloud - FIRST BOOT (SECURITY WARNING)")
+		fmt.Println("========================================")
+		fmt.Println("  Credentials file could not be written securely.")
+		fmt.Println("  The generated password is shown below — save it NOW")
+		fmt.Println("  and change it on first login.")
+		fmt.Printf("  Username: %s\n", adminUser)
+		fmt.Printf("  Password: %s\n", adminPass)
+		fmt.Println("========================================")
+		fmt.Println()
+	}
 
 	return AppConfig, nil
 }
@@ -1858,6 +1975,9 @@ func migrateLoadedConfig() bool {
 	if migrateSubUsers() {
 		changed = true
 	}
+	if migrateContainerOwnerSubUserIDs() {
+		changed = true
+	}
 	if removeLegacyVNCMappings() {
 		changed = true
 	}
@@ -2061,6 +2181,46 @@ func migrateSubUsers() bool {
 				changed = true
 			}
 		}
+	}
+	return changed
+}
+
+// migrateContainerOwnerSubUserIDs 从 SubUser.ContainerUUIDs 反推 Container.OwnerSubUserID。
+// 只给那些只被**一个** SubUser 绑的 Container 自动回填 owner；若被多个 SubUser 共享则跳过。
+// 不加锁——migrateLoadedConfig 调用时已持有写锁。
+func migrateContainerOwnerSubUserIDs() bool {
+	changed := false
+	// 先统计每个 container UUID 被哪些 subuser 引用
+	type ownerVote struct {
+		subUserIDs []string
+	}
+	votes := map[string]*ownerVote{}
+	for si := range AppConfig.SubUsers {
+		su := &AppConfig.SubUsers[si]
+		for _, uuid := range su.ContainerUUIDs {
+			if uuid == "" {
+				continue
+			}
+			v, ok := votes[uuid]
+			if !ok {
+				v = &ownerVote{}
+				votes[uuid] = v
+			}
+			v.subUserIDs = append(v.subUserIDs, su.ID)
+		}
+	}
+	// 回填 Container.OwnerSubUserID
+	for ci := range AppConfig.Containers {
+		c := &AppConfig.Containers[ci]
+		if c.OwnerSubUserID != "" {
+			continue
+		}
+		v, ok := votes[c.UUID]
+		if !ok || len(v.subUserIDs) != 1 {
+			continue
+		}
+		c.OwnerSubUserID = v.subUserIDs[0]
+		changed = true
 	}
 	return changed
 }
@@ -2287,11 +2447,19 @@ func MutateGlobal(fn func(*EyvescloudConfig)) error {
 // The backup directory is intentionally not user-configurable: allowing an
 // arbitrary path here would let the backup download/restore handlers read or
 // delete files anywhere on the host.
+//
+// 每次访问都会确保目录存在且 mode 0700，防止 umask / 历史遗留文件导致泄漏。
 func BackupDirectory() string {
+	var dir string
 	if AppConfig != nil && AppConfig.DataDir != "" {
-		return filepath.Join(AppConfig.DataDir, "backups")
+		dir = filepath.Join(AppConfig.DataDir, "backups")
+	} else {
+		dir = filepath.Join(getDataDir(), "backups")
 	}
-	return filepath.Join(getDataDir(), "backups")
+	if err := os.MkdirAll(dir, 0700); err == nil {
+		_ = os.Chmod(dir, 0700)
+	}
+	return dir
 }
 
 // GetContainers returns a snapshot (deep copy) of the active container list.
@@ -2721,6 +2889,19 @@ func findContainerByNameUnlocked(name string) *Container {
 	for i, c := range AppConfig.Containers {
 		if c.Name == name {
 			return &AppConfig.Containers[i]
+		}
+	}
+	return nil
+}
+
+// FindContainerInConfigUnlocked 在给定 cfg 副本里按 UUID 查找容器（不加锁，供 MutateGlobal 内闭包使用）。
+func FindContainerInConfigUnlocked(cfg *EyvescloudConfig, uuid string) *Container {
+	if cfg == nil {
+		return nil
+	}
+	for i := range cfg.Containers {
+		if cfg.Containers[i].UUID == uuid {
+			return &cfg.Containers[i]
 		}
 	}
 	return nil
@@ -3175,4 +3356,15 @@ func CleanStaleContainers() {
 		AppConfig.Containers = valid
 		SaveConfig()
 	}
+}
+
+// DeleteFirstBootCredentialsIfExists 尝试删除 DataDir 下的首启凭据文件。
+// 文件不存在或删除失败都静默忽略——API 层在主管理员首次登录成功后调用它，
+// 即使删除失败也不应该阻断登录流程。
+func DeleteFirstBootCredentialsIfExists() {
+	if AppConfig == nil || strings.TrimSpace(AppConfig.DataDir) == "" {
+		return
+	}
+	target := filepath.Join(AppConfig.DataDir, FirstBootCredsFile)
+	_ = os.Remove(target)
 }

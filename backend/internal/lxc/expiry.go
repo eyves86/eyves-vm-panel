@@ -45,8 +45,33 @@ func (m *Manager) StartExpiryScanner() {
 			m.AccumulateTraffic() // track network traffic deltas
 			m.StopExpiredContainers(now)
 			m.StopTrafficExceededContainers(now)
+			m.StopSuspendedContainers()
 		}
 	}()
+}
+
+// StopSuspendedContainers 持续把"已挂起（欠费停机）但仍在运行"的 LXC 容器停掉。
+// 挂起通常在 API 层已入队 stop 任务，这里是兜底：覆盖 stop 失败重试与
+// 挂起瞬间正在启动等竞态场景。
+func (m *Manager) StopSuspendedContainers() {
+	// GetContainers 自带读锁，此处不再额外加锁（避免递归读锁死锁）。
+	containers := config.GetContainers()
+	for _, container := range containers {
+		if container.IsKVM() || !container.Suspended {
+			continue
+		}
+		status, err := m.GetContainerStatus(container.LxcName())
+		if err != nil {
+			status = container.Status
+		}
+		if status != "running" {
+			continue
+		}
+		fmt.Printf("Container %s (ID=%d) is suspended, stopping...\n", container.Name, container.ID)
+		if err := m.StopContainer(container.ID); err != nil {
+			fmt.Printf("Warning: failed to stop suspended container %s: %v\n", container.Name, err)
+		}
+	}
 }
 
 // StopTrafficExceededContainers stops running containers that have exceeded their monthly traffic limit

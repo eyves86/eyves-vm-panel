@@ -15,6 +15,7 @@ type panelAccessPolicyResponse struct {
 	CurrentSource  string   `json:"current_source"`
 	DirectSource   string   `json:"direct_source"`
 	UsingForwarded bool     `json:"using_forwarded"`
+	Warnings       []string `json:"warnings,omitempty"`
 }
 
 func HandlePanelAccessPolicy(w http.ResponseWriter, r *http.Request) {
@@ -64,7 +65,7 @@ func updatePanelAccessPolicy(w http.ResponseWriter, r *http.Request) {
 
 func panelAccessPolicyStatus(r *http.Request, policy config.PanelAccessPolicy) panelAccessPolicyResponse {
 	decision := evaluatePanelRequest(r, policy)
-	return panelAccessPolicyResponse{
+	resp := panelAccessPolicyResponse{
 		Enabled:        policy.Enabled,
 		AllowedSources: append([]string(nil), policy.AllowedSources...),
 		TrustedProxies: append([]string(nil), policy.TrustedProxies...),
@@ -72,6 +73,12 @@ func panelAccessPolicyStatus(r *http.Request, policy config.PanelAccessPolicy) p
 		DirectSource:   decision.DirectSource,
 		UsingForwarded: decision.UsedForwarded,
 	}
+	// 如果管理员显式配置了 TrustedProxies 但没启用访问控制，意味着 IP 解析依赖代理头，
+	// 但又允许任何人直接连——这在架构上是自相矛盾的，提示管理员注意。
+	if len(policy.TrustedProxies) > 0 && !policy.Enabled {
+		resp.Warnings = append(resp.Warnings, "TrustedProxies configured but panel access control is disabled; X-Forwarded-For will still be honoured for client IP resolution, but every source address is allowed")
+	}
+	return resp
 }
 
 func evaluatePanelRequest(r *http.Request, policy config.PanelAccessPolicy) config.PanelAccessDecision {

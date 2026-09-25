@@ -15,6 +15,26 @@ export default function Layout() {
     setMobileOpen(false)
   }, [location.pathname])
 
+  // 抽屉打开时锁定背景滚动（含 iOS 橡皮筋），并在地址栏高度变化时保持锁定
+  useEffect(() => {
+    if (!mobileOpen) return
+    const previous = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = previous
+    }
+  }, [mobileOpen])
+
+  // Escape 关闭移动端抽屉（键盘 / 平板外接键盘可达性）
+  useEffect(() => {
+    if (!mobileOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMobileOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [mobileOpen])
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
       <AutoTranslate />
@@ -23,6 +43,7 @@ export default function Layout() {
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(!sidebarCollapsed)}
         mobileOpen={mobileOpen}
+        onMobileClose={() => setMobileOpen(false)}
       />
       {mobileOpen && (
         <div

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"net/netip"
 	"strings"
 )
@@ -189,6 +190,40 @@ func resolveForwardedIP(direct netip.Addr, trusted []string, headers ForwardedCl
 		found = true
 	}
 	return current, found
+}
+
+// ResolveForwardedIPForRequest 是 clientIP() / 限流 / 审计等路径的统一 helper：
+// 给定直接对端地址字符串 + HTTP 请求，若该对端在 TrustedProxies 列表中，
+// 则沿 X-Forwarded-For 链回溯到第一个不受信任的地址并返回其字符串；
+// 否则返回 found=false，由调用方退回 RemoteAddr。
+func ResolveForwardedIPForRequest(direct string, r *http.Request) (string, bool) {
+	policy := SnapshotPanelAccessPolicy()
+	return ResolveForwardedIPWithPolicy(direct, policy, r)
+}
+
+// ResolveForwardedIPWithPolicy 同上，但显式传入 PanelAccessPolicy，
+// 测试代码直接用它就能覆盖各种 TrustedProxies 组合，无需碰全局 AppConfig。
+func ResolveForwardedIPWithPolicy(direct string, policy PanelAccessPolicy, r *http.Request) (string, bool) {
+	if len(policy.TrustedProxies) == 0 {
+		return "", false
+	}
+	directAddr, ok := parseRemoteIP(direct)
+	if !ok {
+		return "", false
+	}
+	if !ipInRanges(directAddr, policy.TrustedProxies) {
+		return "", false
+	}
+	headers := ForwardedClientHeaders{
+		ForwardedFor:   r.Header.Get("X-Forwarded-For"),
+		RealIP:         r.Header.Get("X-Real-IP"),
+		CFConnectingIP: r.Header.Get("CF-Connecting-IP"),
+	}
+	forwarded, ok := resolveForwardedIP(directAddr, policy.TrustedProxies, headers)
+	if !ok {
+		return "", false
+	}
+	return forwarded.String(), true
 }
 
 func ipInRanges(addr netip.Addr, ranges []string) bool {

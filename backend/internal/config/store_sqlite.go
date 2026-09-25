@@ -164,6 +164,9 @@ func openConfigDB() error {
 	}
 	next.SetMaxOpenConns(1)
 	next.SetMaxIdleConns(1)
+	// 安全加固：SQLite 文件含 AdminPassHash / JWTSecret / ApiKeyHash 等敏感字段，
+	// 无论是否新建，都把它严格锁到当前用户可读。
+	_ = os.Chmod(dbPath, 0600)
 
 	for _, stmt := range []string{
 		"PRAGMA journal_mode=WAL",
@@ -249,7 +252,10 @@ func ensureSchema() error {
 			image_limit_configured INTEGER NOT NULL DEFAULT 0,
 			rescue_enabled INTEGER NOT NULL DEFAULT 0,
 			rescue_iso_id TEXT,
-			rescue_iso_path TEXT
+			rescue_iso_path TEXT,
+			suspended INTEGER NOT NULL DEFAULT 0,
+			suspended_at TEXT,
+			suspended_reason TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS port_mappings (
 			container_id INTEGER NOT NULL,
@@ -551,6 +557,10 @@ func ensureSchemaMigrations() error {
 		// P0-1 存储抽象层：容器与卷解耦（旧数据为空 = 直连路径模式，不迁移）。
 		{"containers", "root_volume_id", "TEXT"},
 		{"containers", "data_volume_ids", "TEXT"},
+		// 欠费停机（suspend）状态持久化：挂起的容器重启后仍保持挂起。
+		{"containers", "suspended", "INTEGER NOT NULL DEFAULT 0"},
+		{"containers", "suspended_at", "TEXT"},
+		{"containers", "suspended_reason", "TEXT"},
 	} {
 		wasAdded, err := ensureColumn(column.table, column.name, column.def)
 		if err != nil {
@@ -710,6 +720,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	}
 	if raw := strings.TrimSpace(meta["instance_backup_settings"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.InstanceBackupSettings)
+	}
+	if raw := strings.TrimSpace(meta["smtp_settings"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.SMTPSettings)
 	}
 	if raw := strings.TrimSpace(meta["backups"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Backups)
@@ -877,6 +890,7 @@ func saveMeta(tx *sql.Tx) error {
 	nCIbackup, _ := json.Marshal(AppConfig.AdminBackupCodes)
 	backupSettingsJSON, _ := json.Marshal(AppConfig.BackupSettings)
 	instanceBackupSettingsJSON, _ := json.Marshal(AppConfig.InstanceBackupSettings)
+	smtpSettingsJSON, _ := json.Marshal(AppConfig.SMTPSettings)
 	backupsJSON, _ := json.Marshal(AppConfig.Backups)
 	instanceBackupsJSON, _ := json.Marshal(AppConfig.InstanceBackups)
 	rateLimitJSON, _ := json.Marshal(AppConfig.APIRateLimit)
@@ -927,6 +941,7 @@ func saveMeta(tx *sql.Tx) error {
 		"audit_retention_days":   strconv.Itoa(AppConfig.AuditRetentionDays),
 		"backup_settings":        string(backupSettingsJSON),
 		"instance_backup_settings": string(instanceBackupSettingsJSON),
+		"smtp_settings":           string(smtpSettingsJSON),
 		"backups":                string(backupsJSON),
 		"instance_backups":       string(instanceBackupsJSON),
 		"api_rate_limit":          string(rateLimitJSON),
@@ -965,8 +980,9 @@ func saveContainers(tx *sql.Tx) error {
 			policy_blocked, policy_blocked_reason, policy_blocked_at,
 			firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 			tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
-			rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids,
+			suspended, suspended_at, suspended_reason
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			c.ID, c.UUID, c.Name, c.Virtualization, c.LXCName, c.KVMName, c.DiskImage, c.StoragePoolID, c.StoragePath, c.MACAddress, c.Template,
 			c.VCPU, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
 			c.MonthlyTrafficGB, c.TrafficMode, c.TrafficInGB,
@@ -982,6 +998,7 @@ func saveContainers(tx *sql.Tx) error {
 			c.Tenant, c.CloudInitUserData, c.DataDiskGB, c.DataDiskMountPath,
 			boolInt(c.RescueEnabled), c.RescueISOID, c.RescueISOPath,
 			c.RootVolumeID, encodeStringSlice(c.DataVolumeIDs),
+			boolInt(c.Suspended), c.SuspendedAt, c.SuspendedReason,
 		); err != nil {
 			return err
 		}
@@ -1341,7 +1358,8 @@ func loadContainers() ([]Container, error) {
 		policy_blocked, policy_blocked_reason, policy_blocked_at,
 		firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 		tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
-		rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids
+		rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids,
+		suspended, suspended_at, suspended_reason
 		FROM containers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1364,6 +1382,8 @@ func loadContainers() ([]Container, error) {
 		var rescueEnabled int
 		var rescueISOID, rescueISOPath sql.NullString
 		var rootVolumeID, dataVolumeIDs sql.NullString
+		var suspended int
+		var suspendedAt, suspendedReason sql.NullString
 		if err := rows.Scan(
 			&c.ID, &c.UUID, &c.Name, &c.Virtualization, &c.LXCName, &c.KVMName, &c.DiskImage, &storagePoolID, &storagePath, &c.MACAddress, &c.Template,
 			&c.VCPU, &c.RAMMB, &c.DiskGB, &c.NetworkBWMbps, &c.NetworkDownMbps, &c.NetworkUpMbps,
@@ -1380,6 +1400,7 @@ func loadContainers() ([]Container, error) {
 			&tenant, &cloudInitUserData, &c.DataDiskGB, &dataDiskMountPath,
 			&rescueEnabled, &rescueISOID, &rescueISOPath,
 			&rootVolumeID, &dataVolumeIDs,
+			&suspended, &suspendedAt, &suspendedReason,
 		); err != nil {
 			return nil, err
 		}
@@ -1390,6 +1411,9 @@ func loadContainers() ([]Container, error) {
 		c.RescueISOPath = rescueISOPath.String
 		c.RootVolumeID = rootVolumeID.String
 		c.DataVolumeIDs = decodeStringSlice(dataVolumeIDs.String)
+		c.Suspended = suspended != 0
+		c.SuspendedAt = suspendedAt.String
+		c.SuspendedReason = suspendedReason.String
 		c.Tenant = tenant.String
 		c.StoragePoolID = storagePoolID.String
 		c.StoragePath = storagePath.String

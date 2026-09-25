@@ -62,6 +62,10 @@ func HandleVNCTicket(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: policyBlockedMessage(c)})
 		return
 	}
+	if c.Suspended {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起，VNC 控制台访问被暂停"})
+		return
+	}
 	if !c.IsKVM() {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "VNC console is only available for KVM VMs"})
 		return

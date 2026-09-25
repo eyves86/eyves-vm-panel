@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"eyvescloud/internal/config"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // TestSubUserListRedactsPassword 保障子用户列表不回显落库明文口令，
@@ -59,6 +61,104 @@ func TestSubUserListRedactsPassword(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "SuperSecretPlaintext") {
 		t.Fatalf("plaintext password present anywhere in list response")
+	}
+}
+
+// subUserCreateTestEnv 构造一个带已绑定容器的子用户测试环境。
+func subUserCreateTestEnv(t *testing.T, passHash string) {
+	t.Helper()
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig = &config.EyvescloudConfig{
+		DataDir: t.TempDir(),
+		Containers: []config.Container{
+			{ID: 1, Name: "web-01", UUID: "uuid-web01", OwnerSubUserID: "sub-alice"},
+		},
+		SubUsers: []config.SubUser{
+			{
+				ID:             "sub-alice",
+				Username:       "alice",
+				Email:          "alice@example.com",
+				PassHash:       passHash,
+				Password:       "", // 用户已自助改密：落库明文已清空
+				Role:           "operator",
+				ContainerNames: []string{"web-01"},
+				ContainerUUIDs: []string{"uuid-web01"},
+				TokenVersion:   3,
+			},
+		},
+	}
+}
+
+// TestSubUserCreateMergeKeepsUserPassword 防回归：容器已绑定到某子用户、且该用户
+// 已自助修改过密码（PassHash 有效、落库明文已清空）时，再次对同一容器调用
+// create 必须走幂等合并——不得重新生成密码覆盖用户改过的密码，也不得踢下线。
+func TestSubUserCreateMergeKeepsUserPassword(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("UserSetPass123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subUserCreateTestEnv(t, string(hash))
+
+	body := `{"container_name":"web-01"}`
+	req := asAdminRequest(httptest.NewRequest(http.MethodPost, "/api/sub-user/create", strings.NewReader(body)))
+	rec := httptest.NewRecorder()
+	HandleSubUserCreate(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Username != "alice" {
+		t.Fatalf("merge should return the existing sub-user, got %q", resp.Data.Username)
+	}
+	if resp.Data.Password != "" {
+		t.Fatalf("merge must not return a regenerated password, got %q", resp.Data.Password)
+	}
+	if !strings.Contains(rec.Body.String(), "password unchanged") && !strings.Contains(rec.Body.String(), "merged") {
+		t.Fatalf("unexpected message: %s", rec.Body.String())
+	}
+
+	su := config.AppConfig.SubUsers[0]
+	if su.PassHash != string(hash) {
+		t.Fatal("merge must not overwrite PassHash of a user who changed their own password")
+	}
+	if su.TokenVersion != 3 {
+		t.Fatalf("merge must not bump TokenVersion (would kick the user out), got %d", su.TokenVersion)
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte("UserSetPass123")); err != nil {
+		t.Fatal("the user's own password must still verify after merge")
+	}
+}
+
+// TestSubUserCreateMergeRejectsUsernameMismatch 防回归：容器已属于 alice 时，
+// 超管传不同 username 调 create 不得静默把 alice 改名，应 409 提示走 edit 端点。
+func TestSubUserCreateMergeRejectsUsernameMismatch(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("SomeHash123"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subUserCreateTestEnv(t, string(hash))
+
+	body := `{"container_name":"web-01","username":"bob"}`
+	req := asAdminRequest(httptest.NewRequest(http.MethodPost, "/api/sub-user/create", strings.NewReader(body)))
+	rec := httptest.NewRecorder()
+	HandleSubUserCreate(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body.String())
+	}
+	if config.AppConfig.SubUsers[0].Username != "alice" {
+		t.Fatalf("merge must not silently rename the existing sub-user, got %q", config.AppConfig.SubUsers[0].Username)
 	}
 }
 

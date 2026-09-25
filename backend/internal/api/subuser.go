@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ func generateRandomStr(length int) string {
 type subUserResponse struct {
 	ID                   string   `json:"id"`
 	Username             string   `json:"username"`
+	Email                string   `json:"email,omitempty"`
 	Password             string   `json:"password,omitempty"`
 	Role                 string   `json:"role"`
 	Tenant               string   `json:"tenant"`
@@ -40,6 +42,7 @@ func newSubUserResponse(su config.SubUser, password string) subUserResponse {
 	return subUserResponse{
 		ID:                   su.ID,
 		Username:             su.Username,
+		Email:                su.Email,
 		Password:             password,
 		Role:                 subUserRole(su.Role),
 		Tenant:               strings.TrimSpace(su.Tenant),
@@ -61,7 +64,13 @@ func subUserRole(role string) string {
 	return "operator"
 }
 
-// HandleSubUserCreate creates a sub-user for a specific container
+// HandleSubUserCreate 创建子用户。
+// 请求体兼容两种模式：
+//   1) 老模式：container_name 单数，自动生成用户名和密码
+//   2) 新模式（推荐）：container_names 复数 + username + email + tenant + role + password（均可选）
+//      - 不传任何容器 → 创建空账号，后续可通过 sub-users/{id}/bind-containers 追加
+//      - 指定 username / email → 唯一性校验
+//      - 指定 password → 用之；不指定 → 生成随机 16 位
 func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -72,105 +81,391 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		ContainerName string `json:"container_name"`
+		ContainerName  string   `json:"container_name,omitempty"`   // 旧字段，兼容
+		ContainerNames []string `json:"container_names,omitempty"` // 新字段，可多个
+		Username       string   `json:"username,omitempty"`
+		Email          string   `json:"email,omitempty"`
+		Tenant         string   `json:"tenant,omitempty"`
+		Role           string   `json:"role,omitempty"`
+		Password       string   `json:"password,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 		return
 	}
 
-	c := containerByIdentifier(req.ContainerName)
+	// 归一化：把旧 container_name 并入 container_names
+	containers := make([]string, 0, len(req.ContainerNames)+1)
+	seen := map[string]struct{}{}
+	if req.ContainerName != "" {
+		containers = append(containers, req.ContainerName)
+		seen[req.ContainerName] = struct{}{}
+	}
+	for _, name := range req.ContainerNames {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		containers = append(containers, name)
+	}
 
-	if c == nil {
-		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+	// 容器解析：在一次读锁内快照所需字段（UUID/Name/OwnerSubUserID/镜像限制），
+	// 不持有活指针——FindContainerByIdentifier 返回的指针在锁释放后继续读
+	// 会与并发 MutateGlobal 写 OwnerSubUserID 构成数据竞争。
+	// 标识符支持：数字 ID / UUID / 名称。
+	type containerRef struct {
+		UUID                string
+		Name                string
+		OwnerSubUserID      string
+		EffectiveImageIDs   []string
+	}
+	var validContainers []containerRef
+	{
+		var missing string
+		config.AppConfigMu.RLock()
+		for _, ident := range containers {
+			var match *config.Container
+			if id, err := strconv.Atoi(ident); err == nil {
+				for i := range config.AppConfig.Containers {
+					if config.AppConfig.Containers[i].ID == id {
+						match = &config.AppConfig.Containers[i]
+						break
+					}
+				}
+			}
+			if match == nil {
+				for i := range config.AppConfig.Containers {
+					if config.AppConfig.Containers[i].UUID == ident {
+						match = &config.AppConfig.Containers[i]
+						break
+					}
+				}
+			}
+			if match == nil {
+				for i := range config.AppConfig.Containers {
+					if config.AppConfig.Containers[i].Name == ident {
+						match = &config.AppConfig.Containers[i]
+						break
+					}
+				}
+			}
+			if match == nil {
+				missing = ident
+				break
+			}
+			validContainers = append(validContainers, containerRef{
+				UUID:              match.UUID,
+				Name:              match.Name,
+				OwnerSubUserID:    match.OwnerSubUserID,
+				EffectiveImageIDs: effectiveContainerAllowedImageIDs(match),
+			})
+		}
+		config.AppConfigMu.RUnlock()
+		if missing != "" {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found: " + missing})
+			return
+		}
+	}
+
+	// 唯一性校验：username / email
+	// 注意：此处先做初筛（排除空值）；合并场景下目标自身的用户名/邮箱
+	// 会在幂等检查确定 mergeOwnerID 后再按"排除自身"复检，保证 upsert 语义。
+	req.Username = strings.TrimSpace(req.Username)
+	emailNorm, err := config.NormalizeEmail(req.Email)
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid email: " + err.Error()})
 		return
 	}
-	containerName := c.Name
 
-	// Check if sub-user already exists and return the same management password.
-	// The mutation and the in-memory response snapshot happen under the config
-	// write lock so concurrent sub-user edits cannot tear the update.
+	// 密码处理：指定了就校验长度，否则生成随机 16 位
+	password := req.Password
+	if password == "" {
+		password = generateRandomStr(16)
+	}
+	if len(password) < 8 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Password must be at least 8 characters long"})
+		return
+	}
+
+	hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if hashErr != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to hash password"})
+		return
+	}
+
+	// ========== 幂等检查：validContainers 是否已被某个 SubUser 绑定 ==========
+	// 绑定来源同时看两个维度：
+	//   1) Container.OwnerSubUserID（新数据权威字段）
+	//   2) SubUser.ContainerUUIDs（老数据兼容：迁移时多用户共享的容器不会回填 owner）
+	// 规则：
+	//   - 全部未绑定 → 走"创建新 SubUser"路径（路径 B）
+	//   - 部分/全部已绑到**同一个** SubUser → 走"合并到已有 SubUser"路径（路径 A，兼容旧行为）
+	//   - 绑到**不同** SubUser → 拒绝，提示冲突（让超管先厘清关系）
 	type existingResult struct {
+		su       config.SubUser
 		password string
 		message  string
-		su       config.SubUser
 	}
-	var found *existingResult
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
-		for i := range cfg.SubUsers {
-			su := &cfg.SubUsers[i]
-			matched := false
-			for _, uuid := range su.ContainerUUIDs {
-				if uuid == c.UUID {
-					matched = true
+	var mergedResult *existingResult
+	var mergeOwnerID string
+
+	if len(validContainers) > 0 {
+		// 先扫一遍，看 validContainers 分别被哪些 SubUser 绑（owner 字段 + 老列表双来源）
+		boundOwners := map[string]struct{}{} // ownerSubUserID 集合
+		for _, c := range validContainers {
+			if c.OwnerSubUserID != "" {
+				boundOwners[c.OwnerSubUserID] = struct{}{}
+			}
+		}
+		config.AppConfigMu.RLock()
+		for i := range config.AppConfig.SubUsers {
+			su := &config.AppConfig.SubUsers[i]
+			for _, c := range validContainers {
+				if stringContains(su.ContainerUUIDs, c.UUID) {
+					boundOwners[su.ID] = struct{}{}
 					break
 				}
 			}
-			if !matched {
-				continue
+		}
+		config.AppConfigMu.RUnlock()
+
+		switch len(boundOwners) {
+		case 0:
+			// 全部未绑定 → 走创建路径（下面的 B 分支）
+
+		case 1:
+			// 全绑到同一个 SubUser（幂等合并）
+			for id := range boundOwners {
+				mergeOwnerID = id
 			}
-			if su.AccessCode == "" {
-				su.AccessCode = generateRandomStr(8)
+			// 合并前一致性预检（在读锁内取目标的 username/email）：
+			//  1) 目标在检查与落库之间被删除 → 拒绝，不落入创建路径"偷"容器
+			//  2) 请求 username/email 与目标**已有值**冲突 → 409。
+			//     合并只允许"追加容器 + 补缺失字段"，改名/改邮箱必须走 edit 端点，
+			//     避免超管以为在建新账号、实际静默改掉了既有账号。
+			{
+				config.AppConfigMu.RLock()
+				targetFound := false
+				targetUsername, targetEmail := "", ""
+				for i := range config.AppConfig.SubUsers {
+					if config.AppConfig.SubUsers[i].ID == mergeOwnerID {
+						targetFound = true
+						targetUsername = config.AppConfig.SubUsers[i].Username
+						targetEmail = strings.TrimSpace(config.AppConfig.SubUsers[i].Email)
+						break
+					}
+				}
+				config.AppConfigMu.RUnlock()
+				if !targetFound {
+					jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "The sub-user bound to these containers was removed concurrently; retry the request"})
+					return
+				}
+				if req.Username != "" && req.Username != targetUsername {
+					jsonResponse(w, http.StatusConflict, APIResponse{
+						Success: false,
+						Message: fmt.Sprintf("Containers already belong to sub-user %q; the requested username %q mismatches. Use the edit endpoint to rename, or unbind first.", targetUsername, req.Username),
+					})
+					return
+				}
+				if emailNorm != "" && targetEmail != "" && emailNorm != targetEmail {
+					jsonResponse(w, http.StatusConflict, APIResponse{
+						Success: false,
+						Message: fmt.Sprintf("Containers already belong to sub-user %q; the requested email mismatches the one on record. Use the edit endpoint to change it.", targetUsername),
+					})
+					return
+				}
+				// 唯一性校验（排除目标自身，保证传目标自己的用户名/邮箱不误报冲突）
+				if req.Username != "" || emailNorm != "" {
+					if config.SubUserUsernameOrEmailExists(req.Username, emailNorm, mergeOwnerID) {
+						jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Username or email already registered"})
+						return
+					}
+				}
 			}
-			password := su.Password
-			message := "Sub-user link returned"
-			if password == "" {
-				password = generateRandomStr(16)
-				hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-				if err != nil {
+			var merged *existingResult
+			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+				for i := range cfg.SubUsers {
+					su := &cfg.SubUsers[i]
+					if su.ID != mergeOwnerID {
+						continue
+					}
+					// 追加容器
+					for _, c := range validContainers {
+						if !stringContains(su.ContainerUUIDs, c.UUID) {
+							su.ContainerUUIDs = append(su.ContainerUUIDs, c.UUID)
+							su.ContainerNames = appendUniqueString(su.ContainerNames, c.Name)
+						}
+					}
+					// AccessCode 缺失时补一个（兼容旧数据）
+					if su.AccessCode == "" {
+						su.AccessCode = generateRandomStr(8)
+					}
+					// ImageLimitConfigured 未覆盖时从容器继承
+					if !su.ImageLimitConfigured && len(su.AllowedImageIDs) == 0 && len(validContainers) > 0 {
+						su.AllowedImageIDs = validContainers[0].EffectiveImageIDs
+						su.ImageLimitConfigured = true
+					}
+					// 邮箱缺失时补填（已有值时上面的预检已保证一致或为空）
+					if su.Email == "" && emailNorm != "" {
+						su.Email = emailNorm
+					}
+					// 密码策略：
+					//  - 超管显式传了 password → 覆盖（等价重置，失效旧 token）
+					//  - 没传 && PassHash 为空（无可用凭据的异常数据）→ 生成随机密码
+					//  - 没传 && PassHash 有效 → **绝不动密码**（用户可能已自助改密，
+					//    此处重置会把用户改过的密码悄悄覆盖并踢下线）
+					password := su.Password
+					message := "Sub-user link returned (merged)"
+					if req.Password != "" {
+						hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+						if err == nil {
+							su.PassHash = string(hash)
+							su.Password = req.Password
+							su.TokenVersion++
+							password = req.Password
+							message = "Sub-user password updated and containers merged"
+						}
+					} else if su.PassHash == "" {
+						password = generateRandomStr(16)
+						hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+						if err == nil {
+							su.PassHash = string(hash)
+							su.Password = password
+							su.TokenVersion++
+							message = "Sub-user password generated and containers merged"
+						}
+					} else {
+						// 保留既有密码；落库明文缺失时响应里不回显
+						if password == "" {
+							message = "Sub-user link returned (merged; password unchanged)"
+						}
+					}
+					// 同步 OwnerSubUserID 回填到所有 validContainers（仅当为空时）
+					for _, c := range validContainers {
+						if target := config.FindContainerInConfigUnlocked(cfg, c.UUID); target != nil {
+							if target.OwnerSubUserID == "" {
+								target.OwnerSubUserID = su.ID
+							}
+						}
+					}
+					cp := *su
+					merged = &existingResult{su: cp, password: password, message: message}
+					return
+				}
+			})
+			if merged != nil {
+				mergedResult = merged
+			} else {
+				// 目标在预检后、落库前被并发删除：拒绝而不是继续创建新账号
+				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "The sub-user bound to these containers was removed concurrently; retry the request"})
+				return
+			}
+
+		default:
+			// 绑到了不同 SubUser → 拒绝
+			ownerIDs := make([]string, 0, len(boundOwners))
+			for id := range boundOwners {
+				ownerIDs = append(ownerIDs, id)
+			}
+			config.AppConfigMu.RLock()
+			var conflictNames []string
+			for i := range config.AppConfig.SubUsers {
+				su := &config.AppConfig.SubUsers[i]
+				if !stringContains(ownerIDs, su.ID) {
 					continue
 				}
-				su.PassHash = string(hash)
-				su.Password = password
-				su.Token = ""
-				su.TokenVersion++
-				message = "Sub-user password generated"
+				for _, c := range validContainers {
+					if c.OwnerSubUserID == su.ID || stringContains(su.ContainerUUIDs, c.UUID) {
+						conflictNames = append(conflictNames, c.Name+" → "+su.Username)
+						break
+					}
+				}
 			}
-			su.ContainerNames = appendUniqueString(su.ContainerNames, containerName)
-			su.ContainerUUIDs = appendUniqueString(su.ContainerUUIDs, c.UUID)
-			if !su.ImageLimitConfigured && len(su.AllowedImageIDs) == 0 {
-				su.AllowedImageIDs = effectiveContainerAllowedImageIDs(c)
-				su.ImageLimitConfigured = true
-			}
-			found = &existingResult{password: password, message: message, su: *su}
+			config.AppConfigMu.RUnlock()
+			jsonResponse(w, http.StatusConflict, APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("Containers are already owned by different sub-users: %s. Remove existing bindings first.",
+					strings.Join(conflictNames, "; ")),
+			})
 			return
 		}
-	})
-	if found != nil {
-		resp := newSubUserResponse(found.su, found.password)
-		jsonResponse(w, http.StatusOK, APIResponse{
-			Success: true,
-			Message: found.message,
-			Data:    resp,
-		})
+	}
+
+	// ========== 路径 A：幂等合并成功 ==========
+	if mergedResult != nil {
+		resp := newSubUserResponse(mergedResult.su, mergedResult.password)
+		auditDetail := fmt.Sprintf("已合并子用户 %s, 追加容器", mergedResult.su.Username)
+		for _, c := range validContainers {
+			auditDetail += ", " + c.Name
+		}
+		config.AddAuditLog("创建子用户（幂等合并）", mergedResult.su.Username, auditDetail, "admin")
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: mergedResult.message, Data: resp})
 		return
 	}
 
-	// Create new sub-user
-	username := "user-" + generateRandomStr(8)
-	password := generateRandomStr(16)
-	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-
-	// Generate short access code (8 chars, for URL sharing)
-	accessCode := generateRandomStr(8)
-
-	subUser := config.SubUser{
-		ID:                   "sub-" + generateRandomStr(8),
-		Username:             username,
-		Password:             password,
-		PassHash:             string(hash),
-		ContainerNames:       []string{containerName},
-		ContainerUUIDs:       []string{c.UUID},
-		AllowedImageIDs:      effectiveContainerAllowedImageIDs(c),
-		ImageLimitConfigured: true,
-		AccessCode:           accessCode,
-		CreatedAt:            time.Now().Format("2006-01-02 15:04:05"),
+	// ========== 路径 B：创建全新 SubUser ==========
+	// 创建场景的唯一性校验：不排除任何已有账号
+	if req.Username != "" || emailNorm != "" {
+		if config.SubUserUsernameOrEmailExists(req.Username, emailNorm, "") {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Username or email already registered"})
+			return
+		}
 	}
 
+	// 生成或使用指定 username
+	username := req.Username
+	if username == "" {
+		username = "user-" + generateRandomStr(8)
+	}
+
+	// 构建新 SubUser
+	subUser := config.SubUser{
+		ID:             "sub-" + generateRandomStr(8),
+		Username:       username,
+		Email:          emailNorm,
+		Password:       password,
+		PassHash:       string(hash),
+		Role:           subUserRole(req.Role),
+		Tenant:         strings.TrimSpace(req.Tenant),
+		AccessCode:     generateRandomStr(8),
+		CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
+		TokenVersion:   0,
+	}
+	for _, c := range validContainers {
+		subUser.ContainerNames = appendUniqueString(subUser.ContainerNames, c.Name)
+		subUser.ContainerUUIDs = appendUniqueString(subUser.ContainerUUIDs, c.UUID)
+	}
+	// 绑定容器的 allowed_image_ids 作为初始值（仅当超管没显式覆盖时）
+	if len(validContainers) > 0 {
+		subUser.AllowedImageIDs = validContainers[0].EffectiveImageIDs
+		subUser.ImageLimitConfigured = true
+	}
+
+	// 落库：加 SubUser + 把每个 Container 的 OwnerSubUserID 补上（仅当还没绑 owner 时）
+	var auditTargets []string
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.SubUsers = append(cfg.SubUsers, subUser)
+		for _, c := range validContainers {
+			if target := config.FindContainerInConfigUnlocked(cfg, c.UUID); target != nil {
+				if target.OwnerSubUserID == "" {
+					target.OwnerSubUserID = subUser.ID
+				}
+			}
+			auditTargets = append(auditTargets, c.Name)
+		}
 	})
-	config.AddAuditLog("创建子用户", containerName, fmt.Sprintf("用户: %s", username), "admin")
+
+	auditDetail := fmt.Sprintf("用户: %s, 邮箱: %s", username, emailNorm)
+	if len(auditTargets) > 0 {
+		auditDetail += ", 绑定容器: " + strings.Join(auditTargets, ",")
+	} else {
+		auditDetail += ", 空账号（未绑定容器）"
+	}
+	config.AddAuditLog("创建子用户", username, auditDetail, "admin")
 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Sub-user created", Data: newSubUserResponse(subUser, password)})
 }
@@ -203,8 +498,13 @@ func HandleSubUserLogin(w http.ResponseWriter, r *http.Request) {
 	config.AppConfigMu.RLock()
 	subUsers := append([]config.SubUser(nil), config.AppConfig.SubUsers...)
 	config.AppConfigMu.RUnlock()
+	reqNorm := strings.ToLower(strings.TrimSpace(req.Username))
 	for _, su := range subUsers {
-		if su.Username == req.Username {
+		matched := strings.EqualFold(su.Username, req.Username)
+		if !matched && su.Email != "" {
+			matched = strings.ToLower(strings.TrimSpace(su.Email)) == reqNorm
+		}
+		if matched {
 			if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte(req.Password)); err == nil {
 				containerUUIDs := activeSubUserContainerUUIDs(&su)
 				if len(containerUUIDs) == 0 {
@@ -839,6 +1139,16 @@ func appendUniqueString(values []string, value string) []string {
 	return append(values, value)
 }
 
+// stringContains returns true if value is present in values.
+func stringContains(values []string, value string) bool {
+	for _, v := range values {
+		if v == value {
+			return true
+		}
+	}
+	return false
+}
+
 func splitPath(path string) []string {
 	parts := make([]string, 0)
 	for _, p := range splitBy(path, "/") {
@@ -868,13 +1178,14 @@ func splitBy(s, sep string) []string {
 type SubUserListItem struct {
 	ID                   string   `json:"id"`
 	Username             string   `json:"username"`
+	Email                string   `json:"email,omitempty"`
 	Role                 string   `json:"role"`
 	Tenant               string   `json:"tenant"`
 	ContainerNames       []string `json:"container_names"`
 	ContainerUUIDs       []string `json:"container_uuids"`
 	AllowedImageIDs      []string `json:"allowed_image_ids"`
 	ImageLimitConfigured bool     `json:"image_limit_configured"`
-	CurrentImageIDs      []string `json:"current_image_ids"`
+	CurrentImageIDs      []string `json:"current_image_ids,omitempty"`
 	ContainerName        string   `json:"container_name"`
 	ContainerUUID        string   `json:"container_uuid"`
 	AccessCode           string   `json:"access_code"`
@@ -905,6 +1216,7 @@ func HandleSubUserList(w http.ResponseWriter, r *http.Request) {
 		item := SubUserListItem{
 			ID:                   su.ID,
 			Username:             su.Username,
+			Email:                su.Email,
 			Role:                 subUserRole(su.Role),
 			Tenant:               strings.TrimSpace(su.Tenant),
 			ContainerNames:       su.ContainerNames,
@@ -942,8 +1254,11 @@ func HandleSubUserList(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Skip orphaned sub-users with no active containers
-		if item.ContainerName == "" && item.ContainerUUID == "" {
+		// Skip orphaned sub-users whose containers are all gone (legacy data);
+		// but keep new-style empty accounts (created without containers) visible
+		// so admins can bind containers to them later.
+		hasRecordedBinding := len(su.ContainerNames) > 0 || len(su.ContainerUUIDs) > 0
+		if item.ContainerName == "" && item.ContainerUUID == "" && hasRecordedBinding {
 			continue
 		}
 
@@ -1132,6 +1447,118 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		auditRequest(r, "subuser.tenant", updated.Username, "tenant="+tenant, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: newSubUserResponse(updated, updated.Password)})
 
+	case action == "edit" && r.Method == http.MethodPut:
+		// 超管编辑 SubUser 基本信息：username / email / role / password（均可选填）。
+		if !requireScope(w, r, "subuser:update") {
+			return
+		}
+		var req struct {
+			Username string `json:"username"`
+			Email    string `json:"email"`
+			Role     string `json:"role"`
+			Password string `json:"password"` // 超管可选指定新密码
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+			return
+		}
+
+		newUsername := strings.TrimSpace(req.Username)
+		newEmail, err := config.NormalizeEmail(req.Email)
+		if err != nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid email: " + err.Error()})
+			return
+		}
+
+		// 唯一性校验：准备修改的新 username / email 不能与其他 SubUser 冲突
+		if newUsername == "" && newEmail == "" && req.Role == "" && req.Password == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "No fields to update"})
+			return
+		}
+		if newUsername != "" {
+			if config.SubUserUsernameOrEmailExists(newUsername, "", subUserID) {
+				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Username already taken"})
+				return
+			}
+		}
+		if newEmail != "" {
+			if config.SubUserUsernameOrEmailExists("", newEmail, subUserID) {
+				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Email already registered"})
+				return
+			}
+		}
+
+		// 新密码 hash（只有提供了才算）
+		var newPassHash string
+		if req.Password != "" {
+			if len(req.Password) < 8 {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Password must be at least 8 characters long"})
+				return
+			}
+			hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+			if err != nil {
+				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to hash password"})
+				return
+			}
+			newPassHash = string(hash)
+		}
+
+		// 落库
+		var updated config.SubUser
+		var usernameChanged bool
+		var emailChanged bool
+		var passwordChanged bool
+		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			for i := range cfg.SubUsers {
+				if cfg.SubUsers[i].ID != subUserID {
+					continue
+				}
+				if newUsername != "" && cfg.SubUsers[i].Username != newUsername {
+					usernameChanged = true
+					cfg.SubUsers[i].Username = newUsername
+				}
+				if newEmail != "" && strings.TrimSpace(cfg.SubUsers[i].Email) != newEmail {
+					emailChanged = true
+					cfg.SubUsers[i].Email = newEmail
+				}
+				if req.Role != "" {
+					cfg.SubUsers[i].Role = subUserRole(req.Role)
+				}
+				if newPassHash != "" {
+					passwordChanged = true
+					cfg.SubUsers[i].PassHash = newPassHash
+					cfg.SubUsers[i].Password = ""
+				}
+				// 改 username 或改密码 → token 里存的是 username 和 PassHash，必须失效
+				if usernameChanged || passwordChanged {
+					cfg.SubUsers[i].TokenVersion++
+				}
+				updated = cfg.SubUsers[i]
+				return
+			}
+		})
+		if updated.ID == "" {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
+			return
+		}
+
+		// 审计日志
+		var parts []string
+		if usernameChanged {
+			parts = append(parts, "username="+updated.Username)
+		}
+		if emailChanged {
+			parts = append(parts, "email="+updated.Email)
+		}
+		if passwordChanged {
+			parts = append(parts, "password=changed")
+		}
+		auditRequest(r, "subuser.edit", updated.Username, strings.Join(parts, ","), true, "")
+
+		resp := newSubUserResponse(updated, "")
+		resp.Email = updated.Email
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: resp})
+
 	default:
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Action not found"})
 	}
@@ -1169,4 +1596,71 @@ func filterSubUserLoginLogs(username string) []config.SavedLoginLog {
 		result = []config.SavedLoginLog{}
 	}
 	return result
+}
+
+// handleSubUserChangePassword 子用户自助改密码。
+// 只对当前登录的 sub-user 生效；需要提供旧密码做二次确认。
+// 改完强制 TokenVersion++，旧 token 全部失效，前端应自动登出。
+func HandleSubUserChangePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	su := subUserFromRequest(r)
+	if su == nil {
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Sub-user session required"})
+		return
+	}
+
+	var req struct {
+		OldPassword string `json:"old_password"`
+		NewPassword string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	req.OldPassword = strings.TrimSpace(req.OldPassword)
+	req.NewPassword = strings.TrimSpace(req.NewPassword)
+	if req.OldPassword == "" || req.NewPassword == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Both old and new passwords are required"})
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "New password must be at least 8 characters long"})
+		return
+	}
+	if req.NewPassword == req.OldPassword {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "New password must differ from the old one"})
+		return
+	}
+
+	// 在线校验旧密码
+	if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte(req.OldPassword)); err != nil {
+		ip := clientIP(r)
+		config.AddLoginLog(su.Username, ip, r.Header.Get("User-Agent"), false)
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Current password is incorrect"})
+		return
+	}
+
+	// 生成新 hash 并落库
+	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to hash new password"})
+		return
+	}
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.SubUsers {
+			if cfg.SubUsers[i].ID != su.ID {
+				continue
+			}
+			cfg.SubUsers[i].PassHash = string(newHash)
+			cfg.SubUsers[i].Password = "" // 明文只在 rotate-password 响应时短暂存在
+			cfg.SubUsers[i].TokenVersion++ // 失效所有已签发 token
+			break
+		}
+	})
+
+	auditRequest(r, "subuser.self.change_password", su.Username, "self password change", true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Password changed. Please sign in again with the new password."})
 }
