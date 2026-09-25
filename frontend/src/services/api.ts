@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { adminUrl } from './panelPath'
 
 const api = axios.create({
   baseURL: '/api',
@@ -27,8 +28,13 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !isLoginRequest) {
       localStorage.removeItem('eyvescloud_token')
       localStorage.removeItem('eyvescloud_username')
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      // 管理端登录页可能挂在自定义入口路径下；用户门户固定在 /user。
+      // 依据当前所在门户选择正确的登录页，避免跳错门户导致重复登录失败。
+      const loginPath = window.location.pathname.startsWith('/user')
+        ? '/user/login'
+        : adminUrl('login') || '/login'
+      if (window.location.pathname !== loginPath) {
+        window.location.href = loginPath
       }
     }
     return Promise.reject(error)

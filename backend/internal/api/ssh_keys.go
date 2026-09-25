@@ -59,6 +59,9 @@ func HandleSSHKeyItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func listSSHKeys(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "container:read") {
+		return
+	}
 	config.AppConfigMu.RLock()
 	defer config.AppConfigMu.RUnlock()
 
@@ -100,7 +103,8 @@ func listSSHKeys(w http.ResponseWriter, r *http.Request) {
 }
 
 func createSSHKey(w http.ResponseWriter, r *http.Request) {
-	if !requireScope(w, r, "container:ssh-key") && !requireScope(w, r, "admin:write") {
+	if !hasAnyScope(r, "container:ssh-key", "admin:write") {
+		errResponse(w, http.StatusForbidden, "INSUFFICIENT_SCOPE", "Insufficient API key scope: container:ssh-key")
 		return
 	}
 	var req struct {
@@ -200,7 +204,8 @@ func getSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func updateSSHKey(w http.ResponseWriter, r *http.Request, id string) {
-	if !requireScope(w, r, "container:ssh-key") && !requireScope(w, r, "admin:write") {
+	if !hasAnyScope(r, "container:ssh-key", "admin:write") {
+		errResponse(w, http.StatusForbidden, "INSUFFICIENT_SCOPE", "Insufficient API key scope: container:ssh-key")
 		return
 	}
 	key, ok := findSSHKey(id)
@@ -242,7 +247,8 @@ func updateSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func deleteSSHKey(w http.ResponseWriter, r *http.Request, id string) {
-	if !requireScope(w, r, "container:ssh-key") && !requireScope(w, r, "admin:write") {
+	if !hasAnyScope(r, "container:ssh-key", "admin:write") {
+		errResponse(w, http.StatusForbidden, "INSUFFICIENT_SCOPE", "Insufficient API key scope: container:ssh-key")
 		return
 	}
 	key, ok := findSSHKey(id)
