@@ -141,6 +141,7 @@ export interface Container {
   suspended_reason?: string
   suspended_at?: string
   owner_sub_user_id?: string
+  node_id?: string
 }
 
 export interface Template {

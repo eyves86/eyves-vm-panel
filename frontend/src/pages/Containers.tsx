@@ -37,6 +37,7 @@ import {
   SubUser,
   listSubUsers,
   changeContainerOwner,
+  getNodes,
 } from '../services/api'
 import { actionLabel, taskStatusClass, taskStatusLabel } from '../utils/labels'
 
@@ -48,6 +49,8 @@ export default function Containers() {
   const containersRef = useRef<Container[]>([])
   useEffect(() => { containersRef.current = containers }, [containers])
   const [usageByName, setUsageByName] = useState<Record<string, ContainerUsage>>({})
+  // 节点名映射（node_id -> node_name）：用于容器列表显示来源节点。
+  const [nodeNameMap, setNodeNameMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -80,6 +83,24 @@ export default function Containers() {
         }
       })
       .catch(() => { /* 静默失败：列表仍可用，只是没下拉 */ })
+    return () => { cancelled = true }
+  }, [isSubUser])
+
+  // 加载节点列表（仅管理员视图需要，用于显示容器来源节点）
+  useEffect(() => {
+    if (isSubUser) return
+    let cancelled = false
+    getNodes()
+      .then((res) => {
+        if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
+          const map: Record<string, string> = {}
+          for (const n of res.data.data) {
+            if (n.id) map[n.id] = n.name || n.id
+          }
+          setNodeNameMap(map)
+        }
+      })
+      .catch(() => { /* 静默失败 */ })
     return () => { cancelled = true }
   }, [isSubUser])
 
@@ -497,6 +518,7 @@ export default function Containers() {
                   <TableHead>状态</TableHead>
                   <TableHead>系统</TableHead>
                   <TableHead>类型</TableHead>
+                  {!isSubUser && <TableHead>节点</TableHead>}
                   <TableHead
                     icon
                     sortable
@@ -617,6 +639,13 @@ export default function Containers() {
                       <td className="px-2.5 py-2 align-top">
                         <RuntimeBadge runtime={container.virtualization || 'lxc'} />
                       </td>
+                      {!isSubUser && (
+                        <td className="px-2.5 py-2 align-top text-xs text-gray-600 whitespace-nowrap">
+                          {container.node_id
+                            ? nodeNameMap[container.node_id] || container.node_id
+                            : <span className="text-gray-400">本机</span>}
+                        </td>
+                      )}
                       <td className="px-2.5 py-2 align-top">
                         <ProgressCell pct={cpuPct} />
                       </td>

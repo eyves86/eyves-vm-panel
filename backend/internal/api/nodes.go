@@ -318,7 +318,11 @@ func handleNodeItem(w http.ResponseWriter, r *http.Request, nodeID string) {
 	}
 }
 
-// handleNodeHeartbeat 由被控 agent 周期性上报资源与在线状态。
+// handleNodeHeartbeat 由被控 agent 周期性上报资源、容器清单与在线状态。
+// 心跳携带的容器摘要会与主控本地容器列表做增量同步：
+//   - 已存在（同 UUID）：更新状态/资源字段，确保 NodeID 归属正确
+//   - 主控无：新增到主控列表（标记 NodeID）
+//   - 主控有但 agent 未上报：标记 orphaned=true（agent 侧已删）
 func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -339,6 +343,8 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		DiskTotalGB    float64 `json:"disk_total_gb"`
 		DiskUsedGB     float64 `json:"disk_used_gb"`
 		ContainerCount int     `json:"container_count"`
+		// 容器摘要（可选）：agent 心跳时附带的轻量容器列表，供主控聚合。
+		ContainerSummaries []heartbeatContainerSummary `json:"containers,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -370,7 +376,82 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 		return
 	}
+
+	// 增量同步容器列表（仅当 agent 上报了 containers 字段时）
+	if len(req.ContainerSummaries) > 0 {
+		syncAgentContainers(nodeID, req.ContainerSummaries)
+	}
+
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "ok"})
+}
+
+// heartbeatContainerSummary 是 agent 心跳上报的轻量容器摘要。
+type heartbeatContainerSummary struct {
+	ID             int     `json:"id"`
+	UUID           string  `json:"uuid"`
+	Name           string  `json:"name"`
+	Status         string  `json:"status"`
+	Virtualization string  `json:"virtualization"`
+	Suspended      bool    `json:"suspended,omitempty"`
+	VCPU           float64 `json:"vcpu"`
+	RAMMB          int     `json:"ram_mb"`
+	DiskGB         float64 `json:"disk_gb"`
+}
+
+// syncAgentContainers 将 agent 心跳上报的容器摘要增量合并到主控容器列表。
+// 策略：按 UUID 匹配（ID 在不同节点可能重复，UUID 全局唯一）。
+func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		// 1) 标记该节点现有容器为待清理
+		orphaned := make(map[string]bool) // UUID -> true
+		for i := range cfg.Containers {
+			if cfg.Containers[i].NodeID == nodeID {
+				orphaned[cfg.Containers[i].UUID] = true
+			}
+		}
+
+		// 2) 处理 agent 上报的每个容器
+		for _, s := range summaries {
+			if s.UUID == "" {
+				continue
+			}
+			// 找到现有容器
+			found := false
+			for i := range cfg.Containers {
+				if cfg.Containers[i].UUID == s.UUID {
+					// 更新心跳同步的字段（主控侧独占字段如 OwnerSubUserID/SSHPassword 保留）
+					cfg.Containers[i].NodeID = nodeID
+					cfg.Containers[i].Status = s.Status
+					cfg.Containers[i].Virtualization = s.Virtualization
+					cfg.Containers[i].Suspended = s.Suspended
+					cfg.Containers[i].VCPU = s.VCPU
+					cfg.Containers[i].RAMMB = s.RAMMB
+					cfg.Containers[i].DiskGB = s.DiskGB
+					orphaned[s.UUID] = false
+					found = true
+					break
+				}
+			}
+			if !found {
+				// 主控没有此容器：从 agent 推送的摘要新增（最简版，细节由主控按需拉）
+				newC := config.Container{
+					ID: s.ID, UUID: s.UUID, Name: s.Name,
+					Status: s.Status, Virtualization: s.Virtualization,
+					Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
+					DiskGB: s.DiskGB, NodeID: nodeID,
+				}
+				cfg.Containers = append(cfg.Containers, newC)
+			}
+		}
+
+		// 3) 主控有但 agent 没上报的容器：标记 orphaned=true
+		for i := range cfg.Containers {
+			if orphaned[cfg.Containers[i].UUID] {
+				cfg.Containers[i].Status = "orphaned"
+			}
+		}
+	})
+	_ = config.SaveConfig()
 }
 
 // handleNodeInstallScript 生成被控一键安装脚本。

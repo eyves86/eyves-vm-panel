@@ -267,6 +267,27 @@ func collectNodeStatus() map[string]interface{} {
 	if config.AppConfig != nil {
 		config.AppConfigMu.RLock()
 		status["container_count"] = len(config.AppConfig.Containers)
+		// 容器摘要列表（供主控聚合展示）：只传轻量字段，完整详情由主控按需拉取。
+		type containerSummary struct {
+			ID             int    `json:"id"`
+			UUID           string `json:"uuid"`
+			Name           string `json:"name"`
+			Status         string `json:"status"`
+			Virtualization string `json:"virtualization"`
+			Suspended      bool   `json:"suspended,omitempty"`
+			VCPU           float64 `json:"vcpu"`
+			RAMMB          int    `json:"ram_mb"`
+			DiskGB         float64 `json:"disk_gb"`
+		}
+		summaries := make([]containerSummary, 0, len(config.AppConfig.Containers))
+		for _, c := range config.AppConfig.Containers {
+			summaries = append(summaries, containerSummary{
+				ID: c.ID, UUID: c.UUID, Name: c.Name, Status: c.Status,
+				Virtualization: c.Virtualization, Suspended: c.Suspended,
+				VCPU: c.VCPU, RAMMB: c.RAMMB, DiskGB: c.DiskGB,
+			})
+		}
+		status["containers"] = summaries
 		config.AppConfigMu.RUnlock()
 	}
 	return status

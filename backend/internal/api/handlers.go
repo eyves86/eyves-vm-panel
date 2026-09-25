@@ -105,9 +105,39 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 多节点路由：容器 NodeID 非空时，运行时操作转发到所属 agent。
+	// 返回 true 表示已由 agent 处理，调用方应直接 return。
+	routeToAgent := func(agentAction string, body io.Reader) bool {
+		if c == nil || c.NodeID == "" {
+			return false
+		}
+		node, ok := config.FindNode(c.NodeID)
+		if !ok {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "容器所属节点不存在: " + c.NodeID})
+			return true
+		}
+		if node.Address == "" {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "容器所属节点未配置地址"})
+			return true
+		}
+		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+			fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, agentAction), body)
+		if err != nil {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
+			return true
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_, _ = w.Write(data)
+		return true
+	}
+
 	switch {
 	case action == "start" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:power") {
+			return
+		}
+		if routeToAgent("start", nil) {
 			return
 		}
 		HandleSingleTaskAction(w, r, id, "start")
@@ -115,9 +145,15 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:power") {
 			return
 		}
+		if routeToAgent("stop", nil) {
+			return
+		}
 		HandleSingleTaskAction(w, r, id, "stop")
 	case action == "restart" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:power") {
+			return
+		}
+		if routeToAgent("restart", nil) {
 			return
 		}
 		HandleSingleTaskAction(w, r, id, "restart")
@@ -125,9 +161,15 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:reinstall") {
 			return
 		}
+		if routeToAgent("reinstall", r.Body) {
+			return
+		}
 		HandleSingleTaskAction(w, r, id, "reinstall")
 	case action == "suspend" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:power") {
+			return
+		}
+		if routeToAgent("suspend", nil) {
 			return
 		}
 		suspendContainer(w, r, id, true)
@@ -135,14 +177,23 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:power") {
 			return
 		}
+		if routeToAgent("unsuspend", nil) {
+			return
+		}
 		suspendContainer(w, r, id, false)
 	case action == "delete" && r.Method == http.MethodDelete:
 		if !requireScope(w, r, "container:delete") {
 			return
 		}
+		if routeToAgent("destroy", nil) {
+			return
+		}
 		HandleSingleTaskAction(w, r, id, "delete")
 	case action == "reset-password" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:password") {
+			return
+		}
+		if routeToAgent("reset-password", r.Body) {
 			return
 		}
 		resetSSHPassword(w, r, id)
