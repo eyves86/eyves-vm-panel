@@ -1565,9 +1565,24 @@ export interface CheckUpdateResult {
 export const checkUpdate = () =>
   api.get<APIResponse<CheckUpdateResult>>('/v1/check-update')
 
+// 面板更新：可选版本列表（管理员），repo 为 "owner/name"，默认官方仓库
+export interface UpdateRelease {
+  tag_name: string
+  name?: string
+  html_url?: string
+  published_at?: string
+  prerelease?: boolean
+  has_asset?: boolean
+}
+export const listUpdateReleases = (repo?: string) =>
+  api.get<APIResponse<{ repo: string; current: string; releases: UpdateRelease[] }>>('/v1/update/releases', {
+    params: repo ? { repo } : undefined,
+  })
+
 // 面板内直接升级（管理员）：触发下载→解压→备份→就地替换→重启，返回"已开始"。
-export const updatePanel = () =>
-  api.post<APIResponse<{ message?: string }>>('/v1/update', {})
+// 可选指定仓库（owner/name，默认官方仓库）与目标版本 tag（默认最新版）。
+export const updatePanel = (opts?: { repo?: string; tag?: string }) =>
+  api.post<APIResponse<{ message?: string }>>('/v1/update', opts ?? {})
 
 // ---- CPU/带宽策略 (Policy) ----
 export interface PolicyRule {

@@ -30,7 +30,7 @@ import {
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import { useTheme } from '../contexts/ThemeContext'
-import { checkUpdate, getVersion, updatePanel } from '../services/api'
+import { checkUpdate, getVersion, listUpdateReleases, updatePanel, type UpdateRelease } from '../services/api'
 import AppIcon from './AppIcon'
 
 interface SidebarProps {
@@ -83,6 +83,15 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
   // 必须二次确认后才触发，避免误点。
   const [confirmUpdate, setConfirmUpdate] = useState(false)
 
+  // 面板更新管理器：选择仓库（默认官方）与目标版本（默认最新），二次确认后升级。
+  const DEFAULT_REPO = 'FenhaoLost/eyves-vm-panel'
+  const [updateModalOpen, setUpdateModalOpen] = useState(false)
+  const [repoInput, setRepoInput] = useState(DEFAULT_REPO)
+  const [releases, setReleases] = useState<UpdateRelease[]>([])
+  const [releasesLoading, setReleasesLoading] = useState(false)
+  const [releasesErr, setReleasesErr] = useState('')
+  const [selectedTag, setSelectedTag] = useState('')
+
   useEffect(() => {
     getVersion()
       .then(res => {
@@ -107,6 +116,41 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
       .catch(() => {})
   }, [isSubUser])
 
+  // 打开更新管理器：重置为默认仓库并拉取版本列表（默认选中最新版）。
+  const openUpdateManager = () => {
+    if (isSubUser) return
+    setUpdateModalOpen(true)
+    setRepoInput(DEFAULT_REPO)
+    setSelectedTag('')
+    setReleasesErr('')
+    setUpgradeMsg('')
+    void fetchReleases(DEFAULT_REPO)
+  }
+
+  // 拉取指定仓库的版本列表；默认选中第一个（最新）版本。
+  const fetchReleases = async (repo: string) => {
+    const trimmed = repo.trim()
+    if (!trimmed) {
+      setReleasesErr('请输入仓库标识')
+      return
+    }
+    setReleasesLoading(true)
+    setReleasesErr('')
+    try {
+      const res = await listUpdateReleases(trimmed)
+      const list = res.data?.data?.releases || []
+      setReleases(list)
+      const first = list.find(r => r.has_asset) || list[0]
+      setSelectedTag(first?.tag_name || '')
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: { message?: string } } })?.response?.data
+      setReleasesErr(data?.message || '获取版本列表失败')
+      setReleases([])
+    } finally {
+      setReleasesLoading(false)
+    }
+  }
+
   // 面板内直接升级：确认后触发后端升级（下载→解压→备份→替换→重启）。
   // 重复点击由后端以 409 拒绝。
   const handleUpdate = async () => {
@@ -114,8 +158,12 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     setConfirmUpdate(false)
     setUpgrading(true)
     setUpgradeMsg('')
+    const isDefaultRepo = repoInput.trim() === DEFAULT_REPO
     try {
-      const res = await updatePanel()
+      const res = await updatePanel({
+        repo: isDefaultRepo ? undefined : repoInput.trim(),
+        tag: selectedTag || undefined,
+      })
       const msg = res.data?.data?.message || res.data?.message || '升级已开始'
       setUpgradeMsg(msg)
     } catch (err: unknown) {
@@ -510,22 +558,21 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
           <div className={`px-3 py-2 text-xs text-gray-400 dark:text-gray-500 ${expanded ? '' : 'text-center'}`}>
             {expanded ? (
               <div className="flex min-w-0 items-center gap-2">
-                <a
-                  href="https://github.com/FenhaoLost/eyves-vm-panel"
-                  target="_blank"
-                  rel="noreferrer"
-                  title="EyvesCloud"
-                  className="inline-flex min-w-0 items-center gap-1 rounded text-gray-500 transition-colors hover:text-gray-950 dark:text-gray-400 dark:hover:text-white"
+                <button
+                  onClick={openUpdateManager}
+                  disabled={upgrading}
+                  title="面板更新（选择仓库与版本）"
+                  className="inline-flex min-w-0 items-center gap-1 rounded text-gray-500 transition-colors hover:text-gray-950 dark:text-gray-400 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <GitHubIcon className="h-3.5 w-3.5 shrink-0" />
                   <span className="truncate">EyvesCloud</span>
-                </a>
+                </button>
                 <span className="shrink-0">v{version}</span>
                 {hasUpdate && (
                   <button
-                    onClick={() => setConfirmUpdate(true)}
+                    onClick={openUpdateManager}
                     disabled={upgrading}
-                    title={`有可用更新：${latestVersion}（点击查看升级详情）`}
+                    title={`有可用更新：${latestVersion}（点击选择升级版本）`}
                     className="shrink-0 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-700 transition-colors hover:bg-amber-200 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-amber-900/50 dark:text-amber-300 dark:hover:bg-amber-900/70"
                   >
                     <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
@@ -537,15 +584,14 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
                 )}
               </div>
             ) : (
-              <a
-                href="https://github.com/FenhaoLost/eyves-vm-panel"
-                target="_blank"
-                rel="noreferrer"
-                title={`EyvesCloud v${version}`}
-                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white"
+              <button
+                onClick={openUpdateManager}
+                disabled={upgrading}
+                title={`EyvesCloud v${version}（点击管理更新）`}
+                className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <GitHubIcon className="h-4 w-4" />
-              </a>
+              </button>
             )}
           </div>
         )}
@@ -561,6 +607,140 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
       </div>
     </aside>
 
+    {/* 面板更新管理器：选择仓库 → 拉取版本列表 → 选择目标版本（默认最新） */}
+    {updateModalOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
+        <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-xl dark:bg-gray-900">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('面板更新')}</h3>
+            <button
+              type="button"
+              onClick={() => setUpdateModalOpen(false)}
+              className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-gray-600 dark:hover:bg-gray-800"
+              aria-label={t('关闭')}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="mt-3 space-y-3 text-xs text-gray-600 dark:text-gray-300">
+            {/* 仓库选择 */}
+            <div>
+              <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t('更新仓库')}</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={repoInput}
+                  onChange={e => setRepoInput(e.target.value)}
+                  placeholder="owner/name"
+                  className="flex-1 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs outline-none focus:border-gray-400 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                />
+                <button
+                  type="button"
+                  onClick={() => { void fetchReleases(repoInput) }}
+                  disabled={releasesLoading}
+                  className="shrink-0 rounded-md border border-gray-200 px-3 py-1.5 font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {releasesLoading ? t('获取中...') : t('获取版本列表')}
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] text-gray-400">
+                {t('默认官方仓库')}：https://github.com/{DEFAULT_REPO}
+              </p>
+              {repoInput.trim() && repoInput.trim() !== DEFAULT_REPO && (
+                <p className="mt-1 text-[11px] text-red-600 dark:text-red-400">
+                  {t('警告：您正在使用第三方仓库，升级包将来自该仓库并直接替换面板二进制，请仅使用您信任的仓库。')}
+                </p>
+              )}
+            </div>
+
+            {/* 版本列表 */}
+            <div>
+              <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t('目标版本（默认最新）')}</label>
+              {releasesErr && (
+                <div className="rounded-md bg-red-50 px-3 py-2 text-[11px] text-red-600 dark:bg-red-900/30 dark:text-red-400">{releasesErr}</div>
+              )}
+              {!releasesErr && releases.length === 0 && !releasesLoading && (
+                <div className="rounded-md bg-gray-50 px-3 py-2 text-[11px] text-gray-400 dark:bg-gray-800">{t('暂无版本，请点击上方按钮获取')}</div>
+              )}
+              <div className="max-h-56 space-y-1 overflow-y-auto">
+                {releases.map(rel => (
+                  <label
+                    key={rel.tag_name}
+                    className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 transition-colors ${
+                      selectedTag === rel.tag_name
+                        ? 'border-amber-400 bg-amber-50 dark:border-amber-600 dark:bg-amber-900/20'
+                        : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'
+                    } ${rel.has_asset ? '' : 'cursor-not-allowed opacity-50'}`}
+                  >
+                    <input
+                      type="radio"
+                      name="update-target-tag"
+                      checked={selectedTag === rel.tag_name}
+                      disabled={!rel.has_asset}
+                      onChange={() => setSelectedTag(rel.tag_name)}
+                      className="h-3.5 w-3.5"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
+                        <span className="font-medium text-gray-900 dark:text-gray-100">{rel.tag_name}</span>
+                        {rel.tag_name === version && (
+                          <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">{t('当前')}</span>
+                        )}
+                        {rel.prerelease && (
+                          <span className="rounded bg-purple-100 px-1 py-0.5 text-[10px] text-purple-600 dark:bg-purple-900/40 dark:text-purple-300">{t('预发布')}</span>
+                        )}
+                        {!rel.has_asset && (
+                          <span className="rounded bg-gray-100 px-1 py-0.5 text-[10px] text-gray-400 dark:bg-gray-800">{t('无安装包')}</span>
+                        )}
+                      </span>
+                      {rel.published_at && (
+                        <span className="mt-0.5 block text-[10px] text-gray-400">{new Date(rel.published_at).toLocaleString()}</span>
+                      )}
+                    </span>
+                    {rel.html_url && (
+                      <a
+                        href={rel.html_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={e => e.stopPropagation()}
+                        className="shrink-0 text-[10px] text-gray-400 underline hover:text-gray-600 dark:hover:text-gray-200"
+                      >
+                        {t('发布说明')}
+                      </a>
+                    )}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            {upgradeMsg && (
+              <div className="rounded-md bg-amber-50 px-3 py-2 text-[11px] text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">{upgradeMsg}</div>
+            )}
+          </div>
+
+          <div className="mt-5 flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setUpdateModalOpen(false)}
+              className="rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              {t('关闭')}
+            </button>
+            <button
+              type="button"
+              onClick={() => { if (selectedTag) setConfirmUpdate(true) }}
+              disabled={!selectedTag || upgrading}
+              className="rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {upgrading ? t('升级中') : t('更新到此版本')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* 升级二次确认 */}
     {confirmUpdate && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
         <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl dark:bg-gray-900">
@@ -568,9 +748,15 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
           <div className="mt-3 space-y-2 text-xs text-gray-600 dark:text-gray-300">
             <div className="rounded-md bg-gray-50 px-3 py-2 dark:bg-gray-800">
               <div>{t('当前版本')}：v{version}</div>
-              <div>{t('目标版本')}：v{latestVersion || '-'}</div>
+              <div>{t('目标版本')}：v{selectedTag || '-'}</div>
+              <div>{t('更新仓库')}：{repoInput.trim() || DEFAULT_REPO}</div>
             </div>
             <p>{t('升级将执行：下载新版本 → 解压 → 备份当前版本 → 就地替换 → 重启面板服务。')}</p>
+            {repoInput.trim() && repoInput.trim() !== DEFAULT_REPO && (
+              <p className="text-red-600 dark:text-red-400">
+                {t('目标来自第三方仓库，请确认您信任该来源。')}
+              </p>
+            )}
             <p className="text-amber-700 dark:text-amber-400">
               {t('升级期间面板会短暂断开，正在运行的任务可能中断。请确认已完成必要备份后再继续。')}
             </p>

@@ -637,6 +637,162 @@ type githubRelease struct {
 	} `json:"assets"`
 }
 
+// githubReleaseListItem 用于面板版本列表展示（比升级用的 githubRelease 多带元数据）。
+type githubReleaseListItem struct {
+	TagName     string `json:"tag_name"`
+	Name        string `json:"name"`
+	HTMLURL     string `json:"html_url"`
+	PublishedAt string `json:"published_at"`
+	Prerelease  bool   `json:"prerelease"`
+	HasAsset    bool   `json:"has_asset"`
+}
+
+// validateRepoSlug 校验 "owner/name" 形式的仓库标识。
+// 严格白名单字符集，防止把任意字符串拼进 GitHub API URL 造成 SSRF/路径注入。
+func validateRepoSlug(repo string) bool {
+	if repo == "" || len(repo) > 200 || strings.Contains(repo, "//") {
+		return false
+	}
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return false
+	}
+	for _, p := range parts {
+		for _, ch := range p {
+			switch {
+			case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
+			case ch == '-' || ch == '_' || ch == '.':
+			default:
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// validateReleaseTag 校验 release tag：禁止斜杠、空格与控制字符，
+// 防止拼进 /releases/tags/{tag} 时篡改请求路径。
+func validateReleaseTag(tag string) bool {
+	if tag == "" || len(tag) > 200 {
+		return false
+	}
+	for _, ch := range tag {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
+		case ch == '-' || ch == '_' || ch == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// fetchReleasesList 拉取仓库最近 release 列表（供面板选择目标版本）。
+func fetchReleasesList(repo string, limit int) ([]githubReleaseListItem, error) {
+	if !validateRepoSlug(repo) {
+		return nil, fmt.Errorf("无效的仓库标识: %q", repo)
+	}
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", repo, limit)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	setGitHubRequestHeaders(req)
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+
+	var raw []struct {
+		TagName     string `json:"tag_name"`
+		Name        string `json:"name"`
+		HTMLURL     string `json:"html_url"`
+		PublishedAt string `json:"published_at"`
+		Prerelease  bool   `json:"prerelease"`
+		Assets      []struct {
+			Name string `json:"name"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, err
+	}
+	assetName, _ := releaseArchiveAssetName(runtime.GOARCH)
+	items := make([]githubReleaseListItem, 0, len(raw))
+	for _, r := range raw {
+		hasAsset := false
+		for _, a := range r.Assets {
+			if a.Name == assetName {
+				hasAsset = true
+				break
+			}
+		}
+		items = append(items, githubReleaseListItem{
+			TagName:     r.TagName,
+			Name:        r.Name,
+			HTMLURL:     r.HTMLURL,
+			PublishedAt: r.PublishedAt,
+			Prerelease:  r.Prerelease,
+			HasAsset:    hasAsset,
+		})
+	}
+	return items, nil
+}
+
+// fetchReleaseByTag 获取指定 tag 的 release（供面板升级到非最新版本）。
+func fetchReleaseByTag(repo, tag string) (*githubRelease, error) {
+	if !validateRepoSlug(repo) {
+		return nil, fmt.Errorf("无效的仓库标识: %q", repo)
+	}
+	if !validateReleaseTag(tag) {
+		return nil, fmt.Errorf("无效的版本标签: %q", tag)
+	}
+	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	setGitHubRequestHeaders(req)
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return nil, err
+	}
+	return &release, nil
+}
+
+// ValidateRepoSlug / ValidateReleaseTag / FetchReleasesList 是给 api 包用的导出包装。
+func ValidateRepoSlug(repo string) bool { return validateRepoSlug(repo) }
+
+func ValidateReleaseTag(tag string) bool { return validateReleaseTag(tag) }
+
+type GithubReleaseListItem = githubReleaseListItem
+
+func FetchReleasesList(repo string, limit int) ([]GithubReleaseListItem, error) {
+	return fetchReleasesList(repo, limit)
+}
+
 func cliUpgradeSystem(reader *bufio.Reader) {
 	cliPrintln("\n--- 检查并升级 EyvesCloud ---")
 	cliPrintln("升级只会替换 /usr/local/bin/eyvescloud，并保留 /root/.eyvescloud 里的配置、容器数据和任务记录。")
@@ -950,6 +1106,55 @@ func PanelSelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 		return "", false, err
 	}
 	return latest, true, nil
+}
+
+// PanelSelfUpdateTo 供面板「选择仓库 + 指定版本」升级调用。
+// repo 为 "owner/name"（空 = 默认仓库）；tag 为目标版本（空 = 最新版本）。
+// 显式指定 tag 时允许同版本重装（用户主动选择的回滚/修复场景）。
+func PanelSelfUpdateTo(repo, tag string) (newVersion string, upgraded bool, err error) {
+	if repo == "" {
+		repo = strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO"))
+		if repo == "" {
+			repo = version.Repo
+		}
+	}
+	if !validateRepoSlug(repo) {
+		return "", false, fmt.Errorf("无效的仓库标识: %q", repo)
+	}
+	if tag != "" && !validateReleaseTag(tag) {
+		return "", false, fmt.Errorf("无效的版本标签: %q", tag)
+	}
+	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
+	if err != nil {
+		return "", false, err
+	}
+	current := version.Current()
+
+	var release *githubRelease
+	if tag == "" {
+		release, err = fetchLatestRelease(repo, assetName)
+	} else {
+		release, err = fetchReleaseByTag(repo, tag)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("获取目标版本失败: %w", err)
+	}
+	target := strings.TrimSpace(release.TagName)
+	if target == "" {
+		return "", false, fmt.Errorf("GitHub Release 没有 tag_name，无法升级")
+	}
+	// 显式指定 tag 时不做同版本短路（允许重装）；仅"最新版"路径保持原语义。
+	if tag == "" && sameVersion(current, target) {
+		return target, false, nil
+	}
+	assetURL := findReleaseAsset(release, assetName)
+	if assetURL == "" {
+		return "", false, fmt.Errorf("目标 Release %s 没有找到 %s，无法升级", target, assetName)
+	}
+	if err := upgradeFromReleaseAssetInPlace(assetURL, target, assetName); err != nil {
+		return "", false, err
+	}
+	return target, true, nil
 }
 
 // upgradeFromReleaseAssetInPlace 与 upgradeFromReleaseAsset 功能相同，
