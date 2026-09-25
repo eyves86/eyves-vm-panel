@@ -40,7 +40,8 @@ func HandleSSHKeys(w http.ResponseWriter, r *http.Request) {
 
 // HandleSSHKeyItem 处理 /api/ssh-keys/{id} 条目端点（获取 + 更新 + 删除）。
 func HandleSSHKeyItem(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/ssh-keys/")
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/ssh-keys/")
+	rest = strings.TrimPrefix(rest, "/api/ssh-keys/")
 	if rest == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "SSH key id required"})
 		return

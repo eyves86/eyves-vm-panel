@@ -28,7 +28,8 @@ func HandleRecipes(w http.ResponseWriter, r *http.Request) {
 
 // HandleRecipeItem 处理 /api/recipes/{id}（获取 + 更新 + 删除 + 执行）。
 func HandleRecipeItem(w http.ResponseWriter, r *http.Request) {
-	rest := strings.TrimPrefix(r.URL.Path, "/api/recipes/")
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/recipes/")
+	rest = strings.TrimPrefix(rest, "/api/recipes/")
 	// 处理 /api/recipes/{id}/execute 子路由
 	if parts := strings.SplitN(rest, "/", 2); len(parts) == 2 && parts[1] == "execute" {
 		executeRecipe(w, r, parts[0])

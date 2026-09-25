@@ -45,7 +45,8 @@ func HandleSecGroupItem(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, secGroupScopeForMethod(r.Method)) {
 		return
 	}
-	rest := strings.TrimPrefix(r.URL.Path, "/api/security-groups/")
+	rest := strings.TrimPrefix(r.URL.Path, "/api/v1/security-groups/")
+	rest = strings.TrimPrefix(rest, "/api/security-groups/")
 	if rest == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "security group id required"})
 		return
@@ -68,7 +69,8 @@ func HandleSecGroupRules(w http.ResponseWriter, r *http.Request) {
 	if !requireScope(w, r, secGroupScopeForMethod(r.Method)) {
 		return
 	}
-	path := strings.TrimPrefix(r.URL.Path, "/api/security-groups/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/security-groups/")
+	path = strings.TrimPrefix(path, "/api/security-groups/")
 	parts := strings.SplitN(path, "/", 3) // [id, "rules", ruleId?]
 	if len(parts) < 1 || parts[0] == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "security group id required"})
@@ -100,7 +102,8 @@ func HandleSecGroupRules(w http.ResponseWriter, r *http.Request) {
 // POST /api/containers/{id}/security-groups/{gid} → 绑定
 // DELETE /api/containers/{id}/security-groups/{gid} → 解绑
 func HandleContainerSecGroups(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/containers/")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/containers/")
+	path = strings.TrimPrefix(path, "/api/containers/")
 	parts := strings.SplitN(path, "/", 4)
 	if len(parts) < 3 || parts[1] != "security-groups" {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "not found"})
