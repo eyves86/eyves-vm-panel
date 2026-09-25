@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CalendarClock,
+  CloudUpload,
   History,
+  KeyRound,
   Pencil,
   Play,
   Plus,
@@ -15,13 +17,21 @@ import {
   deleteBackupPlan,
   getBackupPlans,
   getContainers,
+  getRemoteBackupSettings,
   runBackupPlan,
+  testRemoteBackup,
   updateBackupPlan,
+  updateRemoteBackupSettings,
   type BackupPlan,
   type BackupPlanInput,
   type Container,
+  type RemoteBackupSettings,
 } from '../services/api'
+import { copyToClipboard } from '../utils/clipboard'
 import { useDialog } from '../components/Dialog'
+
+const INPUT_CLASS =
+  'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white'
 
 // cron 预设：常见周期一键选择，避免用户手写 5 字段表达式。
 const CRON_PRESETS: { label: string; cron: string }[] = [
@@ -79,6 +89,9 @@ export default function BackupPlans() {
   const [form, setForm] = useState<FormState | null>(null)
   const [saving, setSaving] = useState(false)
   const [historyPlan, setHistoryPlan] = useState<BackupPlan | null>(null)
+  const [remote, setRemote] = useState<RemoteBackupSettings | null>(null)
+  const [remoteSaving, setRemoteSaving] = useState(false)
+  const [remoteTesting, setRemoteTesting] = useState(false)
 
   const fetchData = useCallback(async () => {
     try {
@@ -96,9 +109,56 @@ export default function BackupPlans() {
     }
   }, [])
 
+  const fetchRemote = useCallback(async () => {
+    try {
+      const res = await getRemoteBackupSettings()
+      setRemote(res.data.data || null)
+    } catch {
+      // 异地备份设置获取失败不应影响备份计划本身的展示。
+      setRemote(null)
+    }
+  }, [])
+
   useEffect(() => {
     void fetchData()
-  }, [fetchData])
+    void fetchRemote()
+  }, [fetchData, fetchRemote])
+
+  const errMessage = (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { message?: string } } }).response?.data?.message || fallback
+
+  const saveRemote = async () => {
+    if (!remote) return
+    setRemoteSaving(true)
+    try {
+      const res = await updateRemoteBackupSettings(remote)
+      if (res.data.data) setRemote(res.data.data)
+      await alert('已保存', '异地备份设置已保存')
+    } catch (err: unknown) {
+      await alert('保存失败', errMessage(err, '保存异地备份设置失败'))
+    } finally {
+      setRemoteSaving(false)
+    }
+  }
+
+  const testRemote = async () => {
+    if (!remote) return
+    setRemoteTesting(true)
+    try {
+      await testRemoteBackup(remote)
+      await alert('连接正常', '已成功连接备份服务器，并可写入远端目录')
+    } catch (err: unknown) {
+      await alert('连接失败', errMessage(err, '无法连接备份服务器'))
+    } finally {
+      setRemoteTesting(false)
+    }
+  }
+
+  const copyRemoteKey = async () => {
+    if (!remote?.public_key) return
+    const ok = await copyToClipboard(remote.public_key)
+    await alert(ok ? '已复制' : '复制失败', ok ? '公钥已复制到剪贴板' : '请手动选择复制公钥内容')
+  }
 
   const containerName = useMemo(() => {
     const map = new Map<number, string>()
@@ -222,6 +282,144 @@ export default function BackupPlans() {
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
           {error}
+        </div>
+      )}
+
+      {remote && (
+        <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+            <div>
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
+                <CloudUpload className="h-4 w-4" />
+                异地备份（SSH/SCP）
+              </h2>
+              <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                把每份实例备份额外复制到自备的备份服务器，应对本机磁盘损坏 / 整机丢失
+              </p>
+            </div>
+            <label className="flex shrink-0 items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+              <input
+                type="checkbox"
+                checked={remote.enabled}
+                onChange={(e) => setRemote({ ...remote, enabled: e.target.checked })}
+                className="h-4 w-4"
+              />
+              启用
+            </label>
+          </div>
+
+          <div className="space-y-3 px-4 py-4 text-xs">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">主机</label>
+                <input
+                  type="text"
+                  value={remote.host}
+                  onChange={(e) => setRemote({ ...remote, host: e.target.value })}
+                  placeholder="backup.example.com"
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">端口</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={remote.port || 22}
+                  onChange={(e) => setRemote({ ...remote, port: Number(e.target.value) || 22 })}
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">SSH 用户</label>
+                <input
+                  type="text"
+                  value={remote.user}
+                  onChange={(e) => setRemote({ ...remote, user: e.target.value })}
+                  placeholder="root"
+                  className={INPUT_CLASS}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">远端目录</label>
+                <input
+                  type="text"
+                  value={remote.remote_dir}
+                  onChange={(e) => setRemote({ ...remote, remote_dir: e.target.value })}
+                  placeholder="/data/eyvescloud-backups"
+                  className={`${INPUT_CLASS} font-mono`}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">
+                私钥路径（可选，留空使用面板数据目录内的默认密钥）
+              </label>
+              <input
+                type="text"
+                value={remote.key_path || ''}
+                onChange={(e) => setRemote({ ...remote, key_path: e.target.value })}
+                placeholder="默认：数据目录/ssh/backup_ed25519"
+                className={`${INPUT_CLASS} font-mono`}
+              />
+            </div>
+
+            {remote.public_key && (
+              <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/60">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 font-medium text-gray-700 dark:text-gray-200">
+                    <KeyRound className="h-3.5 w-3.5" />
+                    请把下面公钥加入远端 ~/.ssh/authorized_keys
+                  </span>
+                  <button
+                    type="button"
+                    onClick={copyRemoteKey}
+                    className="shrink-0 rounded border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    复制
+                  </button>
+                </div>
+                <p className="mt-1.5 break-all font-mono text-[11px] text-gray-600 dark:text-gray-300">
+                  {remote.public_key}
+                </p>
+              </div>
+            )}
+
+            {remote.last_result && (
+              <div
+                className={`rounded-md px-3 py-2 text-[11px] ${
+                  remote.last_result === 'success'
+                    ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                    : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
+                }`}
+              >
+                最近一次同步：{remote.last_result === 'success' ? '成功' : '失败'} · {formatTime(remote.last_run_at)}
+                {remote.last_error ? ` · ${remote.last_error}` : ''}
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={testRemote}
+                disabled={remoteTesting || remoteSaving}
+                className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+              >
+                {remoteTesting ? '测试中…' : '测试连接'}
+              </button>
+              <button
+                type="button"
+                onClick={saveRemote}
+                disabled={remoteSaving || remoteTesting}
+                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black"
+              >
+                <Save className="h-3.5 w-3.5" />
+                {remoteSaving ? '保存中…' : '保存设置'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

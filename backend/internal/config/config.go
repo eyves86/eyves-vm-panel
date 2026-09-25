@@ -1192,6 +1192,10 @@ type InstanceBackup struct {
 	Scheduled     bool   `json:"scheduled,omitempty"`
 	Path          string `json:"path"`       // archive file on disk (.tar)
 	SizeBytes     int64  `json:"size_bytes"` // archive file size
+	// RemoteUploaded / RemoteError 记录该备份是否已成功上传到异地目标（见 RemoteBackupSettings）。
+	// 上传失败不影响本地备份的有效性，仅在 UI 中提示异地副本缺失。
+	RemoteUploaded bool   `json:"remote_uploaded,omitempty"`
+	RemoteError    string `json:"remote_error,omitempty"`
 }
 
 // BackupSettings controls automatic configuration backups.
@@ -1211,6 +1215,26 @@ type InstanceBackupSettings struct {
 	IntervalHours int    `json:"interval_hours"`
 	Keep          int    `json:"keep"`
 	LastRunAt     string `json:"last_run_at,omitempty"`
+}
+
+// RemoteBackupSettings 异地备份目标：把实例备份归档额外复制到一台用户自备的
+// 备份服务器（通过 SSH/SCP），用于应对本机磁盘损坏、整机丢失等灾难场景。
+//
+// 安全约束：
+//   - 仅支持 SSH/SCP 免密登录，私钥只允许放在面板数据目录内（KeyPath 可为空，
+//     默认使用 DataDir/ssh/backup_ed25519，由面板用 ssh-keygen 生成）；
+//   - 远端目录与文件名在拼接命令前做白名单校验，杜绝命令注入。
+type RemoteBackupSettings struct {
+	Enabled   bool   `json:"enabled"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	User      string `json:"user"`
+	RemoteDir string `json:"remote_dir"` // 远端目录（绝对路径，如 /data/eyvescloud-backups）
+	KeyPath   string `json:"key_path,omitempty"`
+	// LastResult / LastError / LastRunAt 记录最近一次异地同步的结果，供管理页展示。
+	LastResult string `json:"last_result,omitempty"` // success / failed
+	LastError  string `json:"last_error,omitempty"`
+	LastRunAt  string `json:"last_run_at,omitempty"`
 }
 
 // APIRateLimitConfig controls per-client rate limiting on the versioned API.
@@ -1406,6 +1430,8 @@ type EyvescloudConfig struct {
 	AuditRetentionDays   int                    `json:"audit_retention_days"`
 	BackupSettings       BackupSettings         `json:"backup_settings"`
 	InstanceBackupSettings InstanceBackupSettings `json:"instance_backup_settings"`
+	// RemoteBackupSettings 异地（远程）备份目标，见 RemoteBackupSettings。
+	RemoteBackupSettings RemoteBackupSettings `json:"remote_backup_settings"`
 	Backups              []BackupRecord         `json:"backups,omitempty"`
 	InstanceBackups      []InstanceBackup       `json:"instance_backups,omitempty"`
 	// BackupPlans 定时备份计划（每计划独立 cron / 目标 / 保留份数）。
@@ -2716,6 +2742,50 @@ func UpdateInstanceBackupSettings(settings InstanceBackupSettings) {
 func UpdateInstanceBackupLastRun(at string) {
 	MutateGlobal(func(cfg *EyvescloudConfig) {
 		cfg.InstanceBackupSettings.LastRunAt = at
+	})
+}
+
+// GetRemoteBackupSettings returns a snapshot of the off-site backup target settings.
+func GetRemoteBackupSettings() RemoteBackupSettings {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return RemoteBackupSettings{}
+	}
+	return AppConfig.RemoteBackupSettings
+}
+
+// UpdateRemoteBackupSettings replaces the off-site backup target settings.
+func UpdateRemoteBackupSettings(settings RemoteBackupSettings) {
+	MutateGlobal(func(cfg *EyvescloudConfig) {
+		cfg.RemoteBackupSettings = settings
+	})
+}
+
+// RecordRemoteBackupResult records the outcome of the last off-site sync attempt.
+func RecordRemoteBackupResult(ok bool, errMsg string) {
+	MutateGlobal(func(cfg *EyvescloudConfig) {
+		if ok {
+			cfg.RemoteBackupSettings.LastResult = "success"
+			cfg.RemoteBackupSettings.LastError = ""
+		} else {
+			cfg.RemoteBackupSettings.LastResult = "failed"
+			cfg.RemoteBackupSettings.LastError = errMsg
+		}
+		cfg.RemoteBackupSettings.LastRunAt = time.Now().Format("2006-01-02 15:04:05")
+	})
+}
+
+// SetInstanceBackupRemoteStatus updates the off-site upload status of one backup record.
+func SetInstanceBackupRemoteStatus(id string, uploaded bool, errMsg string) {
+	MutateGlobal(func(cfg *EyvescloudConfig) {
+		for i := range cfg.InstanceBackups {
+			if cfg.InstanceBackups[i].ID == id {
+				cfg.InstanceBackups[i].RemoteUploaded = uploaded
+				cfg.InstanceBackups[i].RemoteError = errMsg
+				return
+			}
+		}
 	})
 }
 

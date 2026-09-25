@@ -161,6 +161,10 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/backup/download", corsMiddleware(api.AdminMiddleware(api.HandleBackupDownload)))
 	mux.HandleFunc("/api/backup/restore", corsMiddleware(api.AdminMiddleware(api.HandleBackupRestore)))
 
+	// 企业化：异地（远程）备份目标（SSH/SCP）：设置读写与连通性测试
+	mux.HandleFunc("/api/backup/remote-settings", corsMiddleware(api.AdminMiddleware(api.HandleRemoteBackupSettings)))
+	mux.HandleFunc("/api/backup/remote-test", corsMiddleware(api.AdminMiddleware(api.HandleRemoteBackupTest)))
+
 	// SSH 密钥管理（端用户级：admin + subuser 均可管理自己的 key）
 	mux.HandleFunc("/api/ssh-keys", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeys))))
 	mux.HandleFunc("/api/ssh-keys/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeyItem))))
@@ -205,6 +209,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/backup/list", corsMiddleware(api.AdminMiddleware(api.HandleBackupList)))
 	mux.HandleFunc("/api/v1/backup/download", corsMiddleware(api.AdminMiddleware(api.HandleBackupDownload)))
 	mux.HandleFunc("/api/v1/backup/restore", corsMiddleware(api.AdminMiddleware(api.HandleBackupRestore)))
+	mux.HandleFunc("/api/v1/backup/remote-settings", corsMiddleware(api.AdminMiddleware(api.HandleRemoteBackupSettings)))
+	mux.HandleFunc("/api/v1/backup/remote-test", corsMiddleware(api.AdminMiddleware(api.HandleRemoteBackupTest)))
 	mux.HandleFunc("/api/v1/health", corsMiddleware(api.HandleHealth))
 	mux.HandleFunc("/api/v1/health/detail", corsMiddleware(api.AdminMiddleware(api.HandleHealthDetail)))
 	mux.HandleFunc("/api/v1/openapi.json", corsMiddleware(api.HandleOpenAPI))

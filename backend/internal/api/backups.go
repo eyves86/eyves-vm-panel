@@ -60,7 +60,25 @@ func snapshotRestoreBase() (string, error) {
 // createInstanceBackup 为容器创建一份完整备份并做 keep-N 轮换。
 // keep <= 0 表示不自动清理（手工备份全量保留），keep > 0 表示仅保留最新 keep 份。
 // scheduled 标记该备份是否由定时任务触发，便于前端区分。
+//
+// 若开启了异地备份，本地归档完成后会异步复制到远端（不阻塞创建与调度）。
 func createInstanceBackup(containerID int, createdBy string, keep int, scheduled bool) (*config.InstanceBackup, error) {
+	backup, err := createInstanceBackupLocal(containerID, createdBy, keep, scheduled)
+	if err != nil {
+		return nil, err
+	}
+	if config.GetRemoteBackupSettings().Enabled {
+		id := backup.ID
+		go func() {
+			if err := syncBackupToRemote(id); err != nil {
+				fmt.Printf("Warning: off-site backup sync failed for %s: %v\n", id, err)
+			}
+		}()
+	}
+	return backup, nil
+}
+
+func createInstanceBackupLocal(containerID int, createdBy string, keep int, scheduled bool) (*config.InstanceBackup, error) {
 	instanceBackupMu.Lock()
 	defer instanceBackupMu.Unlock()
 
@@ -143,6 +161,8 @@ func pruneInstanceBackups(containerID int, keep int) {
 			_ = os.RemoveAll(b.Path)
 		}
 		config.RemoveInstanceBackup(b.ID)
+		// 本地被轮换掉时，同步清理异地副本（尽力而为，失败只告警）。
+		go removeRemoteBackupBestEffort(b)
 	}
 }
 
@@ -174,7 +194,13 @@ func restoreInstanceBackup(backupID string) error {
 		return err
 	}
 	if _, err := os.Stat(backup.Path); err != nil {
-		return fmt.Errorf("backup archive not found: %v", err)
+		// 本地归档丢失（磁盘损坏 / 被手工清理）时，若曾上传到异地则尝试拉回后还原。
+		if !backup.RemoteUploaded {
+			return fmt.Errorf("backup archive not found: %v", err)
+		}
+		if ferr := fetchBackupFromRemote(backupID); ferr != nil {
+			return fmt.Errorf("backup archive not found locally and off-site fetch failed: %v", ferr)
+		}
 	}
 	c := config.FindContainer(backup.ContainerID)
 	if c == nil {
@@ -237,6 +263,8 @@ func deleteInstanceBackup(backupID string) error {
 	if !config.RemoveInstanceBackup(backupID) {
 		return fmt.Errorf("failed to remove backup record")
 	}
+	// 同步清理异地副本（尽力而为，失败只告警）。
+	go removeRemoteBackupBestEffort(*backup)
 	return nil
 }
 
