@@ -478,6 +478,39 @@ func ensureSchema() error {
 			expires_at TEXT NOT NULL,
 			in_progress INTEGER NOT NULL DEFAULT 0
 		)`,
+		// 任务终态留档表：独立于 tasks / task_extra_ports / task_nat_port_mappings
+		// 这三张"创建续跑"表。后者只保存 pending/running 用于重启续跑，
+		// 完成/失败/取消的任务在此留档，供任务历史与任务中心查询。
+		`CREATE TABLE IF NOT EXISTS task_history (
+			id            TEXT PRIMARY KEY,
+			type          TEXT,
+			container_id  INTEGER,
+			container_name TEXT,
+			status        TEXT,
+			error         TEXT,
+			stage         TEXT,
+			stage_detail  TEXT,
+			percent       INTEGER NOT NULL DEFAULT 0,
+			user          TEXT,
+			ip            TEXT,
+			user_agent    TEXT,
+			created_at    TEXT,
+			started_at    TEXT,
+			ended_at      TEXT,
+			duration_ms   INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_history_created ON task_history (created_at DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_history_status ON task_history (status)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_history_container ON task_history (container_id)`,
+		// 任务日志表：按 task_id 追加的过程日志（INFO/WARN/ERROR）。
+		`CREATE TABLE IF NOT EXISTS task_logs (
+			id         INTEGER PRIMARY KEY AUTOINCREMENT,
+			task_id    TEXT NOT NULL,
+			level      TEXT NOT NULL,
+			message    TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs (task_id, id)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -730,6 +763,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["instance_backups"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.InstanceBackups)
 	}
+	if raw := strings.TrimSpace(meta["backup_plans"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.BackupPlans)
+	}
 	if raw := strings.TrimSpace(meta["api_rate_limit"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.APIRateLimit)
 	}
@@ -893,6 +929,7 @@ func saveMeta(tx *sql.Tx) error {
 	smtpSettingsJSON, _ := json.Marshal(AppConfig.SMTPSettings)
 	backupsJSON, _ := json.Marshal(AppConfig.Backups)
 	instanceBackupsJSON, _ := json.Marshal(AppConfig.InstanceBackups)
+	backupPlansJSON, _ := json.Marshal(AppConfig.BackupPlans)
 	rateLimitJSON, _ := json.Marshal(AppConfig.APIRateLimit)
 	tenantsJSON, _ := json.Marshal(AppConfig.Tenants)
 	adminsJSON, _ := json.Marshal(AppConfig.Admins)
@@ -944,6 +981,7 @@ func saveMeta(tx *sql.Tx) error {
 		"smtp_settings":           string(smtpSettingsJSON),
 		"backups":                string(backupsJSON),
 		"instance_backups":       string(instanceBackupsJSON),
+		"backup_plans":           string(backupPlansJSON),
 		"api_rate_limit":          string(rateLimitJSON),
 		"tenants":                 string(tenantsJSON),
 		"memory_overcommit_enabled": btoa(AppConfig.MemoryOvercommitEnabled),

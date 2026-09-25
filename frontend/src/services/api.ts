@@ -1356,6 +1356,79 @@ export const getTasks = () =>
 export const deleteTask = (taskId: string) =>
   api.delete<APIResponse>(`/tasks/${taskId}`)
 
+// Task History / Center
+export interface TaskHistoryEntry {
+  id: string
+  type: string
+  container_id?: number
+  container_name?: string
+  status: string
+  error?: string
+  stage?: string
+  stage_detail?: string
+  percent: number
+  user?: string
+  ip?: string
+  user_agent?: string
+  created_at: string
+  started_at?: string
+  ended_at?: string
+  duration_ms: number
+}
+
+export interface TaskLogEntry {
+  level: string
+  message: string
+  created_at: string
+}
+
+export interface TaskHistoryPage {
+  total: number
+  page: number
+  page_size: number
+  items: TaskHistoryEntry[]
+  timenow?: string
+}
+
+export interface TaskHistoryStats {
+  total: number
+  by_status: Record<string, number>
+  by_type: Record<string, number>
+  avg_duration_ms: number
+}
+
+export interface TaskStats {
+  history: TaskHistoryStats
+  live: { concurrency?: number; active?: number; pending?: number }
+}
+
+export interface TaskDetailData {
+  task: TaskHistoryEntry & Partial<Task>
+  logs: TaskLogEntry[]
+  live: boolean
+}
+
+export interface TaskHistoryQuery {
+  status?: string
+  type?: string
+  page?: number
+  page_size?: number
+}
+
+export const getTaskHistory = (params: TaskHistoryQuery = {}) =>
+  api.get<APIResponse<TaskHistoryPage>>('/tasks/history', { params })
+
+export const getTaskStats = () =>
+  api.get<APIResponse<TaskStats>>('/tasks/stats')
+
+export const getTaskDetail = (taskId: string) =>
+  api.get<APIResponse<TaskDetailData>>(`/tasks/${encodeURIComponent(taskId)}`)
+
+export const cancelTask = (taskId: string) =>
+  api.post<APIResponse<{ id: string; status: string; running: boolean }>>(
+    `/tasks/${encodeURIComponent(taskId)}/cancel`,
+  )
+
 export const batchCreate = (containers: CreateContainerRequest[]) =>
   api.post<APIResponse<string[]>>('/batch-create', { containers })
 
@@ -1542,6 +1615,54 @@ export const getInstanceBackupSettings = () =>
 
 export const updateInstanceBackupSettings = (data: InstanceBackupSettings) =>
   api.put<APIResponse<InstanceBackupSettings>>('/instance-backup/settings', data)
+
+// 备份计划（定时备份）
+export interface BackupPlanRun {
+  at: string
+  status: string
+  backups: number
+  failed: number
+  error?: string
+  duration_ms: number
+}
+
+export interface BackupPlan {
+  id: string
+  name: string
+  container_id: number
+  cron: string
+  enabled: boolean
+  keep: number
+  created_at?: string
+  last_run_at?: string
+  next_run_at?: string
+  last_status?: string
+  last_error?: string
+  runs?: BackupPlanRun[]
+}
+
+export interface BackupPlanInput {
+  name?: string
+  container_id: number
+  cron: string
+  enabled?: boolean
+  keep?: number
+}
+
+export const getBackupPlans = () =>
+  api.get<APIResponse<BackupPlan[]>>('/backup-plans')
+
+export const createBackupPlan = (data: BackupPlanInput) =>
+  api.post<APIResponse<BackupPlan>>('/backup-plans', data)
+
+export const updateBackupPlan = (id: string, data: BackupPlanInput) =>
+  api.put<APIResponse<BackupPlan>>(`/backup-plans/${encodeURIComponent(id)}`, data)
+
+export const deleteBackupPlan = (id: string) =>
+  api.delete<APIResponse>(`/backup-plans/${encodeURIComponent(id)}`)
+
+export const runBackupPlan = (id: string) =>
+  api.post<APIResponse>(`/backup-plans/${encodeURIComponent(id)}/run`)
 
 export const createWebSSHTicket = (containerName: string) =>
   api.post<APIResponse<{ ticket: string }>>('/ssh-ticket', { container_name: containerName })
