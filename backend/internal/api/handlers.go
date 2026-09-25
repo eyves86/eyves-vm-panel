@@ -167,7 +167,14 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		auditRequest(r, "container.tenant", c.Name, "tenant="+tenant, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{"tenant": tenant}})
 	case action == "owner" && r.Method == http.MethodPut:
-		// 变更容器属主 SubUser（空字符串 = 解绑）
+		// 变更容器属主 SubUser（空字符串 = 解绑）。
+		// 属主变更是管理操作：仅管理员/管理侧 API 密钥可执行。
+		// 子用户（即使 operator）持有 container:power 也不得变更属主，
+		// 否则可自行解绑或把容器转移给他人，破坏归属与计量完整性。
+		if ctx, ok := authContextFromRequest(r); ok && ctx.Type == authTypeSubUser {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Sub-users cannot change container owner"})
+			return
+		}
 		if !requireScope(w, r, "container:power") {
 			return
 		}
