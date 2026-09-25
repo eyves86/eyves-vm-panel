@@ -758,6 +758,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["instance_backup_settings"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.InstanceBackupSettings)
 	}
+	if raw := strings.TrimSpace(meta["remote_backup_settings"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.RemoteBackupSettings)
+	}
 	if raw := strings.TrimSpace(meta["smtp_settings"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.SMTPSettings)
 	}
@@ -930,6 +933,7 @@ func saveMeta(tx *sql.Tx) error {
 	nCIbackup, _ := json.Marshal(AppConfig.AdminBackupCodes)
 	backupSettingsJSON, _ := json.Marshal(AppConfig.BackupSettings)
 	instanceBackupSettingsJSON, _ := json.Marshal(AppConfig.InstanceBackupSettings)
+	remoteBackupSettingsJSON, _ := json.Marshal(AppConfig.RemoteBackupSettings)
 	smtpSettingsJSON, _ := json.Marshal(AppConfig.SMTPSettings)
 	backupsJSON, _ := json.Marshal(AppConfig.Backups)
 	instanceBackupsJSON, _ := json.Marshal(AppConfig.InstanceBackups)
@@ -982,6 +986,7 @@ func saveMeta(tx *sql.Tx) error {
 		"audit_retention_days":   strconv.Itoa(AppConfig.AuditRetentionDays),
 		"backup_settings":        string(backupSettingsJSON),
 		"instance_backup_settings": string(instanceBackupSettingsJSON),
+		"remote_backup_settings":   string(remoteBackupSettingsJSON),
 		"smtp_settings":           string(smtpSettingsJSON),
 		"backups":                string(backupsJSON),
 		"instance_backups":       string(instanceBackupsJSON),

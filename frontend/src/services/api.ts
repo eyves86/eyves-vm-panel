@@ -1630,6 +1630,31 @@ export const getInstanceBackupSettings = () =>
 export const updateInstanceBackupSettings = (data: InstanceBackupSettings) =>
   api.put<APIResponse<InstanceBackupSettings>>('/instance-backup/settings', data)
 
+// 异地（远程）备份目标：把实例备份归档额外复制到运营方自备的备份服务器（SSH/SCP）
+export interface RemoteBackupSettings {
+  enabled: boolean
+  host: string
+  port: number
+  user: string
+  remote_dir: string
+  key_path?: string
+  last_result?: string
+  last_error?: string
+  last_run_at?: string
+  // 后端派生字段（只读）：实际生效的私钥路径、需安装到远端 authorized_keys 的公钥
+  effective_key_path?: string
+  public_key?: string
+}
+
+export const getRemoteBackupSettings = () =>
+  api.get<APIResponse<RemoteBackupSettings>>('/backup/remote-settings')
+
+export const updateRemoteBackupSettings = (data: RemoteBackupSettings) =>
+  api.put<APIResponse<RemoteBackupSettings>>('/backup/remote-settings', data)
+
+export const testRemoteBackup = (data: RemoteBackupSettings) =>
+  api.post<APIResponse>('/backup/remote-test', data)
+
 // 备份计划（定时备份）
 export interface BackupPlanRun {
   at: string
