@@ -25,6 +25,7 @@ import {
   TerminalSquare,
   Trash2,
   UserPlus,
+  UserCog,
   X,
 } from 'lucide-react'
 import {
@@ -82,6 +83,8 @@ import {
   updateResourceLimit,
   updatePortMapping,
   SubUser,
+  listSubUsers,
+  changeContainerOwner,
   getISOs,
   ISOFile,
   containerRescue,
@@ -170,6 +173,8 @@ export default function ContainerDetail() {
   const [savingExpiry, setSavingExpiry] = useState(false)
   const [draft, setDraft] = useState<MappingDraft>(emptyDraft)
   const [savingMapping, setSavingMapping] = useState(false)
+  const [subUsers, setSubUsers] = useState<SubUser[]>([])
+  const [changingOwner, setChangingOwner] = useState(false)
   const [showReinstall, setShowReinstall] = useState(false)
   const [templates, setTemplates] = useState<Template[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState('')
@@ -312,6 +317,20 @@ export default function ContainerDetail() {
     const timer = window.setInterval(fetchContainer, 5000)
     return () => window.clearInterval(timer)
   }, [fetchContainer])
+
+  // 加载子用户列表（仅管理员视图需要）
+  useEffect(() => {
+    if (isSubUser) return
+    let cancelled = false
+    listSubUsers()
+      .then((res) => {
+        if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
+          setSubUsers(res.data.data)
+        }
+      })
+      .catch(() => { /* 静默失败 */ })
+    return () => { cancelled = true }
+  }, [isSubUser])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -634,6 +653,44 @@ export default function ContainerDetail() {
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
       dialog.alert('失败', error.response?.data?.message || '修改租户失败')
+    }
+  }
+
+  const handleChangeOwner = async () => {
+    if (!containerIdentifier || !container) return
+    // 构建选项：空=解绑，列表里的每个 SubUser
+    const currentOwner = container.owner_sub_user_id || ''
+    const options = [
+      { id: '', label: '— 解绑（无属主）—' },
+      ...subUsers.map((u) => ({ id: u.id, label: `${u.username}${u.tenant ? ` (${u.tenant})` : ''}` })),
+    ]
+    const current = options.findIndex((o) => o.id === currentOwner)
+    const promptLines = options.map((o, i) => `${i + 1}) ${o.label}`).join('\n')
+    const input = window.prompt(
+      `变更容器属主（当前第 ${current + 1} 项）：\n${promptLines}\n\n输入编号（1-${options.length}）：`,
+      String(current + 1)
+    )
+    if (input === null) return
+    const idx = parseInt(input.trim(), 10) - 1
+    if (idx < 0 || idx >= options.length) {
+      dialog.alert('无效输入', `请输入 1 - ${options.length} 之间的编号`)
+      return
+    }
+    const nextOwnerId = options[idx].id
+    if (nextOwnerId === currentOwner) return
+    setChangingOwner(true)
+    try {
+      const res = await changeContainerOwner(containerIdentifier, nextOwnerId)
+      if (res.data.success) {
+        setContainer((prev) => prev ? { ...prev, owner_sub_user_id: nextOwnerId } : prev)
+        const label = nextOwnerId ? `已绑定给子用户「${options[idx].label.replace(/^.*\s/, '')}」` : '已解绑属主'
+        dialog.alert('完成', label)
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('失败', error.response?.data?.message || '变更属主失败')
+    } finally {
+      setChangingOwner(false)
     }
   }
 
@@ -1548,6 +1605,22 @@ export default function ContainerDetail() {
             {!isSubUser && (
               <button onClick={handleEditTenant} className="ml-1 p-0.5 text-gray-400 hover:text-black rounded" title="修改租户">
                 <Pencil className="w-3 h-3" />
+              </button>
+            )}
+          </PlainRow>
+          <PlainRow label="属主" value={(() => {
+            if (!container.owner_sub_user_id) return '未绑定'
+            const owner = subUsers.find((u) => u.id === container.owner_sub_user_id)
+            return owner ? owner.username : '已删除的子用户'
+          })()}>
+            {!isSubUser && (
+              <button
+                onClick={handleChangeOwner}
+                disabled={changingOwner}
+                className="ml-1 p-0.5 text-gray-400 hover:text-black rounded disabled:opacity-50"
+                title="变更属主"
+              >
+                <UserCog className="w-3 h-3" />
               </button>
             )}
           </PlainRow>

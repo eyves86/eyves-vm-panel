@@ -137,6 +137,10 @@ export interface Container {
   rescue_enabled?: boolean
   rescue_iso_id?: string
   rescue_iso_path?: string
+  suspended?: boolean
+  suspended_reason?: string
+  suspended_at?: string
+  owner_sub_user_id?: string
 }
 
 export interface Template {
@@ -1356,6 +1360,9 @@ export interface SubUser {
   id: string
   username: string
   password?: string
+  tenant?: string
+  role?: string
+  email?: string
   container_names: string[]
   container_uuids?: string[]
   allowed_image_ids?: string[]
@@ -1363,6 +1370,8 @@ export interface SubUser {
   current_image_ids?: string[]
   access_code: string
   created_at: string
+  last_login?: string
+  last_login_ip?: string
 }
 
 export interface NATNetworkInfo {
@@ -1378,8 +1387,14 @@ export interface NATNetworkInfo {
 export const createSubUser = (containerId: ContainerIdentifier) =>
   api.post<APIResponse<SubUser>>('/sub-user/create', { container_name: String(containerId) })
 
+export const listSubUsers = () =>
+  api.get<APIResponse<SubUser[]>>('/sub-users')
+
 export const updateSubUserImages = (id: string, allowedImageIds: string[]) =>
   api.put<APIResponse<SubUser>>(`/sub-users/${id}/images`, { allowed_image_ids: allowedImageIds })
+
+export const changeContainerOwner = (id: number | string, ownerSubUserId: string) =>
+  api.put<APIResponse<{ owner_sub_user_id: string; owner_username?: string }>>(`/containers/${id}/owner`, { owner_sub_user_id: ownerSubUserId })
 
 // Audit Logs
 export interface AuditLog {

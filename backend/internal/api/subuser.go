@@ -1149,6 +1149,20 @@ func stringContains(values []string, value string) bool {
 	return false
 }
 
+// removeString returns a new slice with the first occurrence of value removed.
+func removeString(values []string, value string) []string {
+	out := make([]string, 0, len(values))
+	removed := false
+	for _, v := range values {
+		if !removed && v == value {
+			removed = true
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 func splitPath(path string) []string {
 	parts := make([]string, 0)
 	for _, p := range splitBy(path, "/") {

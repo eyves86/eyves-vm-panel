@@ -18,6 +18,7 @@ import {
   Square,
   Trash2,
   ListTodo,
+  UserCog,
   X,
 } from 'lucide-react'
 import CreateContainerModal from '../components/CreateContainerModal'
@@ -33,6 +34,9 @@ import {
   Task,
   getTasks,
   deleteTask,
+  SubUser,
+  listSubUsers,
+  changeContainerOwner,
 } from '../services/api'
 import { actionLabel, taskStatusClass, taskStatusLabel } from '../utils/labels'
 
@@ -61,6 +65,23 @@ export default function Containers() {
   const [pageSize, setPageSize] = useState(10)
   const [sortField, setSortField] = useState<'id' | 'cpu' | 'ram' | 'disk' | 'net' | null>(null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [subUsers, setSubUsers] = useState<SubUser[]>([])
+  const [ownerMenuId, setOwnerMenuId] = useState<number | null>(null)
+  const [changingOwner, setChangingOwner] = useState(false)
+
+  // 加载子用户列表（仅管理员视图需要）
+  useEffect(() => {
+    if (isSubUser) return
+    let cancelled = false
+    listSubUsers()
+      .then((res) => {
+        if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
+          setSubUsers(res.data.data)
+        }
+      })
+      .catch(() => { /* 静默失败：列表仍可用，只是没下拉 */ })
+    return () => { cancelled = true }
+  }, [isSubUser])
 
   const handleSort = (field: 'id' | 'cpu' | 'ram' | 'disk' | 'net') => {
     if (sortField === field) {
@@ -472,6 +493,7 @@ export default function Containers() {
                     ID
                   </TableHead>
                   <TableHead>名称</TableHead>
+                  {!isSubUser && <TableHead>属主</TableHead>}
                   <TableHead>状态</TableHead>
                   <TableHead>系统</TableHead>
                   <TableHead>类型</TableHead>
@@ -565,6 +587,24 @@ export default function Containers() {
                           {container.name}
                         </button>
                       </td>
+                      {!isSubUser && (
+                        <td className="px-2.5 py-2 align-top">
+                          {(() => {
+                            const owner = subUsers.find((u) => u.id === container.owner_sub_user_id)
+                            if (container.owner_sub_user_id && owner) {
+                              return (
+                                <span className="inline-flex items-center gap-1 text-xs">
+                                  <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                    <UserCog className="w-3 h-3" />
+                                    {owner.username}
+                                  </span>
+                                </span>
+                              )
+                            }
+                            return <span className="text-gray-400 text-xs">未绑定</span>
+                          })()}
+                        </td>
+                      )}
                       <td className="px-2.5 py-2 align-top">
                         <StatusBadge running={isRunning} initializing={isInitializing} task={task} placeholder={isPlaceholder} policyBlocked={isPolicyBlocked} />
                       </td>

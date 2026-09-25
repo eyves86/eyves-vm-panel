@@ -166,6 +166,92 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		config.SetContainerTenant(id, tenant)
 		auditRequest(r, "container.tenant", c.Name, "tenant="+tenant, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{"tenant": tenant}})
+	case action == "owner" && r.Method == http.MethodPut:
+		// 变更容器属主 SubUser（空字符串 = 解绑）
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		var req struct {
+			OwnerSubUserID string `json:"owner_sub_user_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+			return
+		}
+		newOwner := strings.TrimSpace(req.OwnerSubUserID)
+		// 校验新 owner 存在（空字符串 = 解绑，允许）
+		if newOwner != "" {
+			config.AppConfigMu.RLock()
+			found := false
+			for i := range config.AppConfig.SubUsers {
+				if config.AppConfig.SubUsers[i].ID == newOwner {
+					found = true
+					break
+				}
+			}
+			config.AppConfigMu.RUnlock()
+			if !found {
+				jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
+				return
+			}
+		}
+		var oldOwnerID string
+		var ownerUsername string
+		var foundName string
+		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			for i := range cfg.Containers {
+				if cfg.Containers[i].ID != id {
+					continue
+				}
+				foundName = cfg.Containers[i].Name
+				oldOwnerID = cfg.Containers[i].OwnerSubUserID
+				cfg.Containers[i].OwnerSubUserID = newOwner
+				// 同步更新 SubUser.ContainerUUIDs / ContainerNames
+				// 1) 从旧 owner 移除
+				if oldOwnerID != "" && oldOwnerID != newOwner {
+					for j := range cfg.SubUsers {
+						if cfg.SubUsers[j].ID != oldOwnerID {
+							continue
+						}
+						cfg.SubUsers[j].ContainerUUIDs = removeString(cfg.SubUsers[j].ContainerUUIDs, cfg.Containers[i].UUID)
+						cfg.SubUsers[j].ContainerNames = removeString(cfg.SubUsers[j].ContainerNames, cfg.Containers[i].Name)
+						cfg.SubUsers[j].TokenVersion++ // 强制旧属主刷新可见容器列表
+						break
+					}
+				}
+				// 2) 追加到新 owner
+				if newOwner != "" && newOwner != oldOwnerID {
+					for j := range cfg.SubUsers {
+						if cfg.SubUsers[j].ID != newOwner {
+							continue
+						}
+						if !stringContains(cfg.SubUsers[j].ContainerUUIDs, cfg.Containers[i].UUID) {
+							cfg.SubUsers[j].ContainerUUIDs = append(cfg.SubUsers[j].ContainerUUIDs, cfg.Containers[i].UUID)
+						}
+						cfg.SubUsers[j].ContainerNames = appendUniqueString(cfg.SubUsers[j].ContainerNames, cfg.Containers[i].Name)
+						cfg.SubUsers[j].TokenVersion++
+						ownerUsername = cfg.SubUsers[j].Username
+						break
+					}
+				}
+				return
+			}
+		})
+		if foundName == "" {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+			return
+		}
+		if err := config.SaveConfig(); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
+			return
+		}
+		auditDetail := fmt.Sprintf("old=%s new=%s", oldOwnerID, newOwner)
+		auditRequest(r, "container.owner", foundName, auditDetail, true, "")
+		resp := map[string]interface{}{"owner_sub_user_id": newOwner}
+		if newOwner != "" {
+			resp["owner_username"] = ownerUsername
+		}
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: resp})
 	case action == "usage" && r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return
