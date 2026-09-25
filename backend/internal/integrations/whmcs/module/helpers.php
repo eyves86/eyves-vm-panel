@@ -365,9 +365,10 @@ function eyvescloud_base_url($params)
         $base = $scheme . '://' . $host;
     }
 
-    // 仅当端口尚未出现在主机部分时才追加，避免出现 host:443:443。
-    $hostPart = parse_url($base, PHP_URL_HOST) ?: $base;
-    if ($port !== '' && strpos($hostPart, ':') === false) {
+    // 仅当 base 里还没有显式端口时才追加，避免出现 host:8999:8999。
+    // 注意不能用 parse_url($base, PHP_URL_HOST) 判断：它会剥掉端口，导致总是判定「无端口」。
+    $basePort = parse_url($base, PHP_URL_PORT);
+    if ($port !== '' && $basePort === null) {
         $base .= ':' . $port;
     }
 
@@ -376,14 +377,17 @@ function eyvescloud_base_url($params)
 
 /**
  * 解析面板 API Key：serveraccesshash 优先，其次 serverpassword。
- * 兼容魔方风格的 accesshash / server_password / password。
+ * 兼容魔方风格的 accesshash / server_password。
+ *
+ * 注意：WHMCS 服务器模块 $params 中的 `password` 是「主机账号密码」（客户实例密码），
+ * 不是面板 API Key，因此绝不能作为回退，否则会把客户实例密码当作 API Key 发往面板。
  *
  * @param array $params
  * @return string
  */
 function eyvescloud_api_key($params)
 {
-    foreach (['serveraccesshash', 'serverpassword', 'accesshash', 'server_password', 'password'] as $key) {
+    foreach (['serveraccesshash', 'serverpassword', 'accesshash', 'server_password'] as $key) {
         if (!empty($params[$key])) {
             $value = $params[$key];
             if (is_array($value)) {
@@ -555,6 +559,9 @@ function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $ti
 
     $url = $base . $endpoint;
     $apiKey = eyvescloud_api_key($params);
+    if ($apiKey === '') {
+        return ['success' => false, 'message' => '未配置面板 API Key（请在服务器 Access Hash 或密码字段填写）', '_http_code' => 0];
+    }
     $method = strtoupper($method);
 
     $insecure = !empty($params['insecure']);
@@ -587,6 +594,11 @@ function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $ti
     ];
 
     if ($method !== 'GET' && $data !== null) {
+        // 空数组会被 json_encode 成 "[]"，而面板多处 POST/PUT 处理器把请求体解码为 JSON
+        // 对象，收到 "[]" 会返回 400 Invalid request body。这里统一把顶层空数组按空对象 {} 发送。
+        if (is_array($data) && $data === []) {
+            $data = new \stdClass();
+        }
         $options[CURLOPT_POSTFIELDS] = json_encode($data, JSON_UNESCAPED_UNICODE);
     }
 
@@ -1025,7 +1037,8 @@ function eyvescloud_webssh_url($params, $ticket, $containerName)
         . '?ws=' . rawurlencode($wsUrl)
         . '&protocol=' . rawurlencode('eyvescloud-ticket.' . (string)$ticket)
         . '&ticket=' . rawurlencode((string)$ticket)
-        . '&container=' . rawurlencode((string)$containerName);
+        . '&container=' . rawurlencode((string)$containerName)
+        . '&id=' . rawurlencode((string)eyvescloud_host_id($params));
 }
 
 function eyvescloud_vnc_url($params, $ticket, $containerName)
@@ -1040,7 +1053,38 @@ function eyvescloud_vnc_url($params, $ticket, $containerName)
         . '?ws=' . rawurlencode($wsUrl)
         . '&protocol=' . rawurlencode('eyvescloud-vnc-ticket.' . (string)$ticket)
         . '&ticket=' . rawurlencode((string)$ticket)
-        . '&container=' . rawurlencode((string)$containerName);
+        . '&container=' . rawurlencode((string)$containerName)
+        . '&id=' . rawurlencode((string)eyvescloud_host_id($params));
+}
+
+/**
+ * 计算某个服务对应的可信面板主机（仅在请求者有权访问该服务时返回）。
+ *
+ * handlers/webssh.php 与 handlers/vnc.php 都要用它判断 WebSocket 目标是否可信。
+ * 面板主机来自 WHMCS 服务器配置（不接受前端传入），并且要求请求者已登录且拥有该服务
+ * 或为管理员，避免匿名请求借控制台页面探测、连接任意已配置的面板地址。
+ *
+ * 调用方必须已经载入 WHMCS（init.php）与 helpers.php，即 $_SESSION 可用。
+ *
+ * @param int $serviceId
+ * @return string[] 小写主机名列表；无权限或解析失败时返回空数组
+ */
+function eyvescloud_console_allowed_hosts($serviceId)
+{
+    $params = eyvescloud_service_params((int)$serviceId);
+    if (empty($params)) {
+        return [];
+    }
+
+    $adminId = isset($_SESSION['adminid']) ? (int)$_SESSION['adminid'] : 0;
+    $uid = isset($_SESSION['uid']) ? (int)$_SESSION['uid'] : 0;
+    $canAccess = $adminId > 0 || ($uid > 0 && (int)($params['userid'] ?? 0) === $uid);
+    if (!$canAccess) {
+        return [];
+    }
+
+    $host = parse_url((string)eyvescloud_base_url($params), PHP_URL_HOST);
+    return (is_string($host) && $host !== '') ? [strtolower($host)] : [];
 }
 
 /* -------------------------------------------------------------------------
@@ -2252,7 +2296,9 @@ function eyvescloud_domain_status_from_container($container)
         return 'Active';
     }
 
-    if (!empty($container['policy_blocked'])) {
+    // 面板 suspend 只置 suspended=true，status 往往仍是 stopped；policy_blocked 同理。
+    // 必须优先判断这两个标记，否则同步时会把已停机的欠费服务误写回 Active。
+    if (!empty($container['suspended']) || !empty($container['policy_blocked'])) {
         return 'Suspended';
     }
 
@@ -2384,11 +2430,13 @@ function eyvescloud_service_params($serviceid)
     }
 
     // 按中文标签合并一份 configoptions，便于 eyvescloud_options 双重兜底。
-    $labelMap = eyvescloud_option_labels();
-    foreach ($labelMap as $label => $key) {
-        if (isset($params['configoption' . (array_search($key, eyvescloud_option_keys(), true) + 1)])) {
-            $params['configoptions'][$label] = $params['configoption' . (array_search($key, eyvescloud_option_keys(), true) + 1)];
+    $optionKeys = eyvescloud_option_keys();
+    $keyIndexMap = array_flip($optionKeys);
+    foreach (eyvescloud_option_labels() as $label => $key) {
+        if (!isset($keyIndexMap[$key])) {
+            continue;
         }
+        $params['configoptions'][$label] = $params['configoption' . ($keyIndexMap[$key] + 1)] ?? '';
     }
 
     // 客户详情（部分场景需要，例如 SSO 显示）。

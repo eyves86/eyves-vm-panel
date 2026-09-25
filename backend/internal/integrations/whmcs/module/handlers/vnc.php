@@ -9,7 +9,54 @@ if ($protocol === '' && $ticket !== '') {
     $protocol = 'eyvescloud-vnc-ticket.' . $ticket;
 }
 
-// 可信主机列表：当前请求域名 + 环境变量 EYVESCLOUD_WS_ALLOW（逗号分隔）。
+// 从 WHMCS 配置解析「该服务所属面板主机」，并入可信列表。
+// WebSSH 与 VNC 必须保持一致：面板与计费系统不同域名时，无需额外配置
+// EYVESCLOUD_WS_ALLOW 也能使用控制台。归属校验见 helpers.php。
+function vnc_bootstrap_whmcs()
+{
+    if (defined('WHMCS')) {
+        return true;
+    }
+    $candidates = array();
+    $envRoot = getenv('EYVESCLOUD_WHMCS_ROOT');
+    if (is_string($envRoot) && $envRoot !== '') {
+        $candidates[] = rtrim($envRoot, '/\\') . '/init.php';
+    }
+    // handlers/vnc.php -> eyvescloud -> servers -> modules -> WHMCS 根目录
+    $candidates[] = dirname(__DIR__, 4) . '/init.php';
+    $candidates[] = dirname(__DIR__, 3) . '/init.php';
+    foreach ($candidates as $path) {
+        if (is_file($path)) {
+            require_once $path;
+            if (defined('WHMCS')) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+function vnc_configured_panel_hosts()
+{
+    $hosts = array();
+    $serviceId = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+    if ($serviceId <= 0 || !vnc_bootstrap_whmcs()) {
+        return $hosts;
+    }
+    // helpers.php 要求 WHMCS 常量已定义，因此只能放在 bootstrap 之后引入。
+    if (!function_exists('eyvescloud_console_allowed_hosts')) {
+        require_once dirname(__DIR__) . '/helpers.php';
+    }
+    if (!function_exists('eyvescloud_console_allowed_hosts')) {
+        return $hosts;
+    }
+    foreach (eyvescloud_console_allowed_hosts($serviceId) as $h) {
+        $hosts[] = $h;
+    }
+    return $hosts;
+}
+
+// 可信主机列表：当前请求域名 + 该服务配置的面板域名 + 环境变量 EYVESCLOUD_WS_ALLOW（逗号分隔）。
 function vnc_allowed_hosts()
 {
     $hosts = array();
@@ -19,6 +66,9 @@ function vnc_allowed_hosts()
         if ($p && !empty($p['host'])) {
             $hosts[] = strtolower($p['host']);
         }
+    }
+    foreach (vnc_configured_panel_hosts() as $h) {
+        $hosts[] = $h;
     }
     $env = getenv('EYVESCLOUD_WS_ALLOW') ?: '';
     foreach (explode(',', $env) as $h) {
@@ -58,20 +108,21 @@ function vnc_validate_target($ws)
     return 'WebVNC target host is not in the allowlist';
 }
 
+// 缺少参数时先返回 400，避免把「参数缺失」误报为 403 目标不可信。
+if ($ws === '') {
+    http_response_code(400);
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "Missing WebVNC parameters\n";
+    echo "Received query: " . ($_SERVER['QUERY_STRING'] ?? '') . "\n";
+    exit;
+}
+
 // 安全校验：只允许转发到可信主机，避免把该页面当作任意内网/公网目标的反向代理（SSRF）。
 $wsTargetError = vnc_validate_target($ws);
 if ($wsTargetError !== '') {
     http_response_code(403);
     header('Content-Type: text/plain; charset=utf-8');
     echo $wsTargetError . "\n";
-    exit;
-}
-
-if ($ws === '') {
-    http_response_code(400);
-    header('Content-Type: text/plain; charset=utf-8');
-    echo "Missing WebVNC parameters\n";
-    echo "Received query: " . ($_SERVER['QUERY_STRING'] ?? '') . "\n";
     exit;
 }
 ?>
