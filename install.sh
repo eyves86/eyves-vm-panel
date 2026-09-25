@@ -2005,14 +2005,24 @@ install_agent_service() {
     node_name="${EYVESCLOUD_AGENT_NAME:-$(hostname -s 2>/dev/null || echo agent)}"
     node_addr="${EYVESCLOUD_AGENT_ADDR:-}"
 
+    # agent 默认强制 https（防止节点 token 明文传输）；
+    # 明文 http 主控（含本机回环）需要显式 --allow-insecure-http。
+    insecure_arg=""
+    case "$controller" in
+        http://*) insecure_arg="--allow-insecure-http" ;;
+    esac
+
     cat > /etc/systemd/system/eyvescloud-agent.service << EOF
 [Unit]
 Description=EyvesCloud Agent
 After=network.target
+# 注册失败（如 install_key 缺失/失效）时防止死循环重启
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/eyvescloud agent --controller=${controller} --install-key=${install_key} --name=${node_name} --addr=${node_addr}
+ExecStart=/usr/local/bin/eyvescloud agent --controller="${controller}" --install-key="${install_key}" --name="${node_name}" --addr="${node_addr}" ${insecure_arg}
 Restart=always
 RestartSec=5
 LimitNOFILE=1048576
@@ -2024,7 +2034,12 @@ EOF
 
     systemctl daemon-reload
     systemctl enable --now eyvescloud-agent
-    log "agent 服务已安装并启动"
+    log "agent 服务已安装并启动（主控：${controller}）"
+    if [ -z "$install_key" ] && [ ! -f "${EYVESCLOUD_DATA_DIR:-${HOME:-/root}/.eyvescloud}/agent.json" ]; then
+        log "警告：未设置 EYVESCLOUD_AGENT_INSTALL_KEY，且本机无历史注册配置，agent 首次注册将失败"
+        log "      请在主控面板「节点管理」创建节点并复制安装命令（内含一次性 install_key），"
+        log "      或设置 EYVESCLOUD_AGENT_INSTALL_KEY 环境变量后重新执行本脚本"
+    fi
 }
 
 # 读取已安装可执行文件的版本号（`eyvescloud --version` 输出形如 "EyvesCloud 1.1.29"）。
@@ -2426,12 +2441,18 @@ case "$install_mode" in
         # 同时安装 agent 服务（主控+被控模式）
         if [ -n "${EYVESCLOUD_CONTROLLER:-}" ] || [ "$install_mode" = "controller-agent" ]; then
             install_agent_service_from_self() {
-                # 主控+被控模式下 agent 自动连本机 127.0.0.1
+                # 主控+被控模式下 agent 自动连本机回环。
+                # 默认 http：主控开箱默认无 TLS，而 agent 强制 https 会导致连不上；
+                # 回环明文可接受（install_agent_service 对 http 自动加 --allow-insecure-http）。
+                # 若主控已配置 TLS，可通过 EYVESCLOUD_CONTROLLER 显式指定 https 地址。
                 local old_ctrl="${EYVESCLOUD_CONTROLLER:-}"
-                EYVESCLOUD_CONTROLLER="${old_ctrl:-https://127.0.0.1:8999}"
+                EYVESCLOUD_CONTROLLER="${old_ctrl:-http://127.0.0.1:8999}"
                 install_agent_service
-                unset EYVESCLOUD_CONTROLLER
-                [ -n "$old_ctrl" ] && export EYVESCLOUD_CONTROLLER="$old_ctrl" || true
+                if [ -n "$old_ctrl" ]; then
+                    export EYVESCLOUD_CONTROLLER="$old_ctrl"
+                else
+                    unset EYVESCLOUD_CONTROLLER
+                fi
             }
             run_step "安装本机被控 Agent" install_agent_service_from_self
         fi

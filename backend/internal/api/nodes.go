@@ -384,13 +384,12 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 //
 // 也支持网络脚本一行命令（类似 Virtualizor / SolusVM 风格）：
 //   curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash
-// install_key 是一次性注册 token，安全上等价于让脚本直接拉取。
+// 认证支持两条路径：
+//   1) query 携带有效 install_key 且属于该节点（供 curl | bash，与 binary 端点一致）
+//   2) 管理员 node:write scope（面板下载）
 func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if r.Method != http.MethodGet {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
-		return
-	}
-	if !requireScope(w, r, "node:write") {
 		return
 	}
 	node, ok := config.FindNode(nodeID)
@@ -398,11 +397,23 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 		return
 	}
-	// install_key 也支持 query 参数（让网络脚本可通过 URL 传入），
-	// 但优先使用 Node 上预生成的 InstallKey。
+	// 认证路径 1：query install_key（且必须属于本节点，防止拿 A 节点的 key 拉 B 节点的脚本）
+	authedByKey := false
+	if qk := strings.TrimSpace(r.URL.Query().Get("install_key")); qk != "" {
+		if kn, found := config.FindNodeByInstallKey(qk); found && kn.ID == nodeID {
+			authedByKey = true
+		}
+	}
+	// 认证路径 2：管理员 scope
+	if !authedByKey && !requireScope(w, r, "node:write") {
+		return
+	}
+	// 注册成功后 InstallKey 会被清空（一次性 token）。
+	// 重新获取脚本时自动换发新 key，保证“面板再次下载脚本”始终可用于重装/换机。
 	installKey := node.InstallKey
 	if installKey == "" {
-		installKey = strings.TrimSpace(r.URL.Query().Get("install_key"))
+		installKey = randomNodeSecret(32)
+		config.UpdateNode(node.ID, func(n *config.Node) { n.InstallKey = installKey })
 	}
 	// 不再硬编码 controller —— 脚本运行时自动探测
 	script := buildAgentInstallScript("", installKey, node.Name, "")
@@ -479,26 +490,30 @@ detect_controller() {
 
   # 1) SSH 会话客户端 IP —— 最可靠（你就是从主控 SSH 过来的）
   if [ -n "$SSH_CONNECTION" ]; then
-    detected_ip="$(printf '%%s' "$SSH_CONNECTION" | awk '{print $1}')"
-    if [ -n "$detected_ip" ]; then
-      echo "${scheme}://${detected_ip}:${port}"
-      return 0
+    local ssh_ip
+    ssh_ip="$(printf '%%s' "$SSH_CONNECTION" | awk '{print $1}')"
+    if [ -n "$ssh_ip" ]; then
+      case "$ssh_ip" in
+        *:*) detected_ip="[$ssh_ip]" ;;  # IPv6 客户端：URL 里必须加方括号
+        *)   detected_ip="$ssh_ip" ;;
+      esac
     fi
   fi
 
-  # 2) IPv4 源 IP
-  if command -v ip >/dev/null 2>&1; then
+  # 2) IPv4 源 IP：从 ip route get 输出的 src 字段提取。
+  #    不用固定字段位置：不同内核输出可能含 from/via 等可选段，位置会漂移。
+  if [ -z "$detected_ip" ] && command -v ip >/dev/null 2>&1; then
     local ipv4
-    ipv4="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
+    ipv4="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src"){print $(i+1); exit}}')"
     if [ -n "$ipv4" ]; then
       detected_ip="$ipv4"
     fi
   fi
 
-  # 3) IPv6 源 IP —— 纯 IPv6 环境走这个
+  # 3) IPv6 源 IP —— 纯 IPv6 环境走这个（同样按 src 字段提取，加方括号）
   if [ -z "$detected_ip" ] && command -v ip >/dev/null 2>&1; then
     local ipv6
-    ipv6="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | awk '{print $7; exit}')"
+    ipv6="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | awk '{for(i=1;i<NF;i++) if($i=="src"){print $(i+1); exit}}')"
     if [ -n "$ipv6" ]; then
       detected_ip="[$ipv6]"
     fi
@@ -511,18 +526,20 @@ detect_controller() {
 
   # 4) 交互式提示（仅 tty）
   if [ -t 0 ]; then
-    printf "无法自动探测主控地址，请输入: "
+    printf "无法自动探测主控地址，请输入（如 4.4.4.4 / 4.4.4.4:8999 / 2001:db8::1 / https://ctrl.example.com）: "
     IFS= read -r user_input
-    user_input="$(printf '%%s' "$user_input" | sed 's/[[:space:]]*$//')"
+    user_input="$(printf '%%s' "$user_input" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     if [ -z "$user_input" ]; then
-      echo "未输入主控地址，退出"
+      echo "未输入主控地址，退出" >&2
       exit 1
     fi
-    # 补全 scheme/port
+    # 补全 scheme/port，IPv6 需加方括号
     case "$user_input" in
-      http://*|https://*) echo "$user_input" ;;
-      *:* ) echo "http://$user_input" ;;
-      *) echo "${scheme}://${user_input}:${port}" ;;
+      https://*|http://*) echo "$user_input" ;;
+      *\]* )              echo "https://$user_input" ;;            # 已带 [] 的 IPv6（可含端口）
+      *:*:* )             echo "https://[${user_input}]:${port}" ;; # 裸 IPv6（多个冒号）
+      *:* )               echo "https://$user_input" ;;            # IPv4:port
+      * )                 echo "${scheme}://${user_input}:${port}" ;;
     esac
     return 0
   fi
@@ -543,7 +560,7 @@ ARCH="$(uname -m 2>/dev/null || echo amd64)"
 case "$ARCH" in
   x86_64|amd64) ARCH_NORM="amd64" ;;
   aarch64|arm64) ARCH_NORM="arm64" ;;
-  *) echo "未知架构: $ARCH"; ARCH_NORM="" ;;
+  *) echo "不支持的架构: $ARCH（仅支持 amd64/arm64）"; exit 1 ;;
 esac
 
 echo "==> [1/3] 下载 EyvesCloud 二进制"
@@ -564,22 +581,25 @@ echo "==> [2/3] 注册被控节点"
 }
 
 echo "==> [3/3] 配置自启动服务"
+# heredoc 不加引号：${CONTROLLER} 等由 shell 展开后写入，参数加双引号防空格拆分
+# （systemd 自行解析 ExecStart 中的双引号）。
 cat > /etc/systemd/system/eyvescloud-agent.service <<UNITEOF
 [Unit]
 Description=EyvesCloud Agent
 After=network.target
+# 注册失败（如 install_key 失效）时防止死循环重启
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/eyvescloud agent --controller=${CONTROLLER} --install-key=${INSTALL_KEY} --name=${NODE_NAME} --addr=${NODE_ADDR} ${insecure_arg}
+ExecStart=/usr/local/bin/eyvescloud agent --controller="${CONTROLLER}" --install-key="${INSTALL_KEY}" --name="${NODE_NAME}" --addr="${NODE_ADDR}" ${insecure_arg}
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 UNITEOF
-# shellcheck disable=SC2128
-sed -i "s|\${CONTROLLER}|${CONTROLLER}|g; s|\${INSTALL_KEY}|${INSTALL_KEY}|g; s|\${NODE_NAME}|${NODE_NAME}|g; s|\${NODE_ADDR}|${NODE_ADDR}|g; s|\${insecure_arg}|${insecure_arg}|g" /etc/systemd/system/eyvescloud-agent.service
 systemctl daemon-reload
 systemctl enable --now eyvescloud-agent
 
@@ -595,14 +615,6 @@ echo "=============================================="
 		nameSQ, addrSQ,
 		hardController, hardController,
 	)
-}
-
-// controllerEsc 用于 systemd ExecStart 里的主控地址（systemd 不支持 %）。
-func controllerEsc(s string) string {
-	if s == "" {
-		return "$CONTROLLER" // 运行时替换
-	}
-	return shellEscape(s)
 }
 
 // shellDQ 转义用于双引号包裹的 shell 变量值。
