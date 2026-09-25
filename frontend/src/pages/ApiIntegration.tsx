@@ -4,9 +4,11 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Download,
   Edit3,
   Eye,
   Key,
+  Package,
   Plus,
   RefreshCw,
   ShieldCheck,
@@ -39,6 +41,16 @@ interface ApiKeyForm {
   expiresAt: string
   disabled: boolean
   containerUUIDs: string[]
+}
+
+interface WhmcsModuleInfo {
+  name: string
+  display_name: string
+  version: string
+  install_path: string
+  panel_version: string
+  files: Array<{ path: string; size: number }>
+  readme: string
 }
 
 const BASE_URL = window.location.origin
@@ -263,6 +275,13 @@ const endpointGroups: Array<{ title: string; endpoints: EndpointTuple[] }> = [
       ['DELETE', '/api/v1/api-keys/{id}', '删除 API Key'],
     ],
   },
+  {
+    title: '集成',
+    endpoints: [
+      ['GET', '/api/v1/integrations/whmcs', 'WHMCS 服务器模块元信息（版本 / 安装路径 / 文件清单）'],
+      ['GET', '/api/v1/integrations/whmcs/download', '下载 WHMCS 服务器模块 zip'],
+    ],
+  },
 ]
 
 const emptyForm = (): ApiKeyForm => ({
@@ -289,6 +308,10 @@ export default function ApiIntegration() {
   const [showDocs, setShowDocs] = useState(true)
   const [selectedEndpoint, setSelectedEndpoint] = useState<EndpointDoc | null>(null)
   const [copiedDoc, setCopiedDoc] = useState(false)
+  const [whmcs, setWhmcs] = useState<WhmcsModuleInfo | null>(null)
+  const [whmcsLoading, setWhmcsLoading] = useState(true)
+  const [whmcsError, setWhmcsError] = useState('')
+  const [whmcsDownloading, setWhmcsDownloading] = useState(false)
 
   const containerNameByUUID = useMemo(() => {
     const map = new Map<string, string>()
@@ -312,9 +335,51 @@ export default function ApiIntegration() {
     }
   }, [])
 
+  const fetchWhmcs = useCallback(async () => {
+    setWhmcsLoading(true)
+    try {
+      const res = await api.get<APIResponse<WhmcsModuleInfo>>('/v1/integrations/whmcs')
+      setWhmcs(res.data.data || null)
+      setWhmcsError('')
+    } catch (err: unknown) {
+      setWhmcs(null)
+      setWhmcsError(errorMessage(err))
+    } finally {
+      setWhmcsLoading(false)
+    }
+  }, [])
+
+  const downloadWhmcs = async () => {
+    setWhmcsDownloading(true)
+    try {
+      // 受保护资源需要携带 Authorization 头，<a href> 无法做到，因此走 fetch + Blob。
+      const token = localStorage.getItem('eyvescloud_token')
+      const res = await fetch('/api/v1/integrations/whmcs/download', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!res.ok) {
+        throw new Error(`下载失败（HTTP ${res.status}）`)
+      }
+      const blob = await res.blob()
+      const objURL = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = objURL
+      a.download = `eyvescloud-whmcs-module-${whmcs?.version || 'latest'}.zip`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(objURL)
+    } catch (err: unknown) {
+      window.alert(errorMessage(err))
+    } finally {
+      setWhmcsDownloading(false)
+    }
+  }
+
   useEffect(() => {
     fetchData()
-  }, [fetchData])
+    fetchWhmcs()
+  }, [fetchData, fetchWhmcs])
 
   const openCreate = () => {
     setEditingKey(null)
@@ -529,6 +594,72 @@ export default function ApiIntegration() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-gray-200 bg-white">
+        <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
+          <h2 className="flex items-center gap-2 text-sm font-semibold text-black">
+            <Package className="h-4 w-4" />
+            WHMCS 服务器模块
+          </h2>
+          <button onClick={fetchWhmcs} className="rounded p-1.5 text-gray-400 hover:text-black" title="刷新">
+            <RefreshCw className="h-4 w-4" />
+          </button>
+        </div>
+
+        {whmcsLoading ? (
+          <div className="py-10 text-center text-sm text-gray-400">加载中...</div>
+        ) : whmcsError ? (
+          <div className="px-5 py-6 text-sm text-red-600">{whmcsError}</div>
+        ) : whmcs ? (
+          <div className="space-y-4 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-gray-900">{whmcs.display_name}</span>
+                  <span className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[11px] text-gray-600">v{whmcs.version}</span>
+                </div>
+                <p className="mt-1 text-xs text-gray-500">
+                  适配 WHMCS 9.0（兼容 8.x），计费仍由 WHMCS 负责，模块负责把产品/服务生命周期映射到面板 API。
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  安装路径：<code className="font-mono text-gray-700">{whmcs.install_path}</code>
+                </p>
+              </div>
+              <button
+                onClick={downloadWhmcs}
+                disabled={whmcsDownloading}
+                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <Download className="h-4 w-4" />
+                {whmcsDownloading ? '打包中...' : '下载模块 zip'}
+              </button>
+            </div>
+
+            <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+              <div className="mb-1 font-medium text-gray-700">安装方式</div>
+              <div>解压下载的 zip 到 WHMCS 根目录（顶层目录为 <code className="font-mono">{whmcs.install_path}</code>），然后在 WHMCS 后台添加服务器并选择 <code className="font-mono">eyvescloud</code> 模块，API Key 填入服务器 Access Hash 或密码字段。</div>
+            </div>
+
+            {whmcs.files.length > 0 && (
+              <details className="rounded-lg border border-gray-200">
+                <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700">
+                  模块文件清单（{whmcs.files.length}）
+                </summary>
+                <div className="border-t border-gray-100 px-3 py-2">
+                  {whmcs.files.map(file => (
+                    <div key={file.path} className="flex items-center justify-between gap-3 py-0.5 font-mono text-[11px] text-gray-600">
+                      <span className="min-w-0 break-all">{file.path}</span>
+                      <span className="shrink-0 text-gray-400">{file.size} B</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+        ) : (
+          <div className="py-10 text-center text-sm text-gray-400">暂无模块信息</div>
         )}
       </div>
 

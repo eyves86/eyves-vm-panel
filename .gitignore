@@ -69,7 +69,7 @@ linux.txt
 push-release.ps1
 deploy.ps1
 backend/eyvescloud
-api.md
+/api.md
 deploy-arm.ps1
 deploy-dhcp.ps1
 deploy-pve-windows.ps1
