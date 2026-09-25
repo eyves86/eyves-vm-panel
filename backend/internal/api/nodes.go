@@ -235,6 +235,8 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		n.LastSeen = time.Now().Format("2006-01-02 15:04:05")
 		n.Name = name
 		n.Version = req.Version
+		// install_key 是一次性 token：注册成功后立即清空，防止重复注册或被已注册节点重放。
+		n.InstallKey = ""
 		if address != "" {
 			n.Address = address
 		}
@@ -372,6 +374,17 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 }
 
 // handleNodeInstallScript 生成被控一键安装脚本。
+// 脚本不再硬编码 CONTROLLER 地址，而是在运行时自动探测：
+//   1) 用户通过 --controller 参数显式指定
+//   2) SSH 会话客户端 IP（SSH_CONNECTION 环境变量）
+//   3) 本机 IPv4 源 IP（ip route get 1.1.1.1）
+//   4) 本机 IPv6 源 IP（ip -6 route get 2001:4860:4860::8888）—— 仅 IPv6 环境
+//   5) 交互式提示
+// 这样主控 IP 为 4.4.4.4 时，被控脚本自动填入 4.4.4.4；纯 IPv6 环境自动走 IPv6。
+//
+// 也支持网络脚本一行命令（类似 Virtualizor / SolusVM 风格）：
+//   curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash
+// install_key 是一次性注册 token，安全上等价于让脚本直接拉取。
 func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if r.Method != http.MethodGet {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -385,41 +398,61 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 		return
 	}
-	controller := requestOrigin(r)
-	if controller == "" {
-		controller = "http://127.0.0.1:8999"
+	// install_key 也支持 query 参数（让网络脚本可通过 URL 传入），
+	// 但优先使用 Node 上预生成的 InstallKey。
+	installKey := node.InstallKey
+	if installKey == "" {
+		installKey = strings.TrimSpace(r.URL.Query().Get("install_key"))
 	}
-	// 无需也无法在母侧确定子的真实地址：地址留空，由子端 agent 通过与母建连推算，或用脚本第 2 个参数显式指定。
-	defaultAddr := ""
-	script := buildAgentInstallScript(controller, node.InstallKey, node.Name, defaultAddr)
+	// 不再硬编码 controller —— 脚本运行时自动探测
+	script := buildAgentInstallScript("", installKey, node.Name, "")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=eyvescloud-agent-%s.sh", node.Name))
 	_, _ = w.Write([]byte(script))
 }
 
 func buildAgentInstallScript(controller, installKey, nodeName, defaultAddr string) string {
-	name := shellDQ(nodeName)
-	addr := shellDQ(defaultAddr)
-	controllerEsc := shellDQ(controller)
-	keyEsc := shellDQ(installKey)
 	nameSQ := shellEscape(nodeName)
 	addrSQ := shellEscape(defaultAddr)
-	controllerSQ := shellEscape(controller)
-	keySQ := shellEscape(installKey)
-	insecureArg := ""
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(controller)), "http://") {
-		// 主控为明文 http：agent 需显式开启不安全传输。
-		insecureArg = "--allow-insecure-http"
-	}
+	installKeySQ := shellEscape(installKey)
+	hardController := shellEscape(controller)
 	return fmt.Sprintf(`#!/bin/bash
 # EyvesCloud 被控节点一键安装脚本
-# 用法: bash %s.sh [节点名称] [被控面板地址]
+# 用法:
+#   bash eyvescloud-agent.sh [--controller URL] [--name 名称] [--addr 被控面板地址]
+#   curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash
+#
+# 主控地址自动探测优先级：
+#   1) --controller 参数显式指定
+#   2) SSH 会话客户端 IP（通过 SSH_CONNECTION）
+#   3) 本机 IPv4 源 IP（ip route get 1.1.1.1）
+#   4) 本机 IPv6 源 IP（ip -6 route get 2001:4860:4860::8888）
+#   5) 交互式提示（非 tty 时跳过，会报错）
 set -e
 
-CONTROLLER="%s"
 INSTALL_KEY="%s"
-NODE_NAME="${1:-%s}"
-NODE_ADDR="${2:-%s}"
+NODE_NAME=""
+NODE_ADDR=""
+CONTROLLER_OVERRIDE=""
+
+# 参数解析
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --controller) CONTROLLER_OVERRIDE="$2"; shift 2 ;;
+    --name) NODE_NAME="$2"; shift 2 ;;
+    --addr) NODE_ADDR="$2"; shift 2 ;;
+    --allow-insecure-http) insecure_arg="--allow-insecure-http"; shift ;;
+    -h|--help)
+      echo "用法: $0 [--controller URL] [--name 名称] [--addr 面板地址]"
+      echo "      curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash"
+      exit 0
+      ;;
+    *) echo "未知参数: $1"; exit 1 ;;
+  esac
+done
+
+NODE_NAME="${NODE_NAME:-%s}"
+NODE_ADDR="${NODE_ADDR:-%s}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "请使用 root 权限运行: sudo bash $0"
@@ -428,7 +461,84 @@ fi
 
 command -v curl >/dev/null 2>&1 || { echo "缺少 curl，请先安装"; exit 1; }
 
-# 自动探测被控宿主架构，用于向主控请求架构匹配的二进制。
+# ============ 主控地址自动探测 ============
+detect_controller() {
+  if [ -n "$CONTROLLER_OVERRIDE" ]; then
+    echo "$CONTROLLER_OVERRIDE"
+    return 0
+  fi
+  # 硬编码兜底（旧路径/回退）
+  if [ -n "%s" ]; then
+    echo "%s"
+    return 0
+  fi
+
+  local detected_ip=""
+  local scheme="https"
+  local port="8999"
+
+  # 1) SSH 会话客户端 IP —— 最可靠（你就是从主控 SSH 过来的）
+  if [ -n "$SSH_CONNECTION" ]; then
+    detected_ip="$(printf '%%s' "$SSH_CONNECTION" | awk '{print $1}')"
+    if [ -n "$detected_ip" ]; then
+      echo "${scheme}://${detected_ip}:${port}"
+      return 0
+    fi
+  fi
+
+  # 2) IPv4 源 IP
+  if command -v ip >/dev/null 2>&1; then
+    local ipv4
+    ipv4="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{print $7; exit}')"
+    if [ -n "$ipv4" ]; then
+      detected_ip="$ipv4"
+    fi
+  fi
+
+  # 3) IPv6 源 IP —— 纯 IPv6 环境走这个
+  if [ -z "$detected_ip" ] && command -v ip >/dev/null 2>&1; then
+    local ipv6
+    ipv6="$(ip -6 route get 2001:4860:4860::8888 2>/dev/null | awk '{print $7; exit}')"
+    if [ -n "$ipv6" ]; then
+      detected_ip="[$ipv6]"
+    fi
+  fi
+
+  if [ -n "$detected_ip" ]; then
+    echo "${scheme}://${detected_ip}:${port}"
+    return 0
+  fi
+
+  # 4) 交互式提示（仅 tty）
+  if [ -t 0 ]; then
+    printf "无法自动探测主控地址，请输入: "
+    IFS= read -r user_input
+    user_input="$(printf '%%s' "$user_input" | sed 's/[[:space:]]*$//')"
+    if [ -z "$user_input" ]; then
+      echo "未输入主控地址，退出"
+      exit 1
+    fi
+    # 补全 scheme/port
+    case "$user_input" in
+      http://*|https://*) echo "$user_input" ;;
+      *:* ) echo "http://$user_input" ;;
+      *) echo "${scheme}://${user_input}:${port}" ;;
+    esac
+    return 0
+  fi
+
+  echo "无法自动探测主控地址，且非交互模式。请使用 --controller 参数指定。" >&2
+  exit 1
+}
+
+CONTROLLER="$(detect_controller)"
+echo "==> 主控地址: $CONTROLLER"
+
+# 探测是否是 http://（自动加 --allow-insecure-http）
+case "$CONTROLLER" in
+  http://* ) insecure_arg="${insecure_arg:---allow-insecure-http}" ;;
+esac
+
 ARCH="$(uname -m 2>/dev/null || echo amd64)"
 case "$ARCH" in
   x86_64|amd64) ARCH_NORM="amd64" ;;
@@ -437,8 +547,11 @@ case "$ARCH" in
 esac
 
 echo "==> [1/3] 下载 EyvesCloud 二进制"
-curl -fsSL -o /usr/local/bin/eyvescloud \
-  "$CONTROLLER/api/nodes/binary?install_key=$INSTALL_KEY&arch=$ARCH_NORM"
+if ! curl -fsSL -o /usr/local/bin/eyvescloud \
+  "$CONTROLLER/api/nodes/binary?install_key=$INSTALL_KEY&arch=$ARCH_NORM"; then
+  echo "下载失败，请检查：主控地址是否正确、install_key 是否有效、网络是否可达"
+  exit 1
+fi
 chmod +x /usr/local/bin/eyvescloud
 
 echo "==> [1/3] 校验二进制"
@@ -446,25 +559,27 @@ echo "==> [1/3] 校验二进制"
   || { echo "下载的二进制无法运行，架构或产物不匹配（本机 $ARCH）"; exit 1; }
 
 echo "==> [2/3] 注册被控节点"
-/usr/local/bin/eyvescloud agent --controller="$CONTROLLER" --install-key="$INSTALL_KEY" --name="$NODE_NAME" --addr="$NODE_ADDR" %s || {
+/usr/local/bin/eyvescloud agent --controller="$CONTROLLER" --install-key="$INSTALL_KEY" --name="$NODE_NAME" --addr="$NODE_ADDR" $insecure_arg || {
   echo "注册失败（已注册过的节点可忽略）";
 }
 
 echo "==> [3/3] 配置自启动服务"
-cat > /etc/systemd/system/eyvescloud-agent.service <<'UNIT'
+cat > /etc/systemd/system/eyvescloud-agent.service <<UNITEOF
 [Unit]
 Description=EyvesCloud Agent
 After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/eyvescloud agent --controller=%s --install-key=%s --name=%s --addr=%s %s
+ExecStart=/usr/local/bin/eyvescloud agent --controller=${CONTROLLER} --install-key=${INSTALL_KEY} --name=${NODE_NAME} --addr=${NODE_ADDR} ${insecure_arg}
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
-UNIT
+UNITEOF
+# shellcheck disable=SC2128
+sed -i "s|\${CONTROLLER}|${CONTROLLER}|g; s|\${INSTALL_KEY}|${INSTALL_KEY}|g; s|\${NODE_NAME}|${NODE_NAME}|g; s|\${NODE_ADDR}|${NODE_ADDR}|g; s|\${insecure_arg}|${insecure_arg}|g" /etc/systemd/system/eyvescloud-agent.service
 systemctl daemon-reload
 systemctl enable --now eyvescloud-agent
 
@@ -476,9 +591,18 @@ echo "  主控: $CONTROLLER"
 echo "  请回到主控面板查看节点状态"
 echo "=============================================="
 `,
-		nameSQ, controllerEsc, keyEsc, name, addr,
-		insecureArg, controllerSQ, keySQ, nameSQ, addrSQ, insecureArg,
+	installKeySQ,
+		nameSQ, addrSQ,
+		hardController, hardController,
 	)
+}
+
+// controllerEsc 用于 systemd ExecStart 里的主控地址（systemd 不支持 %）。
+func controllerEsc(s string) string {
+	if s == "" {
+		return "$CONTROLLER" // 运行时替换
+	}
+	return shellEscape(s)
 }
 
 // shellDQ 转义用于双引号包裹的 shell 变量值。

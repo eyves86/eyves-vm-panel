@@ -1958,6 +1958,75 @@ choose_version_interactively() {
     return 0
 }
 
+# 交互式选择安装模式：主控 / 被控 / 主控+被控。
+# 非交互或 EYVESCLOUD_INSTALL_MODE 已设置时跳过。
+choose_install_mode() {
+    if [ -n "${EYVESCLOUD_INSTALL_MODE:-}" ]; then
+        # 显式指定时不提示
+        return 0
+    fi
+    if [ ! -t 0 ]; then
+        # 非交互模式默认全装（向后兼容）
+        export EYVESCLOUD_INSTALL_MODE="controller-agent"
+        return 0
+    fi
+    {
+        echo "====================================="
+        echo "  请选择安装模式 / Select install mode"
+        echo "====================================="
+        echo "  1) 主控 + 被控  (controller-agent)  —— 默认，单机同时运行控制平面和被控"
+        echo "  2) 仅主控       (controller)        —— 只跑控制平面，不跑被控 agent"
+        echo "  3) 仅被控       (agent)             —— 只跑被控 agent，需要指定主控地址"
+        printf "  请输入 1/2/3 [1]: "
+    } >&2
+    IFS= read -r answer || answer=""
+    case "$answer" in
+        2) export EYVESCLOUD_INSTALL_MODE="controller" ;;
+        3) export EYVESCLOUD_INSTALL_MODE="agent"
+           # agent 模式需要主控地址
+           if [ -z "${EYVESCLOUD_CONTROLLER:-}" ]; then
+               printf "  请输入主控地址（如 https://4.4.4.4:8999）: " >&2
+               IFS= read -r ctrl_addr || ctrl_addr=""
+               ctrl_addr="$(printf '%s' "$ctrl_addr" | sed 's/[[:space:]]*$//')"
+               [ -n "$ctrl_addr" ] || die "agent 模式必须指定主控地址"
+               export EYVESCLOUD_CONTROLLER="$ctrl_addr"
+           fi
+           ;;
+        *) export EYVESCLOUD_INSTALL_MODE="controller-agent" ;;
+    esac
+    log "已选择安装模式：${EYVESCLOUD_INSTALL_MODE}"
+}
+
+# agent 模式：安装 agent systemd 服务（ExecStart=eyvescloud agent）。
+install_agent_service() {
+    controller="${EYVESCLOUD_CONTROLLER:-}"
+    [ -n "$controller" ] || die "agent 模式需要 EYVESCLOUD_CONTROLLER 环境变量"
+    install_key="${EYVESCLOUD_AGENT_INSTALL_KEY:-}"
+    node_name="${EYVESCLOUD_AGENT_NAME:-$(hostname -s 2>/dev/null || echo agent)}"
+    node_addr="${EYVESCLOUD_AGENT_ADDR:-}"
+
+    cat > /etc/systemd/system/eyvescloud-agent.service << EOF
+[Unit]
+Description=EyvesCloud Agent
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/eyvescloud agent --controller=${controller} --install-key=${install_key} --name=${node_name} --addr=${node_addr}
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now eyvescloud-agent
+    log "agent 服务已安装并启动"
+}
+
 # 读取已安装可执行文件的版本号（`eyvescloud --version` 输出形如 "EyvesCloud 1.1.29"）。
 installed_eyvescloud_version() {
     if [ -x /usr/local/bin/eyvescloud ]; then
@@ -2323,22 +2392,55 @@ print_summary() {
 
 run_step "兼容性检查" check_os_compatibility
 run_step "存储环境检查" check_storage_compatibility
-run_step "安装系统依赖" install_dependencies
-choose_nat_networks
-run_step "配置内核网络参数" configure_kernel_networking
-run_step "配置防火墙规则" configure_firewall_rules
-run_step "配置 LXC NAT 网络" configure_lxc_nat_network
-run_step "配置运行时服务" setup_runtime_services
-run_step "配置 libvirt default NAT 网络" setup_default_libvirt_network
-run_step "配置 UID/GID 映射" setup_subids
-run_step "配置 LXC 存储权限" configure_lxc_storage_access
-run_step "检查 project quota" try_enable_project_quota
+choose_install_mode
+
+# agent 模式只需要二进制 + agent 服务，跳过 LXC/KVM 依赖和网络配置
+install_mode="${EYVESCLOUD_INSTALL_MODE:-controller-agent}"
+if [ "$install_mode" != "agent" ]; then
+    run_step "安装系统依赖" install_dependencies
+    choose_nat_networks
+    run_step "配置内核网络参数" configure_kernel_networking
+    run_step "配置防火墙规则" configure_firewall_rules
+    run_step "配置 LXC NAT 网络" configure_lxc_nat_network
+    run_step "配置运行时服务" setup_runtime_services
+    run_step "配置 libvirt default NAT 网络" setup_default_libvirt_network
+    run_step "配置 UID/GID 映射" setup_subids
+    run_step "配置 LXC 存储权限" configure_lxc_storage_access
+    run_step "检查 project quota" try_enable_project_quota
+fi
 choose_version_interactively
 run_step "检查升级兼容性" check_upgrade_compatibility
 run_step "下载发行版包" download_release_if_needed
 run_step "安装 EYVESCLOUD 二进制" install_binary
-run_step "安装并启动 EYVESCLOUD 服务" install_service
-run_step "加固数据目录权限" harden_data_dir_perms
-run_step "写入面板语言" set_panel_language
+
+# 根据安装模式安装不同服务
+case "$install_mode" in
+    agent)
+        run_step "安装被控 Agent 服务" install_agent_service
+        ;;
+    controller)
+        run_step "安装并启动主控服务" install_service
+        ;;
+    controller-agent|"")
+        run_step "安装并启动主控服务" install_service
+        # 同时安装 agent 服务（主控+被控模式）
+        if [ -n "${EYVESCLOUD_CONTROLLER:-}" ] || [ "$install_mode" = "controller-agent" ]; then
+            install_agent_service_from_self() {
+                # 主控+被控模式下 agent 自动连本机 127.0.0.1
+                local old_ctrl="${EYVESCLOUD_CONTROLLER:-}"
+                EYVESCLOUD_CONTROLLER="${old_ctrl:-https://127.0.0.1:8999}"
+                install_agent_service
+                unset EYVESCLOUD_CONTROLLER
+                [ -n "$old_ctrl" ] && export EYVESCLOUD_CONTROLLER="$old_ctrl" || true
+            }
+            run_step "安装本机被控 Agent" install_agent_service_from_self
+        fi
+        ;;
+esac
+
+if [ "$install_mode" != "agent" ]; then
+    run_step "加固数据目录权限" harden_data_dir_perms
+    run_step "写入面板语言" set_panel_language
+fi
 sleep 2
 print_summary
