@@ -90,6 +90,7 @@ EyvesCloud unifies host administration into a single control plane — deliverin
 - **版本化 API**：全量接口统一 `/api/v1`，覆盖容器、镜像、网络、流量、安全、任务队列与批量操作。
 - **财务对接**：`GET /api/v1/usage` 全量用量导出（租户过滤、配置 + 实时用量聚合），专为计费系统插件化对接设计。
 - **幂等开通**：`Idempotency-Key` 机制防止计费回调超时导致的双开。
+- **WHMCS 插件**：内置 WHMCS 9.0 服务器开通模块（LXC/KVM），管理员可在后台「API 集成」页一键下载 zip，解压到 WHMCS 根目录即可安装，计费仍由 WHMCS 负责。
 - **运维入口**：Dashboard 统计、主机资源、路由概览、CLI-only 模式。
 
 ---

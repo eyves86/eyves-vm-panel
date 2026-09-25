@@ -97,5 +97,9 @@ func openAPIExtraPaths() map[string]map[string]string {
 		"/audit-logs":    {"get": "审计日志"},
 		"/login-logs":    {"get": "登录日志"},
 		"/api-keys/{id}": {"delete": "吊销 API Key"},
+
+		// ---- 集成：内置 WHMCS 9.0 服务器开通模块（仅管理员）----
+		"/integrations/whmcs":          {"get": "内置 WHMCS 服务器模块元信息（版本 / 安装路径 / 文件清单 / README）"},
+		"/integrations/whmcs/download": {"get": "下载 WHMCS 服务器模块 zip（解压到 WHMCS 根目录即可安装）"},
 	}
 }

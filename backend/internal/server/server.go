@@ -165,6 +165,10 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/backup/remote-settings", corsMiddleware(api.AdminMiddleware(api.HandleRemoteBackupSettings)))
 	mux.HandleFunc("/api/backup/remote-test", corsMiddleware(api.AdminMiddleware(api.HandleRemoteBackupTest)))
 
+	// 集成：内置 WHMCS 9.0 服务器开通模块（元信息 + zip 下载，仅管理员）
+	mux.HandleFunc("/api/integrations/whmcs", corsMiddleware(api.AdminMiddleware(api.HandleWHMCSModule)))
+	mux.HandleFunc("/api/integrations/whmcs/download", corsMiddleware(api.AdminMiddleware(api.HandleWHMCSDownload)))
+
 	// SSH 密钥管理（端用户级：admin + subuser 均可管理自己的 key）
 	mux.HandleFunc("/api/ssh-keys", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeys))))
 	mux.HandleFunc("/api/ssh-keys/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeyItem))))
@@ -338,6 +342,10 @@ func setupRoutes(mux *http.ServeMux) {
 	// v1 版本化：SSH 密钥管理（端用户级）
 	mux.HandleFunc("/api/v1/ssh-keys", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeys))))
 	mux.HandleFunc("/api/v1/ssh-keys/", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleSSHKeyItem))))
+
+	// v1 版本化：内置 WHMCS 9.0 服务器开通模块（元信息 + zip 下载，仅管理员）
+	mux.HandleFunc("/api/v1/integrations/whmcs", corsMiddleware(api.AdminMiddleware(api.HandleWHMCSModule)))
+	mux.HandleFunc("/api/v1/integrations/whmcs/download", corsMiddleware(api.AdminMiddleware(api.HandleWHMCSDownload)))
 
 	// v1 版本化：Recipes（用户自定义 bash 脚本模板）
 	mux.HandleFunc("/api/v1/recipes", corsMiddleware(api.AuthMiddleware(api.SubUserMiddleware(api.HandleRecipes))))
