@@ -542,6 +542,16 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updateFirewall(w, r, id)
+	case action == "rdns" && r.Method == http.MethodGet:
+		if !requireScope(w, r, "container:network") {
+			return
+		}
+		getReverseDNS(w, r, id)
+	case action == "rdns" && r.Method == http.MethodPut:
+		if !requireScope(w, r, "container:network") {
+			return
+		}
+		updateReverseDNS(w, r, id)
 	case r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return

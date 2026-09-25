@@ -52,6 +52,7 @@ func openAPIExtraPaths() map[string]map[string]string {
 			"delete": "删除 NAT 端口映射",
 		},
 		"/containers/{id}/firewall":       {"get": "查询防火墙规则", "put": "更新防火墙规则"},
+		"/containers/{id}/rdns":           {"get": "查询反向 DNS 记录", "put": "更新反向 DNS 记录"},
 		"/containers/{id}/ipv6":           {"post": "分配 IPv6"},
 		"/containers/{id}/ipv6-addresses": {"put": "更新 IPv6 地址"},
 		"/containers/{id}/public-ipv4":    {"put": "更新公网 IPv4 分配"},

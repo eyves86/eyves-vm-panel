@@ -360,6 +360,11 @@ func webhookDeliver(wh config.WebhookSubscription, evt webhookEvent) {
 		statusStr = "error: " + lastErr.Error()
 	}
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		// 异步投递可能在进程关闭 / 测试回收全局配置后仍被执行，此处必须容忍 nil，
+		// 否则一次已排队的失败重试会以空指针崩溃拖垮整个进程。
+		if cfg == nil {
+			return
+		}
 		for i := range cfg.Webhooks {
 			if cfg.Webhooks[i].ID != wh.ID {
 				continue
@@ -387,24 +392,26 @@ func webhookDeliver(wh config.WebhookSubscription, evt webhookEvent) {
 func webhookDispatch(evt webhookEvent) {
 	config.AppConfigMu.RLock()
 	targets := make([]config.WebhookSubscription, 0)
-	for _, wh := range config.AppConfig.Webhooks {
-		if !wh.Enabled {
-			continue
-		}
-		// 事件类型过滤：订阅列表为空 = 订阅全部事件。
-		if len(wh.EventTypes) > 0 {
-			matched := false
-			for _, t := range wh.EventTypes {
-				if t == evt.EventType {
-					matched = true
-					break
-				}
-			}
-			if !matched {
+	if config.AppConfig != nil {
+		for _, wh := range config.AppConfig.Webhooks {
+			if !wh.Enabled {
 				continue
 			}
+			// 事件类型过滤：订阅列表为空 = 订阅全部事件。
+			if len(wh.EventTypes) > 0 {
+				matched := false
+				for _, t := range wh.EventTypes {
+					if t == evt.EventType {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+			targets = append(targets, wh)
 		}
-		targets = append(targets, wh)
 	}
 	config.AppConfigMu.RUnlock()
 	for _, wh := range targets {

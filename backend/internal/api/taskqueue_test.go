@@ -2,10 +2,80 @@ package api
 
 import (
 	"testing"
+	"time"
 
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/lxc"
 )
+
+// setupTaskQueueConfig 为涉及任务持久化的用例提供最小配置，避免 SaveTasks 空指针。
+func setupTaskQueueConfig(t *testing.T) {
+	t.Helper()
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig = &config.EyvescloudConfig{}
+}
+
+// TestFinishTaskKeepsCancelledStatus 验证运行中被取消的任务在结束时不会被改回 done，
+// 否则取消操作会被静默吞掉（历史留档里的取消记录也会被覆盖）。
+func TestFinishTaskKeepsCancelledStatus(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+	task := &Task{
+		ID:          "task-9",
+		Type:        TaskStart,
+		ContainerID: 1,
+		Status:      "cancelled",
+		StageDetail: "运行中任务已标记取消，将在当前步骤结束后停止",
+		CreatedAt:   "2026-09-25 10:00:00",
+		StartedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	q.mu.Lock()
+	q.tasks[task.ID] = task
+	q.activeTasks = 1
+	task.activeKey = taskConcurrencyKey(task)
+	q.activeTargets[task.activeKey] = true
+	q.mu.Unlock()
+
+	q.finishTask(task, "done", nil)
+
+	if task.Status != "cancelled" {
+		t.Fatalf("status = %q, want cancelled", task.Status)
+	}
+	if task.Percent == 100 {
+		t.Fatal("被取消的任务不应被标记 100% 完成")
+	}
+	if active := q.Settings().Active; active != 0 {
+		t.Fatalf("active = %d, want 0（取消后应释放并发额度）", active)
+	}
+}
+
+// TestFinishTaskMarksDoneOnSuccess 回归：正常任务结束时仍写入 done 且进度 100%。
+func TestFinishTaskMarksDoneOnSuccess(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+	task := &Task{
+		ID:          "task-10",
+		Type:        TaskStart,
+		ContainerID: 2,
+		Status:      "running",
+		CreatedAt:   "2026-09-25 10:00:00",
+		StartedAt:   time.Now().UTC().Format(time.RFC3339),
+	}
+	q.mu.Lock()
+	q.tasks[task.ID] = task
+	q.activeTasks = 1
+	q.mu.Unlock()
+
+	q.finishTask(task, "done", nil)
+
+	if task.Status != "done" {
+		t.Fatalf("status = %q, want done", task.Status)
+	}
+	if task.Percent != 100 {
+		t.Fatalf("percent = %d, want 100", task.Percent)
+	}
+}
 
 func TestRunnableTaskIndexSkipsActiveContainer(t *testing.T) {
 	queue := []*Task{

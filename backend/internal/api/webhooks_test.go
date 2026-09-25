@@ -76,6 +76,22 @@ func TestWebhookDeliveryContract(t *testing.T) {
 	}
 }
 
+// swapAppConfig 在配置锁内替换全局配置，并注册恢复。
+// 直接给 config.AppConfig 赋值会与异步 webhook 投递（锁内读配置）产生数据竞争，
+// 因此这里统一走 AppConfigMu。
+func swapAppConfig(t *testing.T, cfg *config.EyvescloudConfig) {
+	t.Helper()
+	config.AppConfigMu.Lock()
+	prev := config.AppConfig
+	config.AppConfig = cfg
+	config.AppConfigMu.Unlock()
+	t.Cleanup(func() {
+		config.AppConfigMu.Lock()
+		config.AppConfig = prev
+		config.AppConfigMu.Unlock()
+	})
+}
+
 // TestWebhookDispatchRouting 验证事件类型过滤与禁用订阅不分发。
 func TestWebhookDispatchRouting(t *testing.T) {
 	hits := make(chan string, 4)
@@ -92,15 +108,13 @@ func TestWebhookDispatchRouting(t *testing.T) {
 	}))
 	defer disabled.Close()
 
-	prev := config.AppConfig
-	t.Cleanup(func() { config.AppConfig = prev })
-	config.AppConfig = &config.EyvescloudConfig{
+	swapAppConfig(t, &config.EyvescloudConfig{
 		Webhooks: []config.WebhookSubscription{
 			{ID: "wh-a", URL: match.URL, Enabled: true, EventTypes: []string{webhookEventTypeStatusChanged}},
 			{ID: "wh-b", URL: nomatch.URL, Enabled: true, EventTypes: []string{"some.other.event"}},
 			{ID: "wh-c", URL: disabled.URL, Enabled: false},
 		},
-	}
+	})
 
 	webhookDispatch(webhookEvent{
 		EventType: webhookEventTypeStatusChanged,
@@ -161,13 +175,12 @@ func TestWebhookAgentModeGuard(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	prev := config.AppConfig
-	t.Cleanup(func() { config.AppConfig = prev; config.SetAgentToken("") })
-	config.AppConfig = &config.EyvescloudConfig{
+	swapAppConfig(t, &config.EyvescloudConfig{
 		Webhooks: []config.WebhookSubscription{
 			{ID: "wh-guard", URL: srv.URL, Enabled: true},
 		},
-	}
+	})
+	t.Cleanup(func() { config.SetAgentToken("") })
 
 	// agent 模式（token 非空）：本地钩子不投递
 	config.SetAgentToken("agent-token")
