@@ -156,6 +156,9 @@
             <button class="eyvescloud-btn" type="button" data-power="powerOn">开机</button>
             <button class="eyvescloud-btn" type="button" data-power="powerOff">关机</button>
             <button class="eyvescloud-btn" type="button" data-power="powerReboot">重启</button>
+            <button class="eyvescloud-btn eyvescloud-btn-warn" type="button" data-power="powerHardOff" title="强制硬关机（kill -9 级别，等同于拔电源）">硬关机</button>
+            {if $is_kvm == '1'}<button class="eyvescloud-btn eyvescloud-btn-warn" type="button" data-power="rescueMode" title="挂载救援 ISO 并重启到救援模式">救援模式</button>{/if}
+            {if $is_kvm == '1'}<button class="eyvescloud-btn" type="button" data-power="rescueExit" title="退出救援模式，回到硬盘启动">退出救援</button>{/if}
             <button class="eyvescloud-btn" type="button" data-sync>同步状态</button>
         </div>
     </div>
@@ -1636,17 +1639,31 @@
         });
     });
 
+    // 危险操作列表 —— 触发前弹确认对话框
+    var DANGEROUS_POWER = {
+        powerHardOff: '硬关机将强制 kill 实例（等同于拔电源），未保存数据会丢失。确认继续？',
+        rescueMode:   '进入救援模式将强制从救援 ISO 重启实例，原系统暂时不可用。确认继续？',
+        rescueExit:   '退出救援模式将卸载救援 ISO 并重启回到原磁盘系统。确认继续？'
+    };
+
     app.querySelectorAll('[data-power]').forEach(function (button) {
         button.addEventListener('click', function () {
             var func = button.getAttribute('data-power');
-            button.disabled = true;
-            api(func, {}).then(function (res) {
-                showGlobal(res.success ? 'success' : 'error', res.message || (res.success ? '操作成功' : '操作失败'));
-            }).catch(function (error) {
-                showGlobal('error', error && error.message ? error.message : '请求失败');
-            }).finally(function () {
-                button.disabled = false;
-            });
+            var doCall = function () {
+                button.disabled = true;
+                api(func, {}).then(function (res) {
+                    showGlobal(res.success ? 'success' : 'error', res.message || (res.success ? '操作成功' : '操作失败'));
+                }).catch(function (error) {
+                    showGlobal('error', error && error.message ? error.message : '请求失败');
+                }).finally(function () {
+                    button.disabled = false;
+                });
+            };
+            if (DANGEROUS_POWER[func]) {
+                confirmDialog('操作确认', DANGEROUS_POWER[func], '确认执行', true, doCall);
+            } else {
+                doCall();
+            }
         });
     });
 

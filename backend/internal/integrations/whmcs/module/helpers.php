@@ -2286,6 +2286,57 @@ function eyvescloud_vnc_ticket($params)
     ]];
 }
 
+
+/**
+ * KVM Rescue Mode（ISO 救援模式）。
+ *
+ * 后端：POST /api/v1/containers/{id}?action=rescue  请求体 {image: "..."}
+ * - 先挂 ISO 作为 CD-ROM（强制 detach 旧 ISO）
+ * - 设置 VM 启动优先级 CD-ROM > HDD
+ * - 强制冷启动
+ * - LXC 容器会返回 400（rescue 是 KVM ISO 引导专属）
+ *
+ * WHMCS 调用方从 POST 读 image 参数。空 image 时使用面板默认救援 ISO（由后端决定）。
+ */
+function eyvescloud_rescueMode($params)
+{
+    $image = trim((string)eyvescloud_request_value('image', ''));
+    $cid = eyvescloud_isoNumericID($params);
+    if ($cid <= 0) {
+        return ['status' => 'error', 'msg' => '无法解析容器编号，请确认实例名称与面板一致'];
+    }
+    $payload = [];
+    if ($image !== '') {
+        $payload['image'] = $image;
+    }
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', $payload, 'POST', 120);
+    if (!eyvescloud_success($res)) {
+        return ['status' => 'error', 'msg' => eyvescloud_message($res, '进入救援模式失败（仅 KVM 支持）')];
+    }
+    return ['status' => 'success', 'msg' => '已进入救援模式，实例正在从 ISO 启动', 'data' => []];
+}
+
+/**
+ * 退出 KVM Rescue Mode。
+ *
+ * 后端：POST /api/v1/containers/{id}?action=rescue&exit=1
+ * - 卸载 rescue ISO
+ * - 恢复 HDD 启动优先级
+ * - 冷启动回到原系统
+ */
+function eyvescloud_rescueExit($params)
+{
+    $cid = eyvescloud_isoNumericID($params);
+    if ($cid <= 0) {
+        return ['status' => 'error', 'msg' => '无法解析容器编号，请确认实例名称与面板一致'];
+    }
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue&exit=1', [], 'POST', 120);
+    if (!eyvescloud_success($res)) {
+        return ['status' => 'error', 'msg' => eyvescloud_message($res, '退出救援模式失败')];
+    }
+    return ['status' => 'success', 'msg' => '已退出救援模式，实例正在从硬盘启动', 'data' => []];
+}
+
 /* -------------------------------------------------------------------------
  * 状态 / 写回 WHMCS
  * ---------------------------------------------------------------------- */
@@ -2578,6 +2629,18 @@ function eyvescloud_dispatch($params, $action)
             return eyvescloud_normalize_result(eyvescloud_container_action($params, 'stop', '关机任务已提交'));
         case 'powerReboot':
             return eyvescloud_normalize_result(eyvescloud_container_action($params, 'restart', '重启任务已提交'));
+
+        case 'powerHardOff':
+            // 硬关机（libvirt destroy / lxc-stop -k）。和 powerOff（软关机 stop）不同，
+            // 硬关机不 guest-agent / acpi，直接 kill。类比 Virtualizor 的 "Hard Reboot"。
+            return eyvescloud_normalize_result(eyvescloud_container_action($params, 'destroy', '硬关机任务已提交'));
+
+        case 'rescueMode':
+            // KVM Rescue Mode（ISO 救援模式）。请求体 {image: "iso 文件名或 id"}。
+            return eyvescloud_normalize_result(eyvescloud_rescueMode($params));
+        case 'rescueExit':
+            // 退出救援模式：卸载 rescue ISO 并强制冷启动回到原磁盘。
+            return eyvescloud_normalize_result(eyvescloud_rescueExit($params));
 
         case 'trafficReset':
             return eyvescloud_normalize_result(eyvescloud_traffic_reset($params));

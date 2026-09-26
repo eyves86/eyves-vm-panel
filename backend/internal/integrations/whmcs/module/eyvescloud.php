@@ -252,6 +252,53 @@ function eyvescloud_Off(array $params)
     return eyvescloud_account_action($params, 'stop', '关机任务已提交');
 }
 
+/**
+ * 硬关机：libvirt destroy / lxc-stop -k。不 guest-agent / acpi，直接 kill。
+ * 适合 soft stop 超时或卡死场景。
+ */
+function eyvescloud_HardOff(array $params)
+{
+    return eyvescloud_account_action($params, 'destroy', '硬关机任务已提交（强制 kill）', 90);
+}
+
+/**
+ * KVM Rescue Mode：挂载救援 ISO 并从 ISO 冷启动。
+ * 请求体 image 可选（ISO 文件名或 ID），空时用面板默认救援 ISO。
+ */
+function eyvescloud_RescueMode(array $params)
+{
+    $image = $_POST['image'] ?? $_GET['image'] ?? '';
+    $cid = eyvescloud_host_id($params);
+    if ($cid <= 0) {
+        return '无法解析实例编号';
+    }
+    $payload = [];
+    if ($image !== '') {
+        $payload['image'] = $image;
+    }
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', $payload, 'POST', 120);
+    if (!eyvescloud_success($res)) {
+        return eyvescloud_message($res, '进入救援模式失败（仅 KVM 支持）');
+    }
+    return 'success';
+}
+
+/**
+ * 退出 KVM Rescue Mode：卸载 rescue ISO，恢复 HDD 启动优先级，冷启动。
+ */
+function eyvescloud_RescueExit(array $params)
+{
+    $cid = eyvescloud_host_id($params);
+    if ($cid <= 0) {
+        return '无法解析实例编号';
+    }
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue&exit=1', [], 'POST', 120);
+    if (!eyvescloud_success($res)) {
+        return eyvescloud_message($res, '退出救援模式失败');
+    }
+    return 'success';
+}
+
 function eyvescloud_Reboot(array $params)
 {
     return eyvescloud_account_action($params, 'restart', '重启任务已提交');
@@ -379,11 +426,14 @@ function eyvescloud_ClientArea(array $params)
 function eyvescloud_ClientAreaAllowedFunctions()
 {
     return [
-        '开机'     => 'On',
-        '关机'     => 'Off',
-        '重启'     => 'Reboot',
-        '同步状态' => 'Sync',
-        '重置流量' => 'TrafficReset',
+        '开机'          => 'On',
+        '关机'          => 'Off',
+        '重启'          => 'Reboot',
+        '硬关机(强制)'  => 'HardOff',
+        'KVM 救援模式'  => 'RescueMode',
+        '退出救援模式'  => 'RescueExit',
+        '同步状态'      => 'Sync',
+        '重置流量'      => 'TrafficReset',
     ];
 }
 
@@ -481,8 +531,11 @@ function eyvescloud_AdminServicesTabFields(array $params)
 function eyvescloud_AdminCustomButtonArray()
 {
     return [
-        '同步状态' => 'Sync',
-        '重置流量' => 'TrafficReset',
+        '同步状态'     => 'Sync',
+        '重置流量'     => 'TrafficReset',
+        '硬关机(强制)' => 'HardOff',
+        'KVM 救援模式' => 'RescueMode',
+        '退出救援模式' => 'RescueExit',
     ];
 }
 
