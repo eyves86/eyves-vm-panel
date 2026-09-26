@@ -146,7 +146,8 @@
      data-service-id="{$service_id}"
      data-endpoint="{$module_url|escape:'html'}handlers/api.php"
      data-container-name="{$container_name|escape:'html'}"
-     data-kvm="{$is_kvm}">
+     data-kvm="{$is_kvm}"
+     data-csrf="{$csrf_token|escape:'html'}">
 
     <div class="eyvescloud-toolbar">
         <div class="eyvescloud-brand">EYVESCLOUD 控制台</div>
@@ -573,6 +574,7 @@
     var SERVICE_ID = app.getAttribute('data-service-id') || '';
     var ENDPOINT = app.getAttribute('data-endpoint') || '';
     var IS_KVM = app.getAttribute('data-kvm') === '1';
+    var CSRF_TOKEN = app.getAttribute('data-csrf') || '';
     var globalMsg = app.querySelector('[data-global-msg]');
 
     function escapeHtml(value) {
@@ -613,6 +615,7 @@
         var body = new URLSearchParams();
         body.set('service_id', SERVICE_ID);
         body.set('func', func);
+        body.set('token', CSRF_TOKEN);
         Object.keys(payload).forEach(function (key) {
             var value = payload[key];
             if (value === undefined || value === null) return;

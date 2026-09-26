@@ -2496,6 +2496,11 @@ func removeLegacyVNCMappings() bool {
 func SaveConfig() error {
 	AppConfigMu.Lock()
 	defer AppConfigMu.Unlock()
+	// 测试 teardown 会把 AppConfig 还原为 nil；后台任务队列 goroutine
+	// 此刻仍可能触发落库，直接返回错误而不是 panic。
+	if AppConfig == nil {
+		return fmt.Errorf("config is not initialized")
+	}
 	return saveConfigToDB()
 }
 
@@ -3388,6 +3393,11 @@ func removeSubUserContainerAccess(containerName string, containerUUID string) {
 // findContainerUnlocked finds a container by ID. Caller must hold AppConfigMu
 // (read or write) when calling this from a locked context.
 func findContainerUnlocked(id int) *Container {
+	// AppConfig 可能在测试 teardown 中被还原为 nil；后台任务队列 goroutine
+	// 此刻仍可能调用 FindContainer，nil 防护让它返回 nil 而不是 panic。
+	if AppConfig == nil {
+		return nil
+	}
 	for i, c := range AppConfig.Containers {
 		if c.ID == id {
 			return &AppConfig.Containers[i]
@@ -3401,6 +3411,9 @@ func findContainerUnlocked(id int) *Container {
 // so migration helpers that run under the write lock (ReconcileConfig) do not
 // re-acquire AppConfigMu.RLock, which would deadlock the RWMutex.
 func findContainerByNameUnlocked(name string) *Container {
+	if AppConfig == nil {
+		return nil
+	}
 	for i, c := range AppConfig.Containers {
 		if c.Name == name {
 			return &AppConfig.Containers[i]
@@ -3787,6 +3800,9 @@ func IsValidContainerNameSyntax(name string) bool {
 
 // AddAuditLog adds an audit log entry
 func AddAuditLog(action, target, detail, user string) {
+	if AppConfig == nil {
+		return
+	}
 	log := AuditLog{
 		Time:   time.Now().Format("2006-01-02 15:04:05"),
 		Action: action,
@@ -3804,6 +3820,9 @@ func AddAuditLog(action, target, detail, user string) {
 }
 
 func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success bool, errMsg string) {
+	if AppConfig == nil {
+		return
+	}
 	s := success
 	log := AuditLog{
 		Time:      time.Now().Format("2006-01-02 15:04:05"),
@@ -3848,6 +3867,9 @@ func auditLogHash(log AuditLog) string {
 
 // SaveTasks persists the task queue to config
 func SaveTasks(tasks []SavedTask) {
+	if AppConfig == nil {
+		return
+	}
 	AppConfigMu.Lock()
 	AppConfig.Tasks = tasks
 	AppConfigMu.Unlock()

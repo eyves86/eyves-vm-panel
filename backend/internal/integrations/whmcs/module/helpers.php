@@ -2670,3 +2670,21 @@ function eyvescloud_dispatch($params, $action)
 
     return ['success' => false, 'message' => '未知操作: ' . $action, 'data' => []];
 }
+/**
+ * 模块自有 CSRF token：绑定 WHMCS 会话，用于 handlers/api.php 的 AJAX 入口校验。
+ *
+ * 不直接依赖 WHMCS 核心的 $_SESSION['csrfToken']（该键在部分版本/后台会话下
+ * 不一定存在），改为模块自管键，ClientArea 渲染时生成、AJAX 提交时回传比对。
+ *
+ * @return string 64 位十六进制 token
+ */
+function eyvescloud_csrf_token()
+{
+    if (session_status() !== PHP_SESSION_ACTIVE) {
+        return '';
+    }
+    if (empty($_SESSION['eyvescloud_csrf']) || !is_string($_SESSION['eyvescloud_csrf'])) {
+        $_SESSION['eyvescloud_csrf'] = bin2hex(random_bytes(32));
+    }
+    return (string)$_SESSION['eyvescloud_csrf'];
+}

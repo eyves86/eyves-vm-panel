@@ -28,6 +28,35 @@ func validContainerName(name string) bool {
 
 var lxcManager = lxc.NewManager()
 
+// isSuspendedBlockedManageAction 判断已挂起（欠费停机）容器是否拒绝该管理操作。
+// 电源类（start/restart/reinstall）不在此列——它们还要额外拦截到期/流量超限，
+// 由调用方单独处理。豁免项（suspend/unsuspend/stop/delete/计费字段/密码/主机名等）
+// 是管理恢复路径，必须保持可用。
+func isSuspendedBlockedManageAction(action, method string) bool {
+	switch action {
+	case "iso", "rescue", "recipes/execute", "processes/kill", "services":
+		return method == http.MethodPost
+	case "firewall", "port-mappings":
+		return method == http.MethodPost || method == http.MethodPut
+	case "snapshots", "backups":
+		// 快照/备份列表本身是 GET，POST 为创建/还原。
+		return method == http.MethodPost
+	}
+	if strings.HasPrefix(action, "port-mappings/") {
+		// NAT 端口映射的更新/删除（PUT/DELETE）。
+		return method == http.MethodPut || method == http.MethodDelete
+	}
+	if strings.HasPrefix(action, "snapshots/") && method == http.MethodPost {
+		// 快照还原（snapshots/{id}/restore）。
+		return true
+	}
+	if strings.HasPrefix(action, "backups/") && strings.HasSuffix(action, "/restore") {
+		// 备份还原（backups/{id}/restore）。
+		return true
+	}
+	return false
+}
+
 // HandleContainers handles container list and creation
 func HandleContainers(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -114,6 +143,31 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 	// 只读子用户（viewer）禁止一切写操作
 	if r.Method != http.MethodGet && !requireSubUserWrite(w, r) {
 		return
+	}
+
+	// 欠费停机（Suspended）与到期/流量超限拦截。
+	// 本地容器的电源操作由任务队列执行侧兜底检查（taskqueue.go runOperationTask），
+	// 但跨节点容器走 routeToAgent 代理路径不经过任务队列，必须在转发前统一拦截。
+	// 管理必需操作（suspend/unsuspend/stop/delete/计费字段调整）不在此列。
+	if c != nil && r.Method != http.MethodGet {
+		if action == "start" || action == "restart" || action == "reinstall" {
+			// 电源类操作：挂起/到期/流量超限三者全部拦截（与任务队列同一语义）。
+			switch {
+			case c.Suspended:
+				jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起（欠费停机），不允许此操作"})
+				return
+			case lxc.IsExpired(*c):
+				jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已到期，不允许此操作"})
+				return
+			case lxc.IsTrafficExceeded(*c):
+				jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器流量已超限，不允许此操作"})
+				return
+			}
+		} else if c.Suspended && isSuspendedBlockedManageAction(action, r.Method) {
+			// 挂起容器的破坏性管理操作：快照/备份还原、NAT、防火墙、ISO、救援、脚本执行等。
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起（欠费停机），不允许此操作"})
+			return
+		}
 	}
 
 	// 多节点路由：容器 NodeID 非空时，运行时操作转发到所属 agent。

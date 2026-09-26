@@ -151,6 +151,8 @@ func getDBPath() string {
 }
 
 func openConfigDB() error {
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db != nil {
 		return nil
 	}
@@ -853,11 +855,14 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 }
 
 func saveConfigToDB() error {
+	// nil 检查必须在 dbMu 之内：CloseConfigDB 会在锁内把 db 置 nil，
+	// 后台任务队列 goroutine 若在锁外先判 nil 再拿锁，会在两者之间
+	// 被关闭方抢占，随后对 nil *sql.DB 调 Begin() 直接 panic。
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db == nil {
 		return fmt.Errorf("sqlite database is not initialized")
 	}
-	dbMu.Lock()
-	defer dbMu.Unlock()
 
 	tx, err := db.Begin()
 	if err != nil {
@@ -1176,11 +1181,11 @@ func CreateVolumeRecord(v storage.Volume) error {
 	if v.CreatedAt == "" {
 		v.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
 	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db == nil {
 		return fmt.Errorf("sqlite database is not initialized")
 	}
-	dbMu.Lock()
-	defer dbMu.Unlock()
 	if volumeRecordExistsLocked(v.ID) {
 		return fmt.Errorf("%w: %s", storage.ErrVolumeExists, v.ID)
 	}
@@ -1196,11 +1201,11 @@ func UpdateVolumeRecord(v storage.Volume) error {
 	if v.ID == "" {
 		return fmt.Errorf("volume id is required")
 	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db == nil {
 		return fmt.Errorf("sqlite database is not initialized")
 	}
-	dbMu.Lock()
-	defer dbMu.Unlock()
 	res, err := db.Exec(`UPDATE volumes SET pool_id = ?, kind = ?, size_mb = ?, attached_to_container_id = ?, status = ?
 		WHERE id = ?`,
 		v.PoolID, v.Kind, v.SizeMB, v.AttachedToContainerID, v.Status, v.ID)
@@ -1216,11 +1221,14 @@ func UpdateVolumeRecord(v storage.Volume) error {
 // DeleteVolumeRecord 删除卷记录（幂等：记录不存在时返回 nil）。
 func DeleteVolumeRecord(id string) error {
 	id = strings.TrimSpace(id)
-	if id == "" || db == nil {
+	if id == "" {
 		return nil
 	}
 	dbMu.Lock()
 	defer dbMu.Unlock()
+	if db == nil {
+		return nil
+	}
 	_, err := db.Exec(`DELETE FROM volumes WHERE id = ?`, id)
 	return err
 }
@@ -1228,11 +1236,14 @@ func DeleteVolumeRecord(id string) error {
 // DeleteContainerVolumes 删除挂载在指定容器上的全部卷记录（根卷+数据卷），
 // 返回被删除的卷 ID 列表，供调用方写审计日志。
 func DeleteContainerVolumes(containerID int) []string {
-	if containerID <= 0 || db == nil {
+	if containerID <= 0 {
 		return nil
 	}
 	dbMu.Lock()
 	defer dbMu.Unlock()
+	if db == nil {
+		return nil
+	}
 	rows, err := db.Query(`SELECT id FROM volumes WHERE attached_to_container_id = ?`, containerID)
 	if err != nil {
 		return nil
@@ -1256,21 +1267,24 @@ func DeleteContainerVolumes(containerID int) []string {
 // GetVolume 按 ID 读取卷记录。数据库未初始化（单元测试环境）时返回不存在。
 func GetVolume(id string) (storage.Volume, bool) {
 	id = strings.TrimSpace(id)
-	if id == "" || db == nil {
+	if id == "" {
 		return storage.Volume{}, false
 	}
 	dbMu.Lock()
 	defer dbMu.Unlock()
+	if db == nil {
+		return storage.Volume{}, false
+	}
 	return getVolumeLocked(id)
 }
 
 // ListVolumes 返回全部卷记录（按创建时间升序）。
 func ListVolumes() []storage.Volume {
+	dbMu.Lock()
+	defer dbMu.Unlock()
 	if db == nil {
 		return nil
 	}
-	dbMu.Lock()
-	defer dbMu.Unlock()
 	rows, err := db.Query(`SELECT id, pool_id, kind, size_mb, attached_to_container_id, status, created_at
 		FROM volumes ORDER BY created_at, id`)
 	if err != nil {

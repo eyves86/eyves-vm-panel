@@ -80,6 +80,24 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
 		return
 	}
+	// 防御纵深：主控在转发前已拦截（handlers.go HandleSingleContainer），
+	// 本地容器也由任务队列执行侧拦截（taskqueue.go runOperationTask）。
+	// 这里对电源类操作做最后一道检查，确保主控漏检时挂起/到期/流量超限容器
+	// 仍无法在被控节点上开机。unsuspend 走独立分支（先清标记再开机），不受影响。
+	if action == "start" || action == "restart" || action == "reinstall" {
+		if c.Suspended {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起（欠费停机），不允许此操作"})
+			return
+		}
+		if lxc.IsExpired(*c) {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已到期，不允许此操作"})
+			return
+		}
+		if lxc.IsTrafficExceeded(*c) {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器流量已超限，不允许此操作"})
+			return
+		}
+	}
 	var runErr error
 	switch action {
 	case "start":

@@ -22,7 +22,11 @@ func setupContainerEndpointTestStore(t *testing.T, container config.Container) {
 	t.Setenv("EYVESCLOUD_DATA_DIR", dir)
 	t.Cleanup(func() {
 		config.CloseConfigDB()
+		// 必须持锁恢复：后台任务队列 goroutine 仍在读写 AppConfig，
+		// 裸写会与 SaveConfig 等构成数据竞争（-race 下必报）。
+		config.AppConfigMu.Lock()
 		config.AppConfig = previous
+		config.AppConfigMu.Unlock()
 		config.SetConfigPath("")
 	})
 	if _, err := config.InitConfig(); err != nil {

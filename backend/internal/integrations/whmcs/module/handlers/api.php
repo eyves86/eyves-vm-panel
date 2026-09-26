@@ -130,6 +130,23 @@ if ($selfHost !== '' && $originHost !== '' && $originHost !== $selfHost) {
 
 $input = eyvescloud_json_input();
 
+// CSRF token 校验：客户会话下必须携带与 session 一致的模块 token
+// （eyvescloud_csrf_token 生成，clientarea.tpl data-csrf 输出、api() 附带回传）。
+// Origin/Referer 同源校验在前，但浏览器可省略这两个头，此处为强校验。
+// 纯管理员会话（uid=0）走 WHMCS 后台自带的核心 token 防护，不在此强制。
+if ($uid > 0) {
+    $sessionToken = isset($_SESSION['eyvescloud_csrf']) && is_string($_SESSION['eyvescloud_csrf'])
+        ? $_SESSION['eyvescloud_csrf'] : '';
+    $postedToken = isset($input['token']) && is_string($input['token']) ? $input['token'] : '';
+    if ($sessionToken === '' || $postedToken === '' || !hash_equals($sessionToken, $postedToken)) {
+        eyvescloud_api_respond(403, [
+            'success' => false,
+            'message' => '安全校验失败（token 无效），请刷新页面后重试',
+            'data'    => [],
+        ]);
+    }
+}
+
 $serviceId = 0;
 // 服务 ID 只从专用键读取：'id' 保留给资源级操作（快照/备份）使用，
 // 若把 'id' 当作服务 ID 回退，快照 ID 可能覆盖服务 ID 从而取错服务。

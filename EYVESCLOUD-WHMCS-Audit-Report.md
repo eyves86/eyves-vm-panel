@@ -92,6 +92,10 @@
   - agent 端 `HandleAgentContainerAction` 的 start/restart/reinstall 分支入口加 `if c.Suspended { 403 }`（与 taskqueue.go:621 同文案）
   - 主控 `HandleSingleContainer` 的电源类 action 在 routeToAgent **之前**统一加 Suspended 检查（防御纵深，双端都加）
 - **验证方法**：单测构造 `Suspended=true` + `NodeID="node-1"` 的容器，断言 start 返回 403；集成测试双节点环境重复复现步骤第 2 步应 403
+- **修复状态**：✅ **已修复（2026-09-26）**
+  - 主控：`handlers.go` `HandleSingleContainer` 在 routeToAgent 之前统一拦截 Suspended/到期/流量超限的 start/restart/reinstall
+  - agent：`agent_api.go` `HandleAgentContainerAction` 同口径防御纵深检查（unsuspend 分支豁免）
+  - 回归：`suspended_enforcement_test.go` TestSuspendedContainerPowerOpsRejectedCrossNode / TestAgentStartRejectsSuspendedContainer / TestAgentUnsuspendStillWorks 全通过（`-race -count=3` clean）
 
 ### F1a — Suspended 容器的快照/备份/NAT/防火墙/ISO/救援仍可操作（含 WHMCS 客户区按钮）
 
@@ -106,6 +110,10 @@
   - 面板侧：上述 handler 入口统一加 Suspended 检查（建议抽 `requireNotSuspended(c)` helper，在 HandleSingleContainer switch 顶部对非只读 action 调用）
   - WHMCS 侧：handlers/api.php 加 `domainstatus != 'Active'` 时拒绝状态变更类 op（查询类放行）
 - **验证方法**：suspend 后逐个调用上述端点应 403；WHMCS 客户区 suspend 状态下按钮点击应返回业务错误
+- **修复状态**：✅ **面板侧已修复（2026-09-26）**；WHMCS 侧 domainstatus 检查待做
+  - `handlers.go` 新增 `isSuspendedBlockedManageAction` 统一拦截：ISO/救援/脚本/进程/服务 POST，快照创建与还原 POST，备份还原 POST，NAT 增删改，防火墙写入
+  - 豁免（不误伤）：unsuspend、stop、计费字段调整（traffic-limit/expiry）、快照删除（释放配额）、全部 GET
+  - 回归：TestSuspendedContainerManageActionsRejected（11 个破坏性操作全 403）+ TestSuspendedContainerExemptActionsNotRejected + TestIsSuspendedBlockedManageAction 全通过
 
 ### F2 — Webhook 投递 SSRF 防护不完整
 
@@ -156,6 +164,12 @@
 - **复现步骤**：构造跨站页面 POST `handlers/api.php`（op=power&action=destroy），携带受害者 cookie（SameSite=None 场景）→ 操作生效
 - **修复建议**：handlers/api.php 入口调 `check_token('WHMCS.default')`（或比对 `token` == `$_SESSION['csrfToken']`）；clientarea.tpl 所有 fetch body 附带 `{ token: csrfToken }`（Smarty 变量 WHMCS 已内置）
 - **验证方法**：不带 token 的跨站 POST 应 403；正常客户区操作全通过回归
+- **修复状态**：✅ **已修复（2026-09-26）**（自建 session token，未用 check_token——AJAX 入口非 WHMCS 标准表单流）
+  - `helpers.php` 新增 `eyvescloud_csrf_token()`：`random_bytes(32)` 生成，绑定 `$_SESSION['eyvescloud_csrf']`
+  - `eyvescloud.php` ClientArea 模板变量注入 `csrf_token`
+  - `clientarea.tpl` `data-csrf` 属性 + 所有 AJAX body 附带 `token` 字段
+  - `handlers/api.php` 客户会话（$uid>0）一律 `hash_equals` 常时比对，失败 403
+  - `php -l` 三个改动文件全部无语法错误；端到端（TC-04/TC-05）需真机 WHMCS 环境确认
 
 ### F6 — 备份计划无归属校验
 
@@ -356,16 +370,16 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 
 ### P0（阻塞 WHMCS 商用上线）
 
-| # | 任务 | 侧 | 关联发现 |
-|---|------|----|---------|
-| 1 | agent 端电源操作 + 主控代理路径补 Suspended 检查（双端防御） | 面板 | F1 |
-| 2 | WHMCS handlers/api.php 补 CSRF token（check_token）+ clientarea.tpl 附带 token | 插件 | F5 |
+| # | 任务 | 侧 | 关联发现 | 状态 |
+|---|------|----|---------|------|
+| 1 | agent 端电源操作 + 主控代理路径补 Suspended 检查（双端防御） | 面板 | F1 | ✅ 已修复并通过回归（含 `-race`） |
+| 2 | WHMCS handlers/api.php 补 CSRF token（check_token）+ clientarea.tpl 附带 token | 插件 | F5 | ✅ 已修复（session token + hash_equals），待真机端到端 |
 
 ### P1（上线后两周内）
 
 | # | 任务 | 侧 | 关联 |
 |---|------|----|------|
-| 3 | 快照/备份还原/NAT/防火墙/ISO/救援/流量重置补 Suspended 拦截 + WHMCS domainstatus 检查 | 双侧 | F1a |
+| 3 | 快照/备份还原/NAT/防火墙/ISO/救援/流量重置补 Suspended 拦截 + WHMCS domainstatus 检查 | 双侧 | F1a | 面板侧 ✅ 已修复（isSuspendedBlockedManageAction）；WHMCS domainstatus 待做 |
 | 4 | Webhook 投递改 safehttp / 投递前完整复查 + rebinding 用例 | 面板 | F2 |
 | 5 | handleNodeRegister 补审计日志（成功/失败双路径） | 面板 | F3 |
 | 6 | install_key 改 header/POST 传参，移出 URL query | 面板 | F4 |
@@ -419,6 +433,22 @@ go test -short -count=1 ./...           → 40/40 packages ok
 go test -race ./internal/api/...        → race clean
 php -l（模块全部 PHP 文件）              → No syntax errors
 ```
+
+### 10.4 P0 修复回归记录（2026-09-26）
+
+| 命令 | 结果 |
+|------|------|
+| `go build ./...` | ✅ |
+| `go vet ./internal/api/ ./internal/config/` | ✅ clean |
+| `go test ./internal/api/ ./internal/config/ -count=1` | ✅ 全通过 |
+| `go test ./internal/api/ -run 'TestSuspended\|TestAgentStart\|TestAgentUnsuspend\|TestIsSuspendedBlocked' -race -count=3` | ✅ 全通过，race clean |
+| `php -l helpers.php / eyvescloud.php / handlers/api.php` | ✅ No syntax errors |
+
+修复过程中发现并一并处理的**测试基础设施并发缺陷**（不修则任何 api 包测试都可能随机 panic/race）：
+
+1. `store_sqlite.go`：`saveConfigToDB` 与卷记录函数在 `dbMu` **锁外**判 `db == nil`、锁内使用——与 `CloseConfigDB`（锁内置 nil）构成 check-then-act 竞态，后台任务队列 goroutine 命中时对 nil `*sql.DB` 调 `Begin()` panic。修复：nil 检查移入锁内（`openConfigDB` 的无锁写 `db = next` 同步加锁）。
+2. `config.go`：`FindContainer`/`SaveConfig`/`SaveTasks`/`AddAuditLog`/`AddAuditLogFull` 在测试 teardown 把 `AppConfig` 还原为 nil 后被后台 goroutine 调用时解引用 nil。修复：各入口加 nil 防护，后台任务优雅失败而非崩溃。
+3. `container_virtualizor_test.go`：cleanup 裸写 `config.AppConfig = previous` 与后台 goroutine 读构成数据竞争（`-race` 必报）。修复：改持 `AppConfigMu` 恢复。
 
 ---
 

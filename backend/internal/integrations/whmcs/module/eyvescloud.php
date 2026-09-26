@@ -441,6 +441,7 @@ function eyvescloud_ClientArea(array $params)
             'virtualization' => $virtualization,
             'is_kvm'         => $virtualization === 'kvm' ? '1' : '0',
             'ssh_password'   => (string)$password,
+            'csrf_token'     => eyvescloud_csrf_token(),
         ],
     ];
 }
