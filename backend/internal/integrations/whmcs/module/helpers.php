@@ -508,10 +508,14 @@ function eyvescloud_decrypt($value)
 }
 
 /**
- * 加密敏感字段以便写回 WHMCS 数据库。无可用加密函数时按原文写入。
+ * 加密敏感字段以便写回 WHMCS 数据库。
+ *
+ * F11：encrypt() 不可用或加密失败时返回 null（拒绝明文落库），
+ * 调用方必须检查返回值——null 表示本次不写 password 字段，
+ * 保留库里旧值（可能是旧密码），而不是把明文密码存进数据库。
  *
  * @param string $password
- * @return string
+ * @return string|null 加密后的密文；无法加密时返回 null
  */
 function eyvescloud_store_password($password)
 {
@@ -529,7 +533,9 @@ function eyvescloud_store_password($password)
             eyvescloud_debug('encrypt() failed', $e->getMessage());
         }
     }
-    return $password;
+    // F11：降级分支——记录日志并返回 null，拒绝明文落库
+    eyvescloud_debug('store_password: encrypt() unavailable, refusing to store plaintext');
+    return null;
 }
 
 /* -------------------------------------------------------------------------
@@ -2125,9 +2131,13 @@ function eyvescloud_reset_password($params, $newPassword)
     $hostId = eyvescloud_host_id($params);
     if ($hostId > 0 && class_exists('\WHMCS\Database\Capsule')) {
         try {
-            \WHMCS\Database\Capsule::table('tblhosting')->where('id', $hostId)->update([
-                'password' => eyvescloud_store_password($password),
-            ]);
+            // F11：加密不可用时 store_password 返回 null，跳过写库（拒绝明文落库）
+            $stored = eyvescloud_store_password($password);
+            if ($stored !== null) {
+                \WHMCS\Database\Capsule::table('tblhosting')->where('id', $hostId)->update([
+                    'password' => $stored,
+                ]);
+            }
             $detail = eyvescloud_find_container($params);
             if (eyvescloud_success($detail) && isset($detail['data'])) {
                 eyvescloud_update_host_from_container($params, $detail['data']);
@@ -2448,7 +2458,11 @@ function eyvescloud_update_host_from_container($params, $container)
 
     $password = eyvescloud_container_password($container);
     if ($password !== '') {
-        $update['password'] = eyvescloud_store_password($password);
+        // F11：加密不可用时 store_password 返回 null，跳过该字段（拒绝明文落库）
+        $stored = eyvescloud_store_password($password);
+        if ($stored !== null) {
+            $update['password'] = $stored;
+        }
     }
 
     try {

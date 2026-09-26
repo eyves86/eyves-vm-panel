@@ -1277,13 +1277,17 @@ func proxyNodeRequest(r *http.Request, node config.Node, method, path string, bo
 	return data, resp.StatusCode, nil
 }
 
+// normalizeNodeAddress 规范化节点面板地址。
+// F9：无 scheme 时默认补 https://（与 agent→主控方向的强制 https 对齐），
+// 避免 Bearer token 在主控→agent 链路明文传输。存量节点已存的 http:// 地址不受影响；
+// agent 自注册地址始终显式携带 scheme（agent.go 按自身 SSL 状态补全）。
 func normalizeNodeAddress(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
 		return ""
 	}
 	if !strings.HasPrefix(value, "http://") && !strings.HasPrefix(value, "https://") {
-		value = "http://" + value
+		value = "https://" + value
 	}
 	return strings.TrimSuffix(value, "/")
 }

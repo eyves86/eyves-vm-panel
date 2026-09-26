@@ -194,6 +194,33 @@ func planTargets(plan config.BackupPlan) []config.Container {
 
 // ---- HTTP handlers ----
 
+// backupPlanAllowedForRequest 校验受限请求（子用户/绑定容器的 API Key）能否
+// 访问目标备份计划（F6：backup-plans 补归属校验，与容器其他操作对齐）。
+// container_id=0（作用全部容器）对受限请求一律拒绝——其影响面必然越过绑定范围。
+func backupPlanAllowedForRequest(r *http.Request, containerID int) bool {
+	allowed, restricted := requestAllowedContainers(r)
+	if !restricted {
+		return true
+	}
+	if containerID <= 0 {
+		return false
+	}
+	c := config.FindContainer(containerID)
+	if c == nil {
+		return false
+	}
+	return isContainerAllowed(allowed, c)
+}
+
+// requireBackupPlanAccess 在归属校验失败时写 403 并返回 false。
+func requireBackupPlanAccess(w http.ResponseWriter, r *http.Request, containerID int) bool {
+	if !backupPlanAllowedForRequest(r, containerID) {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
+		return false
+	}
+	return true
+}
+
 // HandleBackupPlans 处理 /api[/v1]/backup-plans：GET 列表、POST 新建。
 func HandleBackupPlans(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -202,6 +229,16 @@ func HandleBackupPlans(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		plans := config.BackupPlans()
+		// F6：受限请求只能看到绑定容器范围内的计划（全局计划隐藏）。
+		if _, restricted := requestAllowedContainers(r); restricted {
+			filtered := make([]config.BackupPlan, 0, len(plans))
+			for _, p := range plans {
+				if backupPlanAllowedForRequest(r, p.ContainerID) {
+					filtered = append(filtered, p)
+				}
+			}
+			plans = filtered
+		}
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: plans})
 	case http.MethodPost:
 		if !requireScope(w, r, "backup:write") {
@@ -249,6 +286,10 @@ func HandleBackupPlanSubRoutes(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Plan not found"})
 			return
 		}
+		// F6：归属校验（受限请求不能读非绑定容器/全局计划）
+		if !requireBackupPlanAccess(w, r, plan.ContainerID) {
+			return
+		}
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: plan})
 	case http.MethodPut:
 		if !requireScope(w, r, "backup:write") {
@@ -257,6 +298,15 @@ func HandleBackupPlanSubRoutes(w http.ResponseWriter, r *http.Request) {
 		updateBackupPlan(w, r, id)
 	case http.MethodDelete:
 		if !requireScope(w, r, "backup:write") {
+			return
+		}
+		// F6：删除前先做归属校验，不能只凭 plan ID 删
+		existing := config.FindBackupPlan(id)
+		if existing == nil {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Plan not found"})
+			return
+		}
+		if !requireBackupPlanAccess(w, r, existing.ContainerID) {
 			return
 		}
 		if !config.RemoveBackupPlan(id) {
@@ -282,6 +332,10 @@ type backupPlanRequest struct {
 func createBackupPlan(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeBackupPlanRequest(w, r)
 	if !ok {
+		return
+	}
+	// F6：受限请求只能为绑定容器建计划（container_id=0 全局计划拒绝）
+	if !requireBackupPlanAccess(w, r, req.ContainerID) {
 		return
 	}
 	plan, err := buildBackupPlan(req, nil)
@@ -310,8 +364,15 @@ func updateBackupPlan(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Plan not found"})
 		return
 	}
+	// F6：既有计划与目标容器双重归属校验（防受限 Key 借更新改挂他人容器）
+	if !requireBackupPlanAccess(w, r, existing.ContainerID) {
+		return
+	}
 	req, ok := decodeBackupPlanRequest(w, r)
 	if !ok {
+		return
+	}
+	if !requireBackupPlanAccess(w, r, req.ContainerID) {
 		return
 	}
 	plan, err := buildBackupPlan(req, existing)
@@ -343,6 +404,10 @@ func runBackupPlanNow(w http.ResponseWriter, r *http.Request, id string) {
 	plan := config.FindBackupPlan(id)
 	if plan == nil {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Plan not found"})
+		return
+	}
+	// F6：立即执行同样过归属校验
+	if !requireBackupPlanAccess(w, r, plan.ContainerID) {
 		return
 	}
 	if !claimBackupPlanRun(plan.ID) {

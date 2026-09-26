@@ -16,7 +16,7 @@
 |------|------|
 | WHMCS 生命周期支撑 | ✅ 完整（Create/Suspend/Terminate/ChangePassword/ChangePackage/UsageUpdate 均已实现且有幂等保护） |
 | 鉴权体系 | ✅ JWT(HS256) + API Key(argon2 哈希 + IP 白名单 + 单 Key 限流) + token_version 三级轮换 |
-| 租户隔离 | ✅ 单容器操作/列表/任务/票据全链路归属校验；1 处遗漏（备份计划，见 F6） |
+| 租户隔离 | ✅ 单容器操作/列表/任务/票据/备份计划全链路归属校验（F6 已修复） |
 | 欠费停机 (Suspended) 强制力 | ✅ 本地/跨节点双端拦截（F1 已修复，含快照/备份/NAT/防火墙/ISO/救援/流量重置，F1a）；WHMCS 侧非 Active 服务拒绝状态变更操作 |
 | SQLi / XSS | ✅ 无风险（11 处 DB 访问全参数化；模板全 escape） |
 | CSRF | ✅ 模块 AJAX 入口 session token + hash_equals（F5 已修复，待真机端到端） |
@@ -24,7 +24,7 @@
 | 节点添加 | ✅ 一键（一次性 token + 24h TTL + IP 绑定 + SHA256 + systemd）+ 手动（admin-only）；注册审计日志已补（F3 已修复）；install_key 全链路走 `X-Install-Key` 头（F4 已修复） |
 | 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key、curl 不跟随重定向（F10 已修复）；⚠️ 面板侧节点 Token 明文存 SQLite（F7，低，P2） |
 
-**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 共 8 个规划中。详见第九节路线图。
+**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 已完成 3 项（F6 备份计划归属校验、F9 节点地址默认 https、F11 拒绝明文落库），余 5 项规划中。详见第九节路线图。
 
 ---
 
@@ -389,16 +389,16 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 
 ### P2（规划中）
 
-| # | 任务 | 关联 |
-|---|------|------|
-| 10 | backup-plans 归属校验 | F6 |
-| 11 | 节点 Token AES-GCM 加密存储 | F7 |
-| 12 | RAM 累计配额检查 | F8 |
-| 13 | node address 默认 https + TLS 开关 | F9 |
-| 14 | store_password 降级分支拒绝明文落库 | F11 |
-| 15 | CreateAccount 持久化 container_id 自定义字段（抗 hostname 失配） | §5.1 |
-| 16 | 快照/备份/防火墙挂 WHMCS 客户区（对齐竞品） | §8.2 |
-| 17 | Additional Disk / 弹性 IP 计费项（Configurable Options 扩展） | §8.2 |
+| # | 任务 | 关联 | 状态 |
+|---|------|------|------|
+| 10 | backup-plans 归属校验 | F6 | ✅ 已修复：计划 CRUD/run 全链路过 `isContainerAllowedForRequest` 同口径校验；受限请求（绑定容器的 Key/子用户）不能跨容器操作、不能建/见全局计划（container_id=0）；列表按绑定范围过滤。回归 `TestBackupPlanOwnershipEnforced` |
+| 11 | 节点 Token AES-GCM 加密存储 | F7 | 待做 |
+| 12 | RAM 累计配额检查 | F8 | 待做 |
+| 13 | node address 默认 https + TLS 开关 | F9 | ✅ 已修复：主控 `normalizeNodeAddress` 无 scheme 默认补 `https://`；agent 侧注册时按自身面板 SSL 状态显式补全 scheme（`normalizeSelfAddress`/`selfPanelScheme`），无 scheme 的 `--addr` 不会被误存 https 断链。回归 `TestNormalizeNodeAddressDefaultsHTTPS`/`TestNormalizeSelfAddressByPanelScheme` |
+| 14 | store_password 降级分支拒绝明文落库 | F11 | ✅ 已修复：`eyvescloud_store_password` 加密不可用时返回 null（记日志），两处调用方（reset-password / update_host_from_container）跳过 password 字段写库，保留库中旧值 |
+| 15 | CreateAccount 持久化 container_id 自定义字段（抗 hostname 失配） | §5.1 | 待做 |
+| 16 | 快照/备份/防火墙挂 WHMCS 客户区（对齐竞品） | §8.2 | 待做 |
+| 17 | Additional Disk / 弹性 IP 计费项（Configurable Options 扩展） | §8.2 | 待做 |
 
 ---
 

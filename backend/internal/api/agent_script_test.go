@@ -158,3 +158,22 @@ func TestHandleNodeBinarySHA256Header(t *testing.T) {
 		t.Fatalf("invalid key status = %d, want 401", w2.Code)
 	}
 }
+
+// TestNormalizeNodeAddressDefaultsHTTPS 回归 F9：无 scheme 的节点地址默认补
+// https://（与 agent→主控方向的强制 https 对齐，防 Bearer token 明文传输）；
+// 显式 scheme 原样保留；尾斜杠剔除。
+func TestNormalizeNodeAddressDefaultsHTTPS(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"10.0.0.2:8999", "https://10.0.0.2:8999"},
+		{"node.example.com", "https://node.example.com"},
+		{"http://10.0.0.2:8999", "http://10.0.0.2:8999"},
+		{"https://10.0.0.2:8999", "https://10.0.0.2:8999"},
+		{"https://10.0.0.2:8999/", "https://10.0.0.2:8999"},
+	}
+	for _, tc := range cases {
+		if got := normalizeNodeAddress(tc.in); got != tc.want {
+			t.Fatalf("normalizeNodeAddress(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

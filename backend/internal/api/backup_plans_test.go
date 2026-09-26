@@ -226,3 +226,126 @@ func TestBackupPlanNextFire(t *testing.T) {
 		t.Fatal("非法 cron 应报错")
 	}
 }
+
+// asBoundAPIKeyRequest 构造绑定容器 UUID 的 API Key 请求（受限请求）。
+func asBoundAPIKeyRequest(r *http.Request, scopes []string, containerUUIDs ...string) *http.Request {
+	return withAuthContext(r, AuthContext{
+		Type: authTypeAPIKey, ApiKeyID: "k-bound", ApiKeyName: "bound-key",
+		Actor: "apikey:k-bound", Scopes: scopes, ContainerUUIDs: containerUUIDs,
+	})
+}
+
+// TestBackupPlanOwnershipEnforced 回归 F6：绑定容器 A 的 API Key
+// 不能为容器 B 创建/读取/更新/删除/执行备份计划，也不能建全局计划；
+// 管理员与非绑定 Key 行为不回归。
+func TestBackupPlanOwnershipEnforced(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig = &config.EyvescloudConfig{
+		Containers: []config.Container{
+			{ID: 7, UUID: "uuid-aaaa", Name: "web-1", Status: "running"},
+			{ID: 8, UUID: "uuid-bbbb", Name: "web-2", Status: "running"},
+		},
+	}
+	writeScopes := []string{"backup:read", "backup:write"}
+	boundTo := func(r *http.Request) *http.Request { return asBoundAPIKeyRequest(r, writeScopes, "uuid-aaaa") }
+
+	// 受限 Key 给容器 B 建计划 → 403
+	rec := httptest.NewRecorder()
+	HandleBackupPlans(rec, boundTo(httptest.NewRequest(http.MethodPost, "/api/backup-plans",
+		strings.NewReader(`{"cron":"0 3 * * *","container_id":8}`))))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("跨租户创建: status=%d want 403; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 受限 Key 建全局计划（container_id=0）→ 403
+	rec = httptest.NewRecorder()
+	HandleBackupPlans(rec, boundTo(httptest.NewRequest(http.MethodPost, "/api/backup-plans",
+		strings.NewReader(`{"cron":"0 3 * * *"}`))))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("全局计划创建: status=%d want 403; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 管理员为 A、B 各建一个计划 + 一个全局计划（3 个）
+	for _, body := range []string{
+		`{"name":"plan-a","cron":"0 3 * * *","container_id":7}`,
+		`{"name":"plan-b","cron":"0 3 * * *","container_id":8}`,
+		`{"name":"plan-all","cron":"0 4 * * *"}`,
+	} {
+		rec = httptest.NewRecorder()
+		HandleBackupPlans(rec, asAdminRequest(httptest.NewRequest(http.MethodPost, "/api/backup-plans", strings.NewReader(body))))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("管理员创建失败: status=%d; body=%s", rec.Code, rec.Body.String())
+		}
+	}
+
+	// 受限 Key 列表：只见 plan-a（plan-b / plan-all 必须隐藏）
+	rec = httptest.NewRecorder()
+	HandleBackupPlans(rec, boundTo(httptest.NewRequest(http.MethodGet, "/api/backup-plans", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("列表: status=%d; body=%s", rec.Code, rec.Body.String())
+	}
+	var listResp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(listResp.Data) != 1 || listResp.Data[0]["name"] != "plan-a" {
+		t.Fatalf("受限列表泄漏: %s", rec.Body.String())
+	}
+
+	planID := func(name string) string {
+		for _, p := range config.BackupPlans() {
+			if p.Name == name {
+				return p.ID
+			}
+		}
+		t.Fatalf("计划 %s 不存在", name)
+		return ""
+	}
+
+	// 受限 Key 访问/删除/执行 plan-b 与 plan-all → 403
+	for _, name := range []string{"plan-b", "plan-all"} {
+		id := planID(name)
+		for _, tc := range []struct{ method, path string }{
+			{http.MethodGet, "/api/backup-plans/" + id},
+			{http.MethodDelete, "/api/backup-plans/" + id},
+			{http.MethodPost, "/api/backup-plans/" + id + "/run"},
+		} {
+			rec = httptest.NewRecorder()
+			HandleBackupPlanSubRoutes(rec, boundTo(httptest.NewRequest(tc.method, tc.path, nil)))
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("%s %s (%s): status=%d want 403; body=%s", tc.method, name, tc.path, rec.Code, rec.Body.String())
+			}
+		}
+	}
+
+	// 受限 Key 借更新把 plan-a 改挂到容器 B → 403
+	rec = httptest.NewRecorder()
+	HandleBackupPlanSubRoutes(rec, boundTo(httptest.NewRequest(http.MethodPut, "/api/backup-plans/"+planID("plan-a"),
+		strings.NewReader(`{"cron":"0 5 * * *","container_id":8}`))))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("越权改挂: status=%d want 403; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 受限 Key 正常操作绑定范围内的 plan-a → 200（不回归）
+	rec = httptest.NewRecorder()
+	HandleBackupPlanSubRoutes(rec, boundTo(httptest.NewRequest(http.MethodGet, "/api/backup-plans/"+planID("plan-a"), nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("绑定范围内详情: status=%d; body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 非绑定但持 scope 的 Key（H3 设计）→ 不受限（不回归）
+	rec = httptest.NewRecorder()
+	HandleBackupPlans(rec, asAPIKeyRequest(httptest.NewRequest(http.MethodGet, "/api/backup-plans", nil), "backup:read"))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("非绑定 Key 列表: status=%d; body=%s", rec.Code, rec.Body.String())
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(listResp.Data) != 3 {
+		t.Fatalf("非绑定 Key 应见全部 3 个计划, got %d", len(listResp.Data))
+	}
+}

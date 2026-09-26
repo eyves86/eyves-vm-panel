@@ -153,6 +153,8 @@ func register(controller, installKey, name, addr string, allowInsecureHTTP bool)
 	// 未显式指定本节点地址时，通过与主控建连的源地址推算本机可被主控访问的地址。
 	if strings.TrimSpace(addr) == "" {
 		addr = detectSelfAddress(controller)
+	} else {
+		addr = normalizeSelfAddress(addr)
 	}
 	payload := map[string]string{
 		"install_key": installKey,
@@ -477,5 +479,25 @@ func detectSelfAddress(controller string) string {
 	if config.AppConfig != nil && config.AppConfig.Port > 0 {
 		port = config.AppConfig.Port
 	}
-	return fmt.Sprintf("http://%s:%d", local.IP.String(), port)
+	return fmt.Sprintf("%s://%s:%d", selfPanelScheme(), local.IP.String(), port)
+}
+
+// selfPanelScheme 返回本机面板实际监听的 scheme：SSL 启用时为 https，否则 http。
+// 注册上报的地址必须与本机面板真实协议一致，否则主控代理请求会连错协议。
+func selfPanelScheme() string {
+	if config.AppConfig != nil && config.AppConfig.SSL.Enabled {
+		return "https"
+	}
+	return "http"
+}
+
+// normalizeSelfAddress 为无 scheme 的 --addr 补全本机面板真实协议。
+// 主控侧 normalizeNodeAddress 默认补 https（F9），agent 必须显式声明 http 面板，
+// 否则无 scheme 的 --addr 会被主控误存为 https 导致代理断链。
+func normalizeSelfAddress(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" || strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		return addr
+	}
+	return selfPanelScheme() + "://" + addr
 }
