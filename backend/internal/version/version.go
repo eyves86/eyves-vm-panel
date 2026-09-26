@@ -1,7 +1,7 @@
 package version
 
 var (
-	Version = "1.8.0"
+	Version = "1.8.1"
 	Repo    = "FenhaoLost/eyves-vm-panel"
 )
 
