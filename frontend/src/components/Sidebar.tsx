@@ -195,6 +195,8 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
   const [latestVersion, setLatestVersion] = useState('')
   const [upgrading, setUpgrading] = useState(false)
   const [upgradeMsg, setUpgradeMsg] = useState('')
+  // 版本检测失败原因（GitHub 限流 / 网络不可达等），展示在更新管理器里。
+  const [checkErr, setCheckErr] = useState('')
   // 升级会下载→备份→就地替换→重启面板（期间连接会断开），属于不可逆的破坏性操作，
   // 必须二次确认后才触发，避免误点。
   const [confirmUpdate, setConfirmUpdate] = useState(false)
@@ -220,6 +222,8 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
 
   useEffect(() => {
     // 版本更新检测（管理员登录态才有该端点；子用户静默跳过）。
+    // 检测失败（网络不通 / GitHub 限流）不再静默：暴露到更新管理器，避免
+    // "检测不到新版本却毫无提示"的黑盒状态。
     if (isSubUser) return
     checkUpdate()
       .then(res => {
@@ -228,8 +232,13 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
           setHasUpdate(true)
           setLatestVersion(d.latest || '')
         }
+        if (d && d.err) {
+          setCheckErr(d.err)
+        }
       })
-      .catch(() => {})
+      .catch(() => {
+        setCheckErr('版本检测请求失败')
+      })
   }, [isSubUser])
 
   // 打开更新管理器：重置为默认仓库并拉取版本列表（默认选中最新版）。
@@ -242,6 +251,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     setUpgradeMsg('')
     void fetchReleases(DEFAULT_REPO)
   }
+
 
   // 拉取指定仓库的版本列表；默认选中第一个（最新）版本。
   const fetchReleases = async (repo: string) => {
@@ -552,6 +562,14 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
           </div>
 
           <div className="mt-3 space-y-3 text-xs text-gray-600 dark:text-gray-300">
+            {/* 版本检测失败原因（GitHub 限流 / 网络不可达） */}
+            {checkErr && (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-2.5 py-2 text-[11px] leading-relaxed text-amber-700 dark:border-amber-900/60 dark:bg-amber-900/30 dark:text-amber-300">
+                {t('版本检测失败')}：{checkErr}
+                <br />
+                {t('可尝试在服务器上设置 EYVESCLOUD_GITHUB_TOKEN 环境变量后重启面板，或将下方列表重试')}
+              </div>
+            )}
             {/* 仓库选择 */}
             <div>
               <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t('更新仓库')}</label>

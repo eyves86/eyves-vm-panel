@@ -706,11 +706,22 @@ func fetchReleasesList(repo string, limit int) ([]githubReleaseListItem, error) 
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		// 网络失败时尝试 fallback（github.com HTML 跳转，只拿得到最新版一条）。
+		if fallback, fbErr := fetchReleasesListFallback(repo); fbErr == nil {
+			return fallback, nil
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// 403/429 = 未认证限流（60 次/小时/IP，共享出口 IP 极易触发）。
+		// fallback 到 github.com releases/latest 跳转，至少让升级页能拿到最新版。
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+			if fallback, fbErr := fetchReleasesListFallback(repo); fbErr == nil {
+				return fallback, nil
+			}
+		}
 		return nil, fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 
@@ -749,6 +760,29 @@ func fetchReleasesList(repo string, limit int) ([]githubReleaseListItem, error) 
 	return items, nil
 }
 
+// fetchReleasesListFallback 是版本列表的降级通道：api.github.com 限流 / 不可达时，
+// 通过 github.com/{repo}/releases/latest 的 302 跳转解析最新版 tag，
+// 合成仅含最新版的单条列表（资产下载走 releases/latest/download/ 固定地址）。
+// 用户至少能看到并升级到最新版，而不是整个升级页报错。
+func fetchReleasesListFallback(repo string) ([]githubReleaseListItem, error) {
+	rel, err := fetchLatestReleaseFallback(repo, "")
+	if err != nil {
+		return nil, err
+	}
+	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
+	if err != nil {
+		assetName = ""
+	}
+	return []githubReleaseListItem{{
+		TagName:     rel.TagName,
+		Name:        rel.Name,
+		HTMLURL:     rel.HTMLURL,
+		PublishedAt: "",
+		Prerelease:  false,
+		HasAsset:    assetName != "",
+	}}, nil
+}
+
 // fetchReleaseByTag 获取指定 tag 的 release（供面板升级到非最新版本）。
 func fetchReleaseByTag(repo, tag string) (*githubRelease, error) {
 	if !validateRepoSlug(repo) {
@@ -768,11 +802,21 @@ func fetchReleaseByTag(repo, tag string) (*githubRelease, error) {
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
+		if fallback := releaseByTagFallback(repo, tag); fallback != nil {
+			return fallback, nil
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		// 限流 / 网络不可达时降级：仅当目标 tag 就是最新版（升级页默认场景）
+		// 才能用 releases/latest 跳转合成；其他 tag 无降级通道，返回原始错误。
+		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
+			if fallback := releaseByTagFallback(repo, tag); fallback != nil {
+				return fallback, nil
+			}
+		}
 		return nil, fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var release githubRelease
@@ -780,6 +824,23 @@ func fetchReleaseByTag(repo, tag string) (*githubRelease, error) {
 		return nil, err
 	}
 	return &release, nil
+}
+
+// releaseByTagFallback 在 API 限流时解析最新版：目标 tag 与最新版一致才返回合成
+// release（资产走 releases/latest/download/ 固定地址），否则返回 nil 表示无法降级。
+func releaseByTagFallback(repo, tag string) *githubRelease {
+	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
+	if err != nil {
+		return nil
+	}
+	rel, err := fetchLatestReleaseFallback(repo, assetName)
+	if err != nil {
+		return nil
+	}
+	if !sameVersion(rel.TagName, tag) && rel.TagName != tag {
+		return nil
+	}
+	return rel
 }
 
 // ValidateRepoSlug / ValidateReleaseTag / FetchReleasesList 是给 api 包用的导出包装。
