@@ -151,6 +151,12 @@ function eyvescloud_CreateAccount(array $params)
         return '容器已创建，但' . ($wait['msg'] ?? '异步任务失败');
     }
 
+    // P2-17：产品配置了「弹性 IP」计费项时，开通后同步公网 IPv4 绑定数量。
+    $ipv4 = eyvescloud_public_ipv4_sync($params);
+    if (($ipv4['status'] ?? '') !== 'success') {
+        return '容器已创建，但' . ($ipv4['msg'] ?? '弹性 IP 同步失败');
+    }
+
     return 'success';
 }
 
@@ -247,6 +253,13 @@ function eyvescloud_ChangePackage(array $params)
     $expiry = eyvescloud_set_expiry($params);
     if (($expiry['status'] ?? '') !== 'success') {
         return $expiry['msg'] ?? '到期时间同步失败';
+    }
+
+    // P2-17：升降级订单里的「弹性 IP」数量变化同步到面板（多退少补）。
+    // 未配置该计费项时静默跳过，不影响面板侧手工绑定。
+    $ipv4 = eyvescloud_public_ipv4_sync($params);
+    if (($ipv4['status'] ?? '') !== 'success') {
+        return $ipv4['msg'] ?? '弹性 IP 同步失败';
     }
 
     return 'success';

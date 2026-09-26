@@ -323,7 +323,114 @@ function eyvescloud_options($params)
         }
     }
 
+    // P2-17：Configurable Options 附加项融合。
+    // 「额外磁盘」Configurable Option 的 GB 数叠加到产品基础 disk_gb 上，
+    // 使创建 payload / resource-limit / disk 预检统一按总容量工作。
+    $addonDisk = eyvescloud_addon_disk_gb($params);
+    if ($addonDisk !== null && $addonDisk > 0) {
+        $baseDisk = (float)($values['disk_gb'] ?? 0);
+        if ($baseDisk > 0) {
+            $values['disk_gb'] = (string)($baseDisk + $addonDisk);
+        }
+    }
+
     return $values;
+}
+
+/* -------------------------------------------------------------------------
+ * P2-17：Additional Disk / 弹性 IP 计费项（Configurable Options 扩展）
+ *
+ * 管理员在 WHMCS 产品下自建两个 Configurable Options 即可计费：
+ *   - 额外磁盘：Option Name 含「额外磁盘」/「附加磁盘」/ "Additional Disk"，
+ *     数量/下拉类型，值取数字（如 "10"、"10 GB"）→ 叠加到 disk_gb 总量
+ *   - 弹性 IP：Option Name 含「弹性 IP」/「公网 IP」/ "Public IPv4" / "Elastic IP"，
+ *     数量类型 → 开通/升降级时同步面板公网 IPv4 绑定数量
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 从 $params['configoptions'] 提取指定类计费项的数值。
+ *
+ * WHMCS Configurable Options 的键是 Option Name（管理员自定义），值可能带
+ * 单位（"10 GB"）。这里按关键字匹配标签并提取首个数字。
+ *
+ * @param array  $params
+ * @param string[] $keywords 标签关键字（小写，中英文皆可）
+ * @return float|null 提取到的数量；产品未配置该类选项时返回 null
+ *                    （用于区分「配了 0 个」与「根本没配」）
+ */
+function eyvescloud_addon_quantity($params, array $keywords)
+{
+    $options = $params['configoptions'] ?? [];
+    if (!is_array($options)) {
+        return null;
+    }
+    foreach ($options as $label => $value) {
+        if (is_array($value)) {
+            $value = reset($value);
+        }
+        $labelLower = mb_strtolower(trim((string)$label));
+        $matched = false;
+        foreach ($keywords as $keyword) {
+            if (strpos($labelLower, mb_strtolower($keyword)) !== false) {
+                $matched = true;
+                break;
+            }
+        }
+        if (!$matched) {
+            continue;
+        }
+        if (preg_match('/\d+(?:\.\d+)?/', (string)$value, $m)) {
+            return (float)$m[0];
+        }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * 额外磁盘 GB 数（Configurable Options 计费项）。未配置返回 null。
+ */
+function eyvescloud_addon_disk_gb($params)
+{
+    return eyvescloud_addon_quantity($params, ['额外磁盘', '附加磁盘', 'additional disk', 'extra disk']);
+}
+
+/**
+ * 弹性公网 IPv4 数量（Configurable Options 计费项）。未配置返回 null。
+ */
+function eyvescloud_addon_ipv4_count($params)
+{
+    $qty = eyvescloud_addon_quantity($params, ['弹性 ip', '弹性ip', '公网 ip', '公网ip', 'public ipv4', 'elastic ip']);
+    return $qty === null ? null : (int)$qty;
+}
+
+/**
+ * 把面板容器的公网 IPv4 绑定数量同步为 Configurable Options 计费值。
+ *
+ * 产品未配置「弹性 IP」类选项时跳过同步（避免误清空面板侧手工绑定的 IP）；
+ * 配置为 0 时清空全部绑定；配置为 N>0 时从地址池自动分配到 N 个（多退少补）。
+ *
+ * 面板端点：PUT /api/v1/containers/{id}/public-ipv4
+ *   {"mode":"auto","count":N} / {"mode":"clear"}
+ *
+ * @return array{status:string,msg:string}
+ */
+function eyvescloud_public_ipv4_sync($params)
+{
+    $count = eyvescloud_addon_ipv4_count($params);
+    if ($count === null) {
+        // 产品没有弹性 IP 计费项：面板侧绑定不归 WHMCS 管，不动。
+        return ['status' => 'success', 'msg' => '未配置弹性 IP 计费项，跳过同步'];
+    }
+    $payload = $count > 0
+        ? ['mode' => 'auto', 'count' => $count]
+        : ['mode' => 'clear'];
+
+    $name = eyvescloud_container_url_id($params);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/public-ipv4', $payload, 'PUT', 30);
+    return eyvescloud_success($res)
+        ? ['status' => 'success', 'msg' => eyvescloud_message($res, '弹性 IP 已同步')]
+        : ['status' => 'error', 'msg' => eyvescloud_message($res, '弹性 IP 同步失败')];
 }
 
 /* -------------------------------------------------------------------------
