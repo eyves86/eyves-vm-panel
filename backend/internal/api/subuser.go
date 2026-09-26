@@ -480,6 +480,9 @@ func HandleSubUserLogin(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		// TurnstileToken 是 Cloudflare Turnstile 人机验证一次性 token；
+		// 用户登录启用 Turnstile 时必填（校验发生在密码比对之前）。
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -490,6 +493,11 @@ func HandleSubUserLogin(w http.ResponseWriter, r *http.Request) {
 	clientUA := r.Header.Get("User-Agent")
 	rateKey := ip + "|user:" + req.Username
 	if loginRateLimited(w, rateKey) {
+		return
+	}
+
+	// Turnstile 人机验证（若启用）：先于密码比对，失败同样计入限流。
+	if !requireTurnstile(w, r, turnstileEnabledForUser(), rateKey, req.TurnstileToken) {
 		return
 	}
 
@@ -551,6 +559,8 @@ func HandleSubUserAccessCode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Code     string `json:"code"`
 		Password string `json:"password"`
+		// TurnstileToken：用户登录启用 Turnstile 时访问码登录同样必须验证。
+		TurnstileToken string `json:"turnstile_token"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -562,6 +572,11 @@ func HandleSubUserAccessCode(w http.ResponseWriter, r *http.Request) {
 	clientUA := r.Header.Get("User-Agent")
 	rateKey := ip + "|code:" + req.Code
 	if loginRateLimited(w, rateKey) {
+		return
+	}
+
+	// Turnstile 人机验证（若启用）：先于密码比对，失败同样计入限流。
+	if !requireTurnstile(w, r, turnstileEnabledForUser(), rateKey, req.TurnstileToken) {
 		return
 	}
 

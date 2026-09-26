@@ -741,6 +741,10 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		Language:             meta["language"],
 		LoginFooterText:      meta["login_footer_text"],
 		LoginFooterHidden:    atob(meta["login_footer_hidden"]),
+		PanelDomain:          meta["panel_domain"],
+		TurnstileSiteKey:     meta["turnstile_site_key"],
+		TurnstileAdminLogin:  atob(meta["turnstile_admin_login"]),
+		TurnstileUserLogin:   atob(meta["turnstile_user_login"]),
 		MetricRetentionDays:  atoi(meta["metric_retention_days"]),
 		AuditRetentionDays:   atoi(meta["audit_retention_days"]),
 		MemoryOvercommitEnabled: atob(meta["memory_overcommit_enabled"]),
@@ -846,6 +850,19 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	}
 	if cfg.Nodes == nil {
 		cfg.Nodes = []Node{}
+	}
+
+	// TurnstileSecretKey 解密：存量明文（无 enc: 前缀）原样通过；解密失败
+	// 置空并关闭两处登录验证（密钥残缺时放行比误拦更可恢复，配置页重存即可）。
+	if raw := strings.TrimSpace(cfg.TurnstileSecretKey); raw != "" {
+		plainTS, err := DecryptNodeToken(raw)
+		if err != nil {
+			cfg.TurnstileSecretKey = ""
+			cfg.TurnstileAdminLogin = false
+			cfg.TurnstileUserLogin = false
+		} else {
+			cfg.TurnstileSecretKey = plainTS
+		}
 	}
 
 	if cfg.Containers, err = loadContainers(); err != nil {
@@ -990,6 +1007,16 @@ func saveMeta(tx *sql.Tx) error {
 	tenantsJSON, _ := json.Marshal(AppConfig.Tenants)
 	adminsJSON, _ := json.Marshal(AppConfig.Admins)
 	ksmTuningJSON, _ := json.Marshal(AppConfig.KSMTuning)
+	// TurnstileSecretKey 与节点 Token 同级敏感：AES-GCM 密文落库，内存态明文。
+	// SiteKey 本身公开（前端渲染 widget 需要），无需加密。
+	turnstileSecret := AppConfig.TurnstileSecretKey
+	if turnstileSecret != "" {
+		encTS, err := EncryptNodeToken(turnstileSecret)
+		if err != nil {
+			return fmt.Errorf("加密 Turnstile SecretKey 失败: %w", err)
+		}
+		turnstileSecret = encTS
+	}
 	values := map[string]string{
 		"admin_user":             AppConfig.AdminUser,
 		"admin_pass_hash":        AppConfig.AdminPassHash,
@@ -1017,6 +1044,11 @@ func saveMeta(tx *sql.Tx) error {
 		"language":               NormalizeLanguage(AppConfig.Language),
 		"login_footer_text":      AppConfig.LoginFooterText,
 		"login_footer_hidden":    btoa(AppConfig.LoginFooterHidden),
+		"panel_domain":           AppConfig.PanelDomain,
+		"turnstile_site_key":     AppConfig.TurnstileSiteKey,
+		"turnstile_secret_key":   turnstileSecret,
+		"turnstile_admin_login":  btoa(AppConfig.TurnstileAdminLogin),
+		"turnstile_user_login":   btoa(AppConfig.TurnstileUserLogin),
 		"ssl":                    string(sslJSON),
 		"ssl_certificates":       string(sslCertificatesJSON),
 		"public_ipv4_pool":       string(publicIPv4PoolJSON),

@@ -45,15 +45,7 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-API-Key")
 
-		// Security headers (XSS / clickjacking / MIME-sniffing / referrer leakage)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
-		w.Header().Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "+
-				"font-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
-		// Browsers only honor HSTS on HTTPS responses; the header is harmless on HTTP.
-		w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		setSecurityHeaders(w)
 
 		if r.Method == http.MethodOptions {
 			if origin := r.Header.Get("Origin"); origin != "" && !config.IsOriginAllowed(origin, r.Host) {
@@ -66,6 +58,21 @@ func corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 		next(w, r)
 	}
+}
+
+// setSecurityHeaders 统一写入 XSS / 点击劫持 / MIME 嗅探 / Referrer 泄露防护头。
+// API（corsMiddleware）与静态页面（SPA/资源）共用，保证 HTML 文档同样受 CSP 约束：
+// Turnstile 需要放行 challenges.cloudflare.com 的 script / frame / connect。
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-Frame-Options", "DENY")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Security-Policy",
+		"default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "+
+			"font-src 'self' data:; connect-src 'self' ws: wss: https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; "+
+			"frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'")
+	// Browsers only honor HSTS on HTTPS responses; the header is harmless on HTTP.
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 }
 
 // setupRoutes configures API and static routes
@@ -84,6 +91,12 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/access-policy", corsMiddleware(api.AdminMiddleware(api.HandlePanelAccessPolicy)))
 	// 管理员入口路径（可自定义）：仅主管理员会话可读写。
 	mux.HandleFunc("/api/admin-path", corsMiddleware(api.AuthMiddleware(api.HandleAdminPathSettings)))
+	// 面板绑定域名（对外 URL 基准）：仅管理员。
+	mux.HandleFunc("/api/panel-domain", corsMiddleware(api.AdminMiddleware(api.HandlePanelDomainSettings)))
+	// Cloudflare Turnstile 人机验证：config 公开（登录页），settings/verify 仅管理员。
+	mux.HandleFunc("/api/turnstile/config", corsMiddleware(api.HandleTurnstileConfig))
+	mux.HandleFunc("/api/turnstile/settings", corsMiddleware(api.AdminMiddleware(api.HandleTurnstileSettings)))
+	mux.HandleFunc("/api/turnstile/verify", corsMiddleware(api.AdminMiddleware(api.HandleTurnstileVerify)))
 	// 管理员两步验证（TOTP / Google Authenticator）
 	mux.HandleFunc("/api/2fa/status", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FAStatus)))
 	mux.HandleFunc("/api/2fa/setup", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FASetup)))
@@ -386,6 +399,8 @@ func setupRoutes(mux *http.ServeMux) {
 	if webFS != nil {
 		fs := http.FileServer(webFS)
 		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			// 静态资源与 SPA 入口页同样带安全头（CSP / X-Frame-Options 等）。
+			setSecurityHeaders(w)
 			// API routes already handled above
 			if strings.HasPrefix(r.URL.Path, "/api/") {
 				http.NotFound(w, r)

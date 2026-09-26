@@ -25,11 +25,11 @@ interface AuthContextType {
   isReadOnly: boolean
   containerIdentifiers: string[]
   /** 管理员入口登录：仅走 /api/login（含两步验证） */
-  adminLogin: (username: string, password: string) => Promise<void>
-  adminLoginWith2FA: (username: string, password: string, code: string) => Promise<void>
+  adminLogin: (username: string, password: string, turnstileToken?: string) => Promise<void>
+  adminLoginWith2FA: (username: string, password: string, code: string, turnstileToken?: string) => Promise<void>
   /** 用户入口登录：仅走 /api/sub-user/login（账号密码） */
-  userLogin: (username: string, password: string) => Promise<void>
-  accessCodeLogin: (code: string, password: string) => Promise<void>
+  userLogin: (username: string, password: string, turnstileToken?: string) => Promise<void>
+  accessCodeLogin: (code: string, password: string, turnstileToken?: string) => Promise<void>
   logout: () => void
   token: string | null
 }
@@ -100,8 +100,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [navigate])
 
   // 管理员入口：只认 /api/login，不尝试子用户，避免两个门户互相穿透。
-  const adminLogin = async (user: string, password: string) => {
-    const response = await apiLogin(user, password)
+  const adminLogin = async (user: string, password: string, turnstileToken?: string) => {
+    const response = await apiLogin(user, password, undefined, turnstileToken)
     const data = response.data.data as LoginResponse
     saveAuth(data.token, data.username, false, [])
     setAdminRole('')
@@ -109,23 +109,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   // 用户入口：只认 /api/sub-user/login（账号密码）。
-  const userLogin = async (user: string, password: string) => {
-    const res = await api.post('/sub-user/login', { username: user, password })
+  const userLogin = async (user: string, password: string, turnstileToken?: string) => {
+    const res = await api.post('/sub-user/login', { username: user, password, turnstile_token: turnstileToken ?? '' })
     const data = res.data.data as { token: string; username: string; role?: string; container_uuids: string[] }
     saveAuth(data.token, data.username, true, data.container_uuids || [], data.role === 'viewer')
     navigate('/user')
   }
 
-  const adminLoginWith2FA = async (user: string, password: string, code: string) => {
-    const response = await apiLogin(user, password, code)
+  const adminLoginWith2FA = async (user: string, password: string, code: string, turnstileToken?: string) => {
+    const response = await apiLogin(user, password, code, turnstileToken)
     const data = response.data.data as LoginResponse
     saveAuth(data.token, data.username, false, [])
     setAdminRole('')
     navigate(adminUrl() || '/')
   }
 
-  const accessCodeLogin = async (code: string, password: string) => {
-    const res = await api.post('/sub-user/access', { code, password })
+  const accessCodeLogin = async (code: string, password: string, turnstileToken?: string) => {
+    const res = await api.post('/sub-user/access', { code, password, turnstile_token: turnstileToken ?? '' })
     const data = res.data.data as { token: string; username: string; role?: string; container_uuids: string[] }
     saveAuth(data.token, data.username, true, data.container_uuids || [], data.role === 'viewer')
     navigate('/user')

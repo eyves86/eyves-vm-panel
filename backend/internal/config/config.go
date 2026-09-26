@@ -1395,6 +1395,18 @@ type EyvescloudConfig struct {
 	AdminBackupCodes     []string               `json:"admin_backup_codes,omitempty"`
 	// AdminPath 是管理员入口路径（可自定义，默认 "/"）。用户门户固定为 /user。
 	AdminPath string `json:"admin_path,omitempty"`
+	// PanelDomain 是面板对外绑定的域名（如 https://panel.example.com）。
+	// 用于生成对外 URL（节点安装命令、agent 注册地址、邮件链接等），避免在
+	// 反代/多入口环境下拿 r.Host 拼出内网或错误地址。留空 = 按请求 Host 推导。
+	PanelDomain string `json:"panel_domain,omitempty"`
+	// TurnstileSiteKey / TurnstileSecretKey 是 Cloudflare Turnstile 人机验证密钥。
+	// SiteKey 公开（前端渲染 widget），SecretKey 仅服务端调用 siteverify（密文落库）。
+	TurnstileSiteKey   string `json:"turnstile_site_key,omitempty"`
+	TurnstileSecretKey string `json:"turnstile_secret_key,omitempty"`
+	// TurnstileAdminLogin / TurnstileUserLogin 分别控制管理员登录页与用户登录页
+	// 是否强制 Turnstile 人机验证（密钥均配置后才生效）。
+	TurnstileAdminLogin bool `json:"turnstile_admin_login,omitempty"`
+	TurnstileUserLogin  bool `json:"turnstile_user_login,omitempty"`
 	JWTSecret            string                 `json:"jwt_secret"`
 	Port                 int                    `json:"port"`
 	DataDir              string                 `json:"data_dir"`

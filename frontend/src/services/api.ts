@@ -486,8 +486,13 @@ export interface APIResponse<T = unknown> {
 }
 
 // Auth
-export const login = (username: string, password: string, twofaCode?: string) =>
-  api.post<APIResponse<LoginResponse>>('/login', { username, password, twofa_code: twofaCode ?? '' })
+export const login = (username: string, password: string, twofaCode?: string, turnstileToken?: string) =>
+  api.post<APIResponse<LoginResponse>>('/login', {
+    username,
+    password,
+    twofa_code: twofaCode ?? '',
+    turnstile_token: turnstileToken ?? '',
+  })
 
 export const checkAuth = () =>
   api.get<APIResponse>('/check-auth')
@@ -871,6 +876,52 @@ export const getLoginFooter = () =>
 
 export const updateLoginFooter = (data: LoginFooterSettings) =>
   api.put<APIResponse<LoginFooterSettings>>('/login-footer', data)
+
+// 面板绑定域名（对外 URL 基准：节点安装命令、agent controller 等）
+export interface PanelDomainSettings {
+  panel_domain: string
+}
+
+export const getPanelDomain = () =>
+  api.get<APIResponse<PanelDomainSettings>>('/panel-domain')
+
+export const updatePanelDomain = (panelDomain: string) =>
+  api.put<APIResponse<PanelDomainSettings>>('/panel-domain', { panel_domain: panelDomain })
+
+// Cloudflare Turnstile 人机验证
+export interface TurnstilePublicConfig {
+  site_key: string
+  admin_enabled: boolean
+  user_enabled: boolean
+}
+
+export interface TurnstileSettings {
+  site_key: string
+  /** 打码回显（如 0x4A********）；仅用于识别是否已配置/是否更换 */
+  secret_key: string
+  has_secret: boolean
+  admin_enabled: boolean
+  user_enabled: boolean
+}
+
+export const getTurnstileConfig = () =>
+  api.get<APIResponse<TurnstilePublicConfig>>('/turnstile/config')
+
+export const getTurnstileSettings = () =>
+  api.get<APIResponse<TurnstileSettings>>('/turnstile/settings')
+
+export const updateTurnstileSettings = (data: {
+  site_key: string
+  /** 留空 = 保留已保存的 Secret Key */
+  secret_key?: string
+  clear_secret?: boolean
+  admin_enabled: boolean
+  user_enabled: boolean
+}) => api.put<APIResponse<TurnstileSettings>>('/turnstile/settings', data)
+
+/** 用「请求内携带或已保存」的密钥对做 siteverify 冒烟测试（先测后存） */
+export const testTurnstile = (data: { token: string; site_key?: string; secret_key?: string }) =>
+  api.post<APIResponse>('/turnstile/verify', data)
 
 // 外部告警推送
 export interface NotificationSettings {

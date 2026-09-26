@@ -19,6 +19,9 @@ type LoginRequest struct {
 	Username  string `json:"username"`
 	Password  string `json:"password"`
 	TwoFACode string `json:"twofa_code"`
+	// TurnstileToken 是 Cloudflare Turnstile 人机验证一次性 token；
+	// 管理员登录启用 Turnstile 时必填（校验发生在密码比对之前）。
+	TurnstileToken string `json:"turnstile_token"`
 }
 
 type LoginResponse struct {
@@ -338,6 +341,12 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 	ua := r.Header.Get("User-Agent")
 	rateKey := ip + "|admin:" + req.Username
 	if loginRateLimited(w, rateKey) {
+		return
+	}
+
+	// Turnstile 人机验证（若启用）：先于密码比对，失败同样计入限流，
+	// 避免成为「密码正确性」探针。
+	if !requireTurnstile(w, r, turnstileEnabledForAdmin(), rateKey, req.TurnstileToken) {
 		return
 	}
 

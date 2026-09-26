@@ -1,8 +1,10 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { KeyRound, Lock, User } from 'lucide-react'
 import AuthLayout from '../components/AuthLayout'
+import TurnstileWidget from '../components/TurnstileWidget'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
+import { getTurnstileConfig } from '../services/api'
 
 // UserLogin 是**用户入口**：账号密码登录，或使用管理员发放的访问码。
 // 管理员入口使用随机化路径，不在本页暴露。
@@ -19,15 +21,47 @@ export default function UserLogin() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Cloudflare Turnstile 人机验证：账号登录与访问码登录共用一个 widget。
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    getTurnstileConfig()
+      .then((res) => {
+        if (cancelled || !res.data.data?.user_enabled) return
+        setTurnstileSiteKey(res.data.data.site_key)
+      })
+      .catch(() => {
+        /* 配置接口失败时按未启用处理，交由后端二次校验兜底 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const resetTurnstile = () => {
+    setTurnstileToken('')
+    setTurnstileResetKey((key) => key + 1)
+  }
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
+
+    // 启用了 Turnstile 时先本地拦截空 token，避免浪费一次密码尝试/限流计数。
+    if (turnstileSiteKey && !turnstileToken) {
+      setError(t('请先完成人机验证'))
+      return
+    }
+
     setLoading(true)
     try {
       if (mode === 'code') {
-        await accessCodeLogin(code, password)
+        await accessCodeLogin(code, password, turnstileToken)
       } else {
-        await userLogin(username, password)
+        await userLogin(username, password, turnstileToken)
       }
     } catch (err: unknown) {
       const e = err as { response?: { status?: number; data?: { message?: string } } }
@@ -39,6 +73,8 @@ export default function UserLogin() {
       } else {
         setError(e.response?.data?.message || t('登录失败，请稍后重试'))
       }
+      // token 已被 siteverify 一次性消费，无论成败都重置 widget 取新 token。
+      if (turnstileSiteKey) resetTurnstile()
     } finally {
       setLoading(false)
     }
@@ -148,6 +184,10 @@ export default function UserLogin() {
             />
           </div>
         </div>
+
+        {turnstileSiteKey && (
+          <TurnstileWidget siteKey={turnstileSiteKey} onToken={setTurnstileToken} resetKey={turnstileResetKey} />
+        )}
 
         <button
           type="submit"

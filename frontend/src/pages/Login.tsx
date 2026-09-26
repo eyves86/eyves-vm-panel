@@ -1,8 +1,10 @@
-import { FormEvent, useState } from 'react'
+import { FormEvent, useEffect, useState } from 'react'
 import { Lock, Smartphone, User } from 'lucide-react'
 import AuthLayout from '../components/AuthLayout'
+import TurnstileWidget from '../components/TurnstileWidget'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
+import { getTurnstileConfig } from '../services/api'
 import AutoTranslate from '../components/AutoTranslate'
 import BrowserDialogTranslator from '../components/BrowserDialogTranslator'
 
@@ -18,16 +20,48 @@ export default function Login() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // Cloudflare Turnstile 人机验证：后端启用后登录必须先通过验证。
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const [turnstileResetKey, setTurnstileResetKey] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    getTurnstileConfig()
+      .then((res) => {
+        if (cancelled || !res.data.data?.admin_enabled) return
+        setTurnstileSiteKey(res.data.data.site_key)
+      })
+      .catch(() => {
+        /* 配置接口失败时按未启用处理，交由后端二次校验兜底 */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const resetTurnstile = () => {
+    setTurnstileToken('')
+    setTurnstileResetKey((key) => key + 1)
+  }
+
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
     setError('')
+
+    // 启用了 Turnstile 时先本地拦截空 token，避免浪费一次密码尝试/限流计数。
+    if (turnstileSiteKey && !turnstileToken) {
+      setError(t('请先完成人机验证'))
+      return
+    }
+
     setLoading(true)
 
     try {
       if (twoFARequired) {
-        await adminLoginWith2FA(username, password, twoFACode)
+        await adminLoginWith2FA(username, password, twoFACode, turnstileToken)
       } else {
-        await adminLogin(username, password)
+        await adminLogin(username, password, turnstileToken)
       }
     } catch (err: unknown) {
       const error = err as {
@@ -46,6 +80,8 @@ export default function Login() {
       } else {
         setError(data?.message || t('登录失败，请检查用户名和密码'))
       }
+      // token 已被 siteverify 一次性消费，无论成败都重置 widget 取新 token。
+      if (turnstileSiteKey) resetTurnstile()
     } finally {
       setLoading(false)
     }
@@ -157,6 +193,10 @@ export default function Login() {
               {t('返回重新输入密码')}
             </button>
           </div>
+        )}
+
+        {turnstileSiteKey && (
+          <TurnstileWidget siteKey={turnstileSiteKey} onToken={setTurnstileToken} resetKey={turnstileResetKey} />
         )}
 
         <button

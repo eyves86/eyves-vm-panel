@@ -1,5 +1,5 @@
 import { Dispatch, SetStateAction, useCallback, useEffect, useState } from 'react'
-import { Bell, Clock, Copy, Database, Download, Gauge, Globe, KeyRound, ListTodo, Lock, LogIn, Minus, Monitor, Plus, RefreshCw, Save, Shield, ShieldCheck, Smartphone, Terminal, Trash2, TrendingUp, Upload, UserCog } from 'lucide-react'
+import { Bell, Bot, Clock, Copy, Database, Download, Gauge, Globe, KeyRound, ListTodo, Lock, LogIn, Minus, Monitor, Plus, RefreshCw, Save, Shield, ShieldCheck, Smartphone, Terminal, Trash2, TrendingUp, Upload, UserCog } from 'lucide-react'
 import {
   BackupRecord,
   changePassword,
@@ -20,15 +20,19 @@ import {
   getAdminPath,
   getLoginFooter,
   getPanelAccessPolicy,
+  getPanelDomain,
   getRateLimitSettings,
   getSSLSettings,
   getTaskQueueSettings,
+  getTurnstileSettings,
   getWebSSHOriginSettings,
   HealthDetail,
   regenerate2FABackupCodes,
   restoreBackup,
   setup2FA,
+  testTurnstile,
   TwoFAStatus,
+  TurnstileSettings,
   updateAuditSettings,
   updateBackupSettings,
   updateRateLimitSettings,
@@ -46,14 +50,17 @@ import {
   updateAdminPath,
   updateLoginFooter,
   updatePanelAccessPolicy,
+  updatePanelDomain,
+  updateTurnstileSettings,
   updateWebSSHOriginSettings,
   WebSSHOriginSettings,
 } from '../services/api'
 import { useDialog } from '../components/Dialog'
+import TurnstileWidget from '../components/TurnstileWidget'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
-type SettingsSection = 'tasks' | 'account' | 'security' | 'audit' | 'backup' | 'ratelimit' | 'access' | 'webssh' | 'ssl' | 'logs' | 'notify' | 'overcommit'
+type SettingsSection = 'tasks' | 'account' | 'security' | 'audit' | 'backup' | 'ratelimit' | 'access' | 'webssh' | 'ssl' | 'turnstile' | 'logs' | 'notify' | 'overcommit'
 
 const settingsSections = [
   { id: 'tasks', label: '任务队列', icon: ListTodo },
@@ -65,6 +72,7 @@ const settingsSections = [
   { id: 'access', label: '访问来源', icon: Shield },
   { id: 'webssh', label: 'WebSSH 访问', icon: Terminal },
   { id: 'ssl', label: 'SSL 证书', icon: ShieldCheck },
+  { id: 'turnstile', label: '人机验证', icon: Bot },
   { id: 'notify', label: '告警推送', icon: Bell },
   { id: 'overcommit', label: '资源超售', icon: TrendingUp },
   { id: 'logs', label: '登录日志', icon: LogIn },
@@ -113,6 +121,24 @@ export default function Settings() {
   const [loginFooterHidden, setLoginFooterHidden] = useState(false)
   const [savingLoginFooter, setSavingLoginFooter] = useState(false)
   const [loginFooterMsg, setLoginFooterMsg] = useState('')
+  // 面板绑定域名（对外 URL 基准）
+  const [panelDomain, setPanelDomain] = useState('')
+  const [panelDomainInput, setPanelDomainInput] = useState('')
+  const [savingPanelDomain, setSavingPanelDomain] = useState(false)
+  const [panelDomainMsg, setPanelDomainMsg] = useState('')
+  // Cloudflare Turnstile 人机验证
+  const [tsSiteKey, setTsSiteKey] = useState('')
+  const [tsSecretInput, setTsSecretInput] = useState('')
+  const [tsHasSecret, setTsHasSecret] = useState(false)
+  const [tsAdminEnabled, setTsAdminEnabled] = useState(false)
+  const [tsUserEnabled, setTsUserEnabled] = useState(false)
+  const [savingTs, setSavingTs] = useState(false)
+  const [tsMsg, setTsMsg] = useState('')
+  const [tsTestToken, setTsTestToken] = useState('')
+  const [tsTestResetKey, setTsTestResetKey] = useState(0)
+  const [testingTs, setTestingTs] = useState(false)
+  const [tsTestMsg, setTsTestMsg] = useState('')
+  const [tsTestOk, setTsTestOk] = useState(false)
   const [activeSection, setActiveSection] = useState<SettingsSection>('tasks')
 
   // 两步验证 (TOTP)
@@ -255,6 +281,33 @@ export default function Settings() {
     }
   }, [])
 
+  const fetchPanelDomain = useCallback(async () => {
+    try {
+      const res = await getPanelDomain()
+      const data = res.data.data
+      if (!data) return
+      setPanelDomain(data.panel_domain || '')
+      setPanelDomainInput(data.panel_domain || '')
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
+  const fetchTurnstile = useCallback(async () => {
+    try {
+      const res = await getTurnstileSettings()
+      const data: TurnstileSettings | undefined = res.data.data
+      if (!data) return
+      setTsSiteKey(data.site_key || '')
+      setTsSecretInput('')
+      setTsHasSecret(!!data.has_secret)
+      setTsAdminEnabled(!!data.admin_enabled)
+      setTsUserEnabled(!!data.user_enabled)
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await getNotificationSettings()
@@ -370,6 +423,8 @@ export default function Settings() {
     fetchAccessPolicy()
     fetchAdminPath()
     fetchLoginFooter()
+    fetchPanelDomain()
+    fetchTurnstile()
     fetchNotifications()
     fetch2FA()
     fetchAudit()
@@ -383,7 +438,7 @@ export default function Settings() {
       clearInterval(logTimer)
       clearInterval(taskTimer)
     }
-  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAudit, fetchBackup, fetchHealth, fetchLoginFooter, fetchLogs, fetchNotifications, fetchOvercommit, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchWebSSHOrigins])
+  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAudit, fetchBackup, fetchHealth, fetchLoginFooter, fetchLogs, fetchNotifications, fetchOvercommit, fetchPanelDomain, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchTurnstile, fetchWebSSHOrigins])
 
   const handleSaveAdminPath = async () => {
     setSavingAdminPath(true)
@@ -414,6 +469,82 @@ export default function Settings() {
       setLoginFooterMsg(e.response?.data?.message || t('保存失败'))
     } finally {
       setSavingLoginFooter(false)
+    }
+  }
+
+  const handleSavePanelDomain = async () => {
+    setSavingPanelDomain(true)
+    setPanelDomainMsg('')
+    try {
+      const res = await updatePanelDomain(panelDomainInput.trim())
+      const saved = res.data.data?.panel_domain || ''
+      setPanelDomain(saved)
+      setPanelDomainInput(saved)
+      setPanelDomainMsg(saved ? t('已保存，节点安装命令等对外地址将使用该域名') : t('已清空绑定，对外地址按请求自动推导'))
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setPanelDomainMsg(e.response?.data?.message || t('保存失败'))
+    } finally {
+      setSavingPanelDomain(false)
+    }
+  }
+
+  const handleSaveTurnstile = async () => {
+    setSavingTs(true)
+    setTsMsg('')
+    try {
+      const res = await updateTurnstileSettings({
+        site_key: tsSiteKey.trim(),
+        secret_key: tsSecretInput.trim() || undefined,
+        admin_enabled: tsAdminEnabled,
+        user_enabled: tsUserEnabled,
+      })
+      const data: TurnstileSettings | undefined = res.data.data
+      if (data) {
+        setTsSiteKey(data.site_key || '')
+        setTsSecretInput('')
+        setTsHasSecret(!!data.has_secret)
+        setTsAdminEnabled(!!data.admin_enabled)
+        setTsUserEnabled(!!data.user_enabled)
+      }
+      setTsMsg(t('已保存，登录页配置立即生效'))
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setTsMsg(e.response?.data?.message || t('保存失败'))
+    } finally {
+      setSavingTs(false)
+    }
+  }
+
+  // 「测试」：用当前填写（或已保存）的密钥对 + 刚完成的 widget token 调 siteverify。
+  const handleTestTurnstile = async () => {
+    setTsTestMsg('')
+    setTsTestOk(false)
+    if (!tsSiteKey.trim()) {
+      setTsTestMsg(t('请先填写 Site Key'))
+      return
+    }
+    if (!tsTestToken) {
+      setTsTestMsg(t('请先完成上方人机验证'))
+      return
+    }
+    setTestingTs(true)
+    try {
+      const res = await testTurnstile({
+        token: tsTestToken,
+        site_key: tsSiteKey.trim(),
+        secret_key: tsSecretInput.trim() || undefined,
+      })
+      setTsTestOk(!!res.data.success)
+      setTsTestMsg(res.data.success ? t('验证通过，密钥配置有效') : (res.data.message || t('测试失败')))
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setTsTestMsg(e.response?.data?.message || t('测试失败'))
+    } finally {
+      // token 一次性消费完毕，重置 widget 供再次测试。
+      setTsTestToken('')
+      setTsTestResetKey((key) => key + 1)
+      setTestingTs(false)
     }
   }
 
@@ -993,6 +1124,50 @@ export default function Settings() {
 
           {activeSection === 'access' && (
             <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('面板绑定域名')}</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                {t('设置面板对外服务的域名（如 https://panel.example.com）。配置后，节点安装命令、agent 接入地址等对外 URL 一律使用该域名，反向代理 / 多入口环境下也能生成正确地址；留空则按访问地址自动推导。')}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  className="min-w-[240px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                  value={panelDomainInput}
+                  onChange={(e) => setPanelDomainInput(e.target.value)}
+                  placeholder={t('例如：https://panel.example.com 或 panel.example.com')}
+                />
+                <button
+                  type="button"
+                  disabled={savingPanelDomain}
+                  onClick={() => { void handleSavePanelDomain() }}
+                  className="rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {savingPanelDomain ? t('保存中...') : t('保存')}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingPanelDomain}
+                  onClick={() => { void fetchPanelDomain() }}
+                  className="rounded-md border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {t('刷新')}
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-gray-500">
+                {t('当前绑定')}：
+                <code className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+                  {panelDomain || t('未绑定（按访问地址自动推导）')}
+                </code>
+              </p>
+              {panelDomainMsg && <p className="mt-2 text-xs text-amber-600">{panelDomainMsg}</p>}
+              <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+                {t('注意：域名需先完成 DNS 解析与证书配置（可在「SSL 证书」中开启 HTTPS），否则节点可能无法回连面板。')}
+              </p>
+            </div>
+          )}
+
+          {activeSection === 'access' && (
+            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('登录页版权栏')}</h3>
               <p className="mt-1 text-xs text-gray-500">
                 {t('自定义登录页底部的版权文字；留空显示默认版权（© 年份 EyvesCloud. All rights reserved.），勾选「隐藏」则完全不显示。')}
@@ -1034,6 +1209,112 @@ export default function Settings() {
                 {t('隐藏登录页底部版权栏')}
               </label>
               {loginFooterMsg && <p className="mt-2 text-xs text-amber-600">{loginFooterMsg}</p>}
+            </div>
+          )}
+
+          {activeSection === 'turnstile' && (
+            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('Cloudflare Turnstile 人机验证')}</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                {t('在 Cloudflare 控制台为面板域名创建 Turnstile 组件后，把 Site Key / Secret Key 填到这里。可分别对管理员登录页与用户登录页开启人机验证；两者可独立开关，密钥配置齐全后才会生效。')}
+              </p>
+
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('Site Key（公开，前端渲染组件）')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={tsSiteKey}
+                    onChange={(e) => setTsSiteKey(e.target.value.trim())}
+                    placeholder="0x4AAAAAAA..."
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">
+                    {t('Secret Key（仅服务端，AES 加密存储）')}
+                    {tsHasSecret && <span className="ml-1 text-emerald-600 dark:text-emerald-400">({t('已保存，留空保持不变')})</span>}
+                  </label>
+                  <input
+                    type="password"
+                    autoComplete="new-password"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={tsSecretInput}
+                    onChange={(e) => setTsSecretInput(e.target.value)}
+                    placeholder={tsHasSecret ? '••••••••' : '0x4AAAAAAA...'}
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-2">
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={tsAdminEnabled}
+                    onChange={(e) => setTsAdminEnabled(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  {t('管理员登录页启用人机验证')}
+                </label>
+                <label className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+                  <input
+                    type="checkbox"
+                    checked={tsUserEnabled}
+                    onChange={(e) => setTsUserEnabled(e.target.checked)}
+                    className="h-4 w-4"
+                  />
+                  {t('用户登录页启用人机验证（账号登录与访问码登录）')}
+                </label>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={savingTs}
+                  onClick={() => { void handleSaveTurnstile() }}
+                  className="rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {savingTs ? t('保存中...') : t('保存配置')}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingTs}
+                  onClick={() => { void fetchTurnstile() }}
+                  className="rounded-md border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {t('刷新')}
+                </button>
+              </div>
+              {tsMsg && <p className="mt-2 text-xs text-amber-600">{tsMsg}</p>}
+
+              <div className="mt-5 rounded-md border border-gray-200 p-4 dark:border-gray-700">
+                <h4 className="text-sm font-semibold text-gray-900 dark:text-white">{t('快速测试（先测后存）')}</h4>
+                <p className="mt-1 text-xs text-gray-500">
+                  {t('填写 Site Key 后下方会出现验证组件；完成验证再点击「测试」，将用当前填写的密钥对（或已保存值）向 Cloudflare 校验，通过后再保存即可上线。')}
+                </p>
+                {tsSiteKey.trim() ? (
+                  <div className="mt-3">
+                    <TurnstileWidget siteKey={tsSiteKey.trim()} onToken={setTsTestToken} resetKey={tsTestResetKey} />
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs text-gray-400">{t('请先填写 Site Key，验证组件将在此显示')}</p>
+                )}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={testingTs}
+                    onClick={() => { void handleTestTurnstile() }}
+                    className="rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                  >
+                    {testingTs ? t('测试中...') : t('测试')}
+                  </button>
+                  {tsTestMsg && (
+                    <span className={`text-xs ${tsTestOk ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                      {tsTestMsg}
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           )}
 

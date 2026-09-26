@@ -279,6 +279,10 @@ tr_msg() {
         -e 's/检测到 /Detected /g' \
         -e 's/安装完成/Installation complete/g' \
         -e 's/Web 面板/Web panel/g' \
+        -e 's/快捷命令/Quick command/g' \
+        -e 's/查看面板信息\/改账号\/重置密码\/重启服务/view panel info, change admin name, reset password, restart service/g' \
+        -e 's/安装 vm 快捷命令/Install vm quick command/g' \
+        -e 's/已安装快捷命令：/Installed quick command: /g' \
         -e 's/二进制/Binary/g' \
         -e 's/安装日志/Install log/g' \
         -e 's/服务/Service/g' \
@@ -2372,12 +2376,109 @@ PY
     fi
 }
 
+# install_vm_tool 安装 /usr/local/bin/vm 快捷管理菜单。
+# 覆盖用户最常用的服务器端操作：看面板信息（管理员/用户登录路径、账号）、
+# 改管理员账号、重置管理员密码、重启/查看面板服务。全部是 eyvescloud CLI
+# 与服务管理命令的交互式包装，不重复实现任何业务逻辑。
+install_vm_tool() {
+    cat > /usr/local/bin/vm << 'VMEOF'
+#!/bin/sh
+# EyvesCloud 快捷管理菜单（由 install.sh 生成）
+BIN=/usr/local/bin/eyvescloud
+
+if [ "$(id -u)" -ne 0 ]; then
+    echo "请以 root 运行：sudo vm"
+    exit 1
+fi
+if [ ! -x "$BIN" ]; then
+    echo "未找到 $BIN，请先安装 EyvesCloud。"
+    exit 1
+fi
+
+svc_restart() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl restart eyvescloud && echo "面板服务已重启。"
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service eyvescloud restart && echo "面板服务已重启。"
+    else
+        echo "未识别服务管理器（systemd/openrc），请手动重启。"
+    fi
+}
+
+svc_status() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl status eyvescloud --no-pager
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service eyvescloud status
+    else
+        echo "未识别服务管理器。"
+    fi
+}
+
+svc_logs() {
+    if command -v journalctl >/dev/null 2>&1; then
+        journalctl -u eyvescloud -n 80 --no-pager
+    elif [ -f /var/log/eyvescloud.log ]; then
+        tail -n 80 /var/log/eyvescloud.log /var/log/eyvescloud.err 2>/dev/null
+    else
+        echo "未找到日志（无 journalctl，也无 /var/log/eyvescloud.log）。"
+    fi
+}
+
+menu() {
+    echo ""
+    echo "====================================="
+    echo "  EyvesCloud 快捷管理 (vm)"
+    echo "====================================="
+    echo "  1) 查看面板信息（登录路径 / 账号）"
+    echo "  2) 更改管理员账号"
+    echo "  3) 重置管理员密码"
+    echo "  4) 重启面板服务"
+    echo "  5) 查看面板服务状态"
+    echo "  6) 查看面板运行日志"
+    echo "  0) 退出"
+    echo "====================================="
+}
+
+while true; do
+    menu
+    printf "请选择 [0-6]: "
+    read -r choice || exit 0
+    case "$choice" in
+        1) "$BIN" account show ;;
+        2)
+            printf "请输入新的管理员账号："
+            read -r newuser || continue
+            [ -n "$newuser" ] && "$BIN" account rename "$newuser"
+            ;;
+        3)
+            printf "留空自动生成强密码，或输入新密码："
+            read -r newpass || continue
+            if [ -n "$newpass" ]; then
+                "$BIN" account reset --password "$newpass"
+            else
+                "$BIN" account reset
+            fi
+            ;;
+        4) svc_restart ;;
+        5) svc_status ;;
+        6) svc_logs ;;
+        0|q|Q) exit 0 ;;
+        *) echo "无效选择：$choice" ;;
+    esac
+done
+VMEOF
+    chmod +x /usr/local/bin/vm
+    log "已安装快捷命令：/usr/local/bin/vm"
+}
+
 print_summary() {
     echo ""
     echo "====================================="
     echo "  $(tr_msg "安装完成")"
     echo "====================================="
     echo "  $(tr_msg "Web 面板：")http://YOUR_SERVER_IP:8999"
+    echo "  $(tr_msg "快捷命令：")vm ($(tr_msg "查看面板信息/改账号/重置密码/重启服务"))"
     echo "  $(tr_msg "二进制：")/usr/local/bin/eyvescloud"
     echo "  LXC NAT: ${LXC_NAT_SUBNET} (gateway ${LXC_NAT_GATEWAY})"
     echo "  KVM NAT: ${KVM_NAT_SUBNET} (gateway ${KVM_NAT_GATEWAY})"
@@ -2462,6 +2563,7 @@ esac
 if [ "$install_mode" != "agent" ]; then
     run_step "加固数据目录权限" harden_data_dir_perms
     run_step "写入面板语言" set_panel_language
+    run_step "安装 vm 快捷命令" install_vm_tool
 fi
 sleep 2
 print_summary

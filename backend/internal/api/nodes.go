@@ -402,11 +402,8 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 	// 手动添加：下发 agent.json 预置配置。管理员把它写到被控机 <data_dir>/agent.json
 	// 后直接运行 eyvescloud agent，无需 install_key/register（agent.go needRegister=false 路径）。
 	if mode == "manual" {
-		scheme := "https"
-		if r.TLS == nil {
-			scheme = "http"
-		}
-		controllerURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+		// controller 地址优先取「面板绑定域名」，反代/多入口下仍指向正确对外地址。
+		controllerURL := externalBaseURL(r)
 		agentConfigJSON, _ := json.MarshalIndent(map[string]any{
 			"controller": controllerURL,
 			"node_id":    node.ID,
@@ -503,11 +500,7 @@ func handleNodeInstallCommand(w http.ResponseWriter, r *http.Request, nodeID str
 	}
 	script := buildAgentInstallScript("", installKey, node.Name, "")
 	hashBytes := sha256.Sum256([]byte(script))
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
-	}
-	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script", scheme, r.Host, nodeID)
+	curlURL := fmt.Sprintf("%s/api/nodes/%s/install-script", externalBaseURL(r), nodeID)
 	command := fmt.Sprintf("curl -fsSL -H \"X-Install-Key: %s\" %s | sudo bash", installKey, curlURL)
 	expiresAt := ""
 	if node.InstallKeyCreatedAt != "" {
@@ -859,12 +852,9 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=eyvescloud-agent-%s.sh", node.Name))
 	w.Header().Set("X-Content-SHA256", hash)
 
-	scheme := "https"
-	if r.TLS == nil {
-		scheme = "http"
-	}
 	// F4：install_key 走请求头，不进 URL（避免落入访问日志/历史/Referer）。
-	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script", scheme, r.Host, nodeID)
+	// 安装命令地址优先取「面板绑定域名」，保证反代环境下 curl 直达。
+	curlURL := fmt.Sprintf("%s/api/nodes/%s/install-script", externalBaseURL(r), nodeID)
 
 	comments := fmt.Sprintf(`# 一行安装（推荐；X-Install-Key 头携带密钥，不写入 URL）：
 # curl -fsSL -H "X-Install-Key: %s" %s | sudo bash

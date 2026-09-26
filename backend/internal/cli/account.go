@@ -18,7 +18,8 @@ import (
 // 打印一次。
 //
 // 用法：
-//   eyvescloud account                   查看管理员账号、两步验证状态
+//   eyvescloud account                   查看面板信息、管理员账号、两步验证状态
+//   eyvescloud account rename <新账号>   更改管理员账号（旧会话全部失效）
 //   eyvescloud account reset             重设管理员密码（自动生成强密码）
 //   eyvescloud account reset --password <新密码>
 func RunAccountCommand(args []string) error {
@@ -31,6 +32,8 @@ func RunAccountCommand(args []string) error {
 	switch action {
 	case "show":
 		return accountShow()
+	case "rename":
+		return accountRename(args)
 	case "reset", "set", "reset-password", "set-password":
 		return accountReset(args)
 	case "-h", "--help", "help":
@@ -48,8 +51,10 @@ func accountShow() error {
 		fmt.Println("EyvesCloud 尚未初始化（未找到管理员账号）。请先安装并访问 Web 面板完成初始化。")
 		return nil
 	}
+	adminPath := config.CurrentAdminPath()
+	panelDomain := strings.TrimSpace(cfg.PanelDomain)
 	fmt.Println("=====================================")
-	fmt.Println("  EyvesCloud 账号信息")
+	fmt.Println("  EyvesCloud 面板信息")
 	fmt.Println("=====================================")
 	fmt.Println("  管理员账号：", cfg.AdminUser)
 	if cfg.AdminTOTPEnabled {
@@ -59,11 +64,75 @@ func accountShow() error {
 	} else {
 		fmt.Println("  两步验证：  未启用")
 	}
+	fmt.Println("  管理员路径：", adminPath)
+	fmt.Println("  用户路径：  /user")
+	if panelDomain != "" {
+		fmt.Println("  绑定域名：  ", panelDomain)
+		fmt.Println("  管理员入口：", panelDomain+adminPath)
+		fmt.Println("  用户入口：  ", panelDomain+"/user")
+	} else {
+		fmt.Printf("  面板地址：  http(s)://<服务器IP或域名>:%d%s\n", cfg.Port, adminPath)
+		fmt.Println("  绑定域名：  （未绑定，可在设置页或 vm 菜单配置）")
+	}
+	fmt.Println("  监听端口：  ", cfg.Port)
 	fmt.Println("  数据目录：  ", cfg.DataDir)
 	fmt.Println("  版本：      ", version.Current(), "(当前可执行文件)")
 	fmt.Println("")
 	fmt.Println("  注意：管理员密码以 bcrypt 单向哈希存储，无法反查原密码。")
 	fmt.Println("  遗忘密码时请执行：eyvescloud account reset")
+	fmt.Println("  快捷操作可执行：vm")
+	fmt.Println("=====================================")
+	return nil
+}
+
+// accountRename 更改管理员账号名（CLI 直改，等价服务器 root 权限）。
+// 同步递增 AdminTokenVersion，使旧账号名签发的所有会话立即失效。
+func accountRename(args []string) error {
+	cfg := config.AppConfig
+	if cfg == nil || cfg.AdminUser == "" {
+		fmt.Fprintln(os.Stderr, "EyvesCloud 尚未初始化，无法更改账号。")
+		return fmt.Errorf("not initialized")
+	}
+	newUser := ""
+	if len(args) > 0 {
+		newUser = strings.TrimSpace(args[0])
+	}
+	if newUser == "" {
+		// 兼容 --username <name> 形式
+		flags := flag.NewFlagSet("eyvescloud account rename", flag.ContinueOnError)
+		flags.SetOutput(new(strings.Builder))
+		flags.StringVar(&newUser, "username", "", "新管理员账号")
+		if err := flags.Parse(args); err != nil {
+			return fmt.Errorf("无效参数：%w", err)
+		}
+		newUser = strings.TrimSpace(newUser)
+	}
+	if newUser == "" {
+		fmt.Fprintln(os.Stderr, "用法：eyvescloud account rename <新账号>")
+		return fmt.Errorf("缺少新账号")
+	}
+	if len(newUser) < 3 {
+		return fmt.Errorf("账号长度至少 3 位")
+	}
+	if strings.ContainsAny(newUser, " \t\"'\\/<>") {
+		return fmt.Errorf("账号含有非法字符")
+	}
+	if newUser == cfg.AdminUser {
+		fmt.Println("新账号与当前账号相同，无需更改。")
+		return nil
+	}
+	if err := config.MutateGlobal(func(c *config.EyvescloudConfig) {
+		c.AdminUser = newUser
+		c.AdminTokenVersion++
+	}); err != nil {
+		return fmt.Errorf("更改管理员账号失败：%w", err)
+	}
+	fmt.Println("=====================================")
+	fmt.Println("  管理员账号已更改")
+	fmt.Println("=====================================")
+	fmt.Println("  原账号：", cfg.AdminUser)
+	fmt.Println("  新账号：", newUser)
+	fmt.Println("  提醒：所有已登录的管理员会话已失效，需重新登录。")
 	fmt.Println("=====================================")
 	return nil
 }
@@ -112,7 +181,8 @@ func accountReset(args []string) error {
 
 func accountUsage() string {
 	return `usage:
-  eyvescloud account                   查看管理员账号、两步验证状态
+  eyvescloud account                   查看面板信息、管理员账号、两步验证状态
+  eyvescloud account rename <新账号>   更改管理员账号（旧会话全部失效）
   eyvescloud account reset             重设管理员密码（自动生成强密码）
   eyvescloud account reset --password <新密码>
 `
