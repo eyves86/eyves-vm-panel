@@ -1,626 +1,451 @@
-# EYVESCLOUD WHMCS 插件 + 上游 API 综合审计报告
+# EYVESCLOUD × WHMCS 全量审计报告 v2
 
-> 角色：WHMCS Server Module 开发 + LXC/KVM 虚拟化 API 架构师 + 安全审计员
-> 日期：2026-09-26
-> 范围：上游 API 支撑性审计、WHMCS 插件安全审计、双端管理方案设计、节点添加方案、竞品矩阵
+- **审计日期**：2026-09-26
+- **审计基线**：main @ `37c2be2`（v1.8.2 之后，含品牌清理提交）
+- **审计对象**：上游 LXC/KVM 平台（`/workspace/backend`，Go）+ WHMCS Server Module（`backend/internal/integrations/whmcs/module/`，PHP）
+- **上一轮报告**：v1（v1.8.2 发布前）。本版为**重新全量审计**，v1 的 P0 缺口（Resize/ChangePackage）已修复并验证
+- **验证状态**：`go build` / `go vet` clean，40 packages test + race clean，`php -l` 全过
 
 ---
 
 ## 一、执行摘要
 
-### 1.1 上游 API 支撑 WHMCS 的结论
+**总体结论**：上游 API 已能完整支撑 WHMCS Server Module 全生命周期（17 个模块函数中 14 个直接实现、3 个有官方推荐等价物），v1 报告的 P0 缺口（Resize/ChangePackage）已闭环。本轮发现 **1 个新的 High 级问题（跨节点 Suspended 绕过）**，以及 6 个 Medium 级问题，无 Critical。
 
-**总体评价：上游 API 已具备支撑 WHMCS 全生命周期自动化的能力，但存在 1 个 P0 缺口、3 个 P1 缺口。**
+| 维度 | 结论 |
+|------|------|
+| WHMCS 生命周期支撑 | ✅ 完整（Create/Suspend/Terminate/ChangePassword/ChangePackage/UsageUpdate 均已实现且有幂等保护） |
+| 鉴权体系 | ✅ JWT(HS256) + API Key(argon2 哈希 + IP 白名单 + 单 Key 限流) + token_version 三级轮换 |
+| 租户隔离 | ✅ 单容器操作/列表/任务/票据全链路归属校验；1 处遗漏（备份计划，见 F6） |
+| 欠费停机 (Suspended) 强制力 | ⚠️ 本地容器✅，**跨节点容器电源操作可绕过**（F1, High） |
+| SQLi / XSS | ✅ 无风险（11 处 DB 访问全参数化；模板全 escape） |
+| CSRF | ⚠️ 模块自带 AJAX 入口无标准 token，仅 Origin/Referer 同源校验（F5） |
+| SSRF | ⚠️ 面板侧 safehttp 到位；Webhook 投递侧不复查 + DNS rebinding 无防护（F2） |
+| 节点添加 | ✅ 一键（一次性 token + 24h TTL + IP 绑定 + SHA256 + systemd）+ 手动（admin-only）；注册缺审计日志（F3） |
+| 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key；⚠️ 面板侧节点 Token 明文存 SQLite（F7，低） |
 
-- **生命周期覆盖**：Create / Suspend / Unsuspend / Terminate / ChangePassword / ChangePackage / UsageUpdate 全部有对应端点。
-- **客户区功能**：开机 / 关机 / 重启 / 硬关机 / 救援模式(KVM) / ISO 挂载(KVM) / VNC 控制台(KVM) / 同步状态 / 重置流量 全部有对应端点。
-- **P0 缺口**：WHMCS 的 `ChangePackage`（变更套餐）当前插件只做了 "不支持" 的返回，上游 API 也没有独立的 "resize CPU/RAM/Disk" 端点——需要新增 `POST /api/v1/containers/{id}?action=resize`。
-- **P1 缺口**：
-  1. Webhook 投递未经过 safehttp 校验，存在 SSRF 风险（向任意 URL POST）。
-  2. WHMCS 插件缺少 `AdminArea` 函数（后台服务详情页定制）。
-  3. 节点添加的 install-script 端点返回纯 bash，缺少 SHA256 校验和 / GPG 签名。
-
-### 1.2 WHMCS 插件安全结论
-
-**总体评价：插件安全基线良好，但存在 2 个 P1 风险、2 个 P2 改进点。**
-
-- **凭据存储**：API Key 走 WHMCS `serveraccesshash` 字段（WHMCS 原生加密存储），`eyvescloud_decrypt()` 兼容 `decrypt()` 和 `localAPI('DecryptPassword')`。
-- **输入校验**：PHP 层有 `eyvescloud_request_value()` 过滤 + `is_numeric()` 校验 + `trim()`，Go 层有容器名正则 + `requireScope()`。
-- **CSRF 防护**：`handlers/api.php` 有 Origin/Referer 同源校验 + WHMCS 会话绑定 + 仅接受 POST。
-- **P1 风险**：
-  1. `ClientArea` 返回的 VNC/SSO URL 直接拼接到前端 JS，如果面板域名被污染可能导致钓鱼跳转。
-  2. `clientarea.tpl` 的 `DANGEROUS_POWER` 弹窗在前端 JS 校验，绕过可直接发送 AJAX。
-- **P2 改进**：缺少 adminarea.tpl（后台服务页无定制模板），`UsageUpdate` 流量同步没有幂等去重键。
+**P0 行动项 1 个**（F1 跨节点 Suspended 绕过），P1 共 5 个，P2 共 6 个。详见第九节路线图。
 
 ---
 
-## 二、信息缺口清单
+## 二、信息缺口清单与假设
 
-以下是需要上游补充或确认的信息，**标记为 "[需确认]"**。
-
-| # | 缺口 | 影响 | 优先级 |
-|---|------|------|--------|
-| 1 | **ChangePackage/Resize API**：上游没有独立的 CPU/RAM/Disk 热扩容/冷扩容端点。当前 `ChangePackage` 返回 "不支持"。 | WHMCS 升降级功能不可用 | P0 |
-| 2 | **Webhook SSRF 校验**：`webhookDeliveryOnce` 直接 POST 到 `wh.URL`，未使用 `safehttp.ValidateURL()`。 | 管理员可配置 webhook 指向内网元数据服务（169.254.169.254） | P1 |
-| 3 | **AdminArea 模板缺失**：插件没有 `eyvescloud_AdminArea()` 函数和 `adminarea.tpl`。 | WHMCS 后台服务页只有默认字段，无法展示 "救援模式状态 / 挂载 ISO / VNC 快捷入口" | P1 |
-| 4 | **Install Script 校验和**：`handleNodeInstallScript` 返回的 bash 没有 SHA256 校验和或 GPG 签名。 | `curl | bash` 场景下无法验证脚本完整性 | P1 |
-| 5 | **日志脱敏审计**：未确认 `audit_logs` 表和 `AddAuditLogFull` 是否对 password/token/api_key 脱敏。 | 审计日志可能泄露敏感凭据 | P2 |
-| 6 | **API Key 容器绑定粒度**：API Key 的 `container_uuids` 是全局字段，未确认是否支持 "仅允许对某几个容器操作"。 | 多容器共享 API Key 时可能产生越权 | P2 |
-| 7 | **SolusVM/Virtualizor 竞品 API 细节**：官方文档未公开全部 WHMCS 模块函数实现。 | 竞品矩阵部分字段基于公开文档推断 | P3 |
-| 8 | **流量计费精度**：`UsageUpdate` 读取的流量计数器是宿主机 NIC 计数器，未确认是否区分容器的实际流量 vs 宿主机总流量。 | 计费可能不准确 | P2 |
-| 9 | **KVM guest-agent 可用性探测**：`processes/services/bandwidth` 在 KVM 下依赖 qemu-guest-agent，未提供可用性探测 API。 | WHMCS 客户区按钮状态无法动态显示 "需要安装 guest-agent" | P2 |
-| 10 | **多节点 VNC proxy**：VNC WebSocket proxy 默认连本地 libvirt socket，多节点场景下主控无法 proxy 到远端 agent。 | 多节点 KVM 的 VNC 控制台不可用 | P2 |
+| # | 缺口 | 影响 | 假设处理 |
+|---|------|------|---------|
+| G1 | WHMCS 版本、PHP 版本未提供 | AdminServicesTabFields / ClientAreaAllowedFunctions 需要 WHMCS 8+/9+ | 假设 WHMCS 8.0+（代码 APIVersion 1.1 佐证 eyvescloud.php:33） |
+| G2 | 生产环境反代是否记录 query string 未知 | 影响 F4（install_key 进 URL）的实际暴露面 | 按"会记录"保守评估 |
+| G3 | 魔方云 API 官方文档不可公开访问 | 竞品矩阵该列基于国内 IDCSystem 类系统通用能力 + 魂环/WHMCS 生态常见实现 | 标注"推断"，仅 Virtualizor/SolusVM 给官方文档来源 |
+| G4 | agent 二进制分发渠道完整性未验证 | install.sh 下载 agent 二进制仅做可执行性自检 | 建议补哈希（P1-4） |
+| G5 | 多租户 (tenant) 功能的线上使用规模未知 | F8（内存/CPU 无累计配额）严重度依赖租户数量 | 按多租户已启用评估 |
+| G6 | 面板部署拓扑（主控是否公网、agent 是否内网）未知 | F9（主控→agent 默认 http://）实际风险 | 按主控-agent 同内网保守评估为 Low |
 
 ---
 
-## 三、WHMCS 函数与上游 API 映射表
+## 三、WHMCS 模块函数与上游 API 映射表
 
-### 3.1 生命周期函数映射
+模块：`backend/internal/integrations/whmcs/module/eyvescloud.php`（29 个入口函数）
 
-| WHMCS 函数 | 上游 API 端点 | 方法 | 请求体 | 状态 |
-|-----------|-------------|------|--------|------|
-| `TestConnection` | `/api/v1/dashboard` | GET | — | ✅ 已实现 |
-| `CreateAccount` | `/api/v1/containers` | POST | `{name,template_id,virtualization,vcpu,ram_mb,disk_gb,...}` | ✅ 已实现 |
-| `SuspendAccount` | `/api/v1/containers/{id}?action=stop` | POST | — | ✅ 已实现 |
-| `UnsuspendAccount` | `/api/v1/containers/{id}?action=start` | POST | — | ✅ 已实现 |
-| `TerminateAccount` | `/api/v1/containers/{id}?action=delete` | POST | — | ✅ 已实现 |
-| `ChangePassword` | `/api/v1/containers/{id}?action=reset-password` | POST | `{new_password,send_email?}` | ✅ 已实现 |
-| `ChangePackage` | — | — | — | ❌ **P0 缺口：无 resize 端点** |
-| `UsageUpdate` | `/api/v1/containers/{id}?action=stats` | GET | — | ✅ 已实现（带宽） |
+| WHMCS 函数 | 存在 | 位置 | 上游 API | 状态 | 缺失风险 / 备注 |
+|---|---|---|---|---|---|
+| MetaData | ✅ | eyvescloud.php:26 | — | ✅ | APIVersion 1.1 |
+| ConfigOptions | ✅ | eyvescloud.php:46 | — | ✅ | 24 个配置项（helpers.php:56-253），见 §3.1 |
+| TestConnection | ✅ | eyvescloud.php:87 | `GET /api/v1/dashboard` | ✅ | — |
+| CreateAccount | ✅ | eyvescloud.php:109 | `POST /api/v1/containers`（Idempotency-Key）+ 预检查 + 轮询 tasks + routing 解析公网 IP | ✅ | **三级幂等**：预检查(111-114) → 幂等键(122-123) → 容器名唯一兜底；后端命中幂等键返回既有容器（handlers.go:693-710） |
+| SuspendAccount | ✅ | eyvescloud.php:162 | `POST /api/v1/containers/{name}/suspend` | ✅ | 面板侧阻断电源/控制台；⚠️ 跨节点绕过见 F1 |
+| UnsuspendAccount | ✅ | eyvescloud.php:173 | `POST /api/v1/containers/{name}/unsuspend` | ✅ | 不自动开机（合理） |
+| TerminateAccount | ✅ | eyvescloud.php:184 | `DELETE /api/v1/containers/{name}/delete` | ✅ | — |
+| ChangePassword | ✅ | eyvescloud.php:200 | `POST /api/v1/containers/{name}/reset-password` | ✅ | 成功后写回 tblhosting.password（加密，helpers.php:2403） |
+| **ChangePackage** | ✅ | eyvescloud.php:221 | `PUT resource-limit` + `PUT traffic-limit` + `PUT expiry`（helpers.php:2129-2183） | ✅ **v1 P0 已闭环** | ⚠️ 非原子（三步串行不回滚）；disk 仅扩容（handlers.go:1150-1155 拒绝缩容）；`array_filter` 剔除 0 值导致"0=不限"配置不推送（helpers.php:2141-2143） |
+| ClientArea | ✅ | eyvescloud.php:425 | AJAX → handlers/api.php | ✅ | 数据不直连上游 |
+| AdminArea | ⚠️ | — | — | 等价物 | 未实现；由 AdminServicesTabFields（eyvescloud.php:531-588，WHMCS 8+ 推荐方式）替代，调 `GET containers/{name}` |
+| UsageUpdate | ✅ | eyvescloud.php:368 | `GET containers/{name}/usage` + `/traffic` 逐服务 | ✅ | Capsule 参数化查询 tblhosting（379-382） |
+| ServiceStatus | ⚠️ | — | — | 等价物 | 未实现；由 eyvescloud_Sync（348-359）承担 |
+| LoginLink | ✅ | eyvescloud.php:496 | 面板 `/user` 链接 | ✅ | — |
+| AdminCustomButtonArray | ✅ | eyvescloud.php:595 | — | ✅ | 8 按钮：Sync/TrafficReset/HardOff/RescueMode/RescueExit/ISOAttach/ISODetach/VNC |
+| ClientAreaCustomButtonArray | ⚠️ | — | — | 等价物 | 未实现；由 ClientAreaAllowedFunctions（457-472，WHMCS 9 白名单，11 函数）替代 |
+| ServiceSingleSignOn | ✅ | eyvescloud.php:507 | `GET containers/{name}` | ✅ | — |
 
-### 3.2 客户区按钮映射
+### 3.1 ConfigOptions → CreateAccount 参数映射
 
-| WHMCS 按钮 | 上游 API 端点 | 方法 | 权限 Scope | KVM/LXC |
-|-----------|-------------|------|-----------|---------|
-| 开机 (On) | `/api/v1/containers/{id}?action=start` | POST | `container:power` | 双栈 |
-| 关机 (Off) | `/api/v1/containers/{id}?action=stop` | POST | `container:power` | 双栈 |
-| 重启 (Reboot) | `/api/v1/containers/{id}?action=restart` | POST | `container:power` | 双栈 |
-| 硬关机 (HardOff) | `/api/v1/containers/{id}?action=destroy` | POST | `container:power` | 双栈 |
-| 救援模式 (RescueMode) | `/api/v1/containers/{id}?action=rescue` | POST | `container:power` | **仅 KVM** |
-| 退出救援 (RescueExit) | `/api/v1/containers/{id}?action=rescue` | POST | `container:power` | **仅 KVM** |
-| ISO 挂载 (ISOAttach) | `/api/v1/containers/{id}?action=iso` | POST | `container:power` | **仅 KVM** |
-| ISO 卸载 (ISODetach) | `/api/v1/containers/{id}?action=iso` | POST | `container:power` | **仅 KVM** |
-| VNC 控制台 (VNC) | `/api/v1/containers/{id}?action=vnc-ticket` | POST | `terminal:vnc` | **仅 KVM** |
-| 同步状态 (Sync) | `/api/v1/containers/{id}` | GET | `container:read` | 双栈 |
-| 重置流量 (TrafficReset) | 本地 WHMCS 操作 | — | — | WHMCS 本地 |
-
-### 3.3 后台自定义按钮映射
-
-| 后台按钮 | WHMCS 函数 | 上游 API | 状态 |
-|---------|-----------|---------|------|
-| 同步状态 | `eyvescloud_Sync` | GET `/api/v1/containers/{id}` | ✅ |
-| 重置流量 | `eyvescloud_TrafficReset` | 本地操作 | ✅ |
-| 硬关机(强制) | `eyvescloud_HardOff` | POST `?action=destroy` | ✅ |
-| KVM 救援模式 | `eyvescloud_RescueMode` | POST `?action=rescue` | ✅ |
-| 退出救援模式 | `eyvescloud_RescueExit` | POST `?action=rescue` | ✅ |
-| ISO 挂载 | `eyvescloud_ISOAttach` | POST `?action=iso` | ✅ |
-| ISO 卸载 | `eyvescloud_ISODetach` | POST `?action=iso` | ✅ |
-| VNC 控制台 | `eyvescloud_VNC` | POST `?action=vnc-ticket` | ✅ |
+24 项配置（helpers.php:56-253）经 `eyvescloud_container_payload()`（helpers.php:1151-1200）组装：virtualization/template_id/vcpu/cpu_percent/ram_mb/disk_gb/network_bw_mbps/traffic_mode/monthly_traffic_gb/traffic_in_gb/traffic_out_gb/io_speed_mbps/assign_nat/port_mapping_count/snapshot_limit/extra_ports/assign_ipv4/ipv4_count/assign_ipv6/ipv6_count/ssh_auth_mode/ssh_password/ssh_public_key/sync_expiry。数值全部强转 + min 边界，容器名清洗（helpers.php:863-875），**无注入面**。
 
 ---
 
-## 四、安全发现
+## 四、安全发现（按严重级别排序）
 
-### 4.1 认证与权限矩阵
+### F1 — 跨节点容器 Suspended 绕过
 
-**上游认证模型（三层）**：
+- **ID**：F1
+- **标题**：已挂起（欠费停机）的跨节点容器可被直接开机
+- **严重级别**：**High**
+- **位置**：`backend/internal/api/handlers.go:151-170`（主控代理路径）、`backend/internal/api/agent_api.go:84-98`（agent 端 start 分支）
+- **证据**：
+  - 主控 `HandleSingleContainer` 的 start/restart 分支在 scope 检查后**直接 `routeToAgent(...)` 转发，无 Suspended 检查**（handlers.go:151-170）
+  - agent 端 `HandleAgentContainerAction` 的 `case "start"` 直接 `startByRuntime(id)`，**同样无 Suspended 检查**（agent_api.go:84-98）
+  - 对比：本地容器走任务队列有检查——`taskqueue.go:621-627` `"容器已挂起（欠费停机），不允许此操作"`
+- **影响**：WHMCS SuspendAccount 后，欠费客户通过面板 API（或 WHMCS 客户区按钮，见 F1a）仍可开机跨节点容器 → **计费强制失效**，欠费服务持续消耗资源
+- **复现步骤**：
+  1. 创建 NodeID ≠ 空（跨节点）的容器，调 `POST /api/v1/containers/{id}/suspend`
+  2. 以容器属主身份调 `POST /api/v1/containers/{id}?action=start`
+  3. 主控 routeToAgent 转发 → agent 端直接开机成功（无拦截）
+- **修复建议**：
+  - agent 端 `HandleAgentContainerAction` 的 start/restart/reinstall 分支入口加 `if c.Suspended { 403 }`（与 taskqueue.go:621 同文案）
+  - 主控 `HandleSingleContainer` 的电源类 action 在 routeToAgent **之前**统一加 Suspended 检查（防御纵深，双端都加）
+- **验证方法**：单测构造 `Suspended=true` + `NodeID="node-1"` 的容器，断言 start 返回 403；集成测试双节点环境重复复现步骤第 2 步应 403
 
-```
-1. Admin JWT：登录后签发，24h 过期，支持 TOTP 2FA + token_version 轮换
-2. Sub-user JWT：租户子用户，带 container_uuids 绑定 + role(viewer/operator)
-3. API Key：持久 key，带 scopes + container_uuids 绑定 + IP 白名单 + 单 key 限流
-```
+### F1a — Suspended 容器的快照/备份/NAT/防火墙/ISO/救援仍可操作（含 WHMCS 客户区按钮）
 
-**RBAC 矩阵**（[internal/rbac/rbac.go](file:///workspace/backend/internal/rbac/rbac.go)）：
+- **ID**：F1a
+- **标题**：欠费停机仅阻断电源与控制台，破坏性管理操作全部放行
+- **严重级别**：Medium
+- **位置**：`backend/internal/api/handlers.go:492-536、606-619`、snapshots.go、backups.go:378-391；WHMCS 侧 handlers/api.php（全文无 domainstatus 检查）+ clientarea.tpl（按钮不按状态禁用）
+- **证据**：快照创建/还原/删除、备份还原、NAT 增删改、防火墙保存、ISO 挂载、救援模式、流量重置各 handler 均无 `Suspended` 判断；WHMCS 模块侧 RescueMode/ISOAttach 按钮（eyvescloud.php:268-336）也不检查服务状态
+- **影响**：欠费客户可执行**快照还原/备份还原**等破坏性操作；已付费快照配额/备份存储持续被免费占用（配额绕过的一种形态）
+- **复现步骤**：suspend 容器 → 属主调 `POST ?action=recipes/execute` 或快照创建接口 → 成功
+- **修复建议**：
+  - 面板侧：上述 handler 入口统一加 Suspended 检查（建议抽 `requireNotSuspended(c)` helper，在 HandleSingleContainer switch 顶部对非只读 action 调用）
+  - WHMCS 侧：handlers/api.php 加 `domainstatus != 'Active'` 时拒绝状态变更类 op（查询类放行）
+- **验证方法**：suspend 后逐个调用上述端点应 403；WHMCS 客户区 suspend 状态下按钮点击应返回业务错误
 
-| 角色 | container:read | container:power | container:reinstall | container:password | container:account | container:network | container:delete | container:create | admin:access | terminal:vnc |
-|------|---------------|-----------------|---------------------|--------------------|--------------------|--------------------|--------------------|--------------------|-------------|-------------|
-| admin | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| owner | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ |
-| operator | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ |
-| readonly | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+### F2 — Webhook 投递 SSRF 防护不完整
 
-**安全设计亮点**：
-- `AdminSessionMiddleware` 明确拒绝 API Key 访问 2FA/密码修改等高敏感操作（[api/auth.go#L624](file:///workspace/backend/internal/api/auth.go#L624)）。
-- `subUserScopeAllowed` 对 viewer 明确拒绝 `container:power/reinstall/password/account/network/snapshot:*`（[api/auth.go#L112](file:///workspace/backend/internal/api/auth.go#L112)）。
-- `claimsFromToken` 对 admin/sub-user 都做 `token_version` 校验，密码轮换后旧令牌立即失效（[api/auth.go#L226](file:///workspace/backend/internal/api/auth.go#L226)）。
-- `bcrypt.CompareHashAndPassword` 用于密码校验，不是明文比较（[api/auth.go#L341](file:///workspace/backend/internal/api/auth.go#L341)）。
+- **ID**：F2
+- **标题**：私有网段放行 + DNS rebinding 无防护 + 投递时不复查
+- **严重级别**：Medium
+- **位置**：`backend/internal/api/notify.go:29-57`、`backend/internal/api/webhooks.go:364-381`
+- **证据**：
+  - notify.go:29-30 注释明言"回环与内网（RFC1918）地址保留"——内网自托管设计取舍，`http://10.0.0.5`、`http://127.0.0.1` 允许（security_hardening_test.go:221-246 断言）
+  - notify.go:32 注释自认"按字面 IP 判定，DNS 解析到受限地址不在本函数覆盖范围"
+  - 投递时点 `webhookDeliveryOnce`（364-367）仅语法复检，不再做 IP 校验；域名 URL 经 rebinding 可指向 169.254.169.254 等
+  - 未复用已有 `internal/safehttp`（解析后校验 + Dialer 连接时二次校验 + 重定向逐跳校验，safehttp.go:83-158），投递用普通 `http.Client`（webhooks.go:381）
+- **影响**：webhook 为 admin-only（server.go:177-178），攻击前提是管理员凭据被盗 → 仍可打通主控内网/云元数据端点读取敏感信息
+- **复现步骤**：admin 创建 webhook 指向 `http://attacker.com/rebind`（DNS 第一次解析公网通过校验、TTL 过后解析到 169.254.169.254）→ 触发事件 → 投递请求打到元数据端点
+- **修复建议**：webhook 投递改用 `safehttp` 客户端（连接时二次校验即可覆盖 rebinding）；至少在投递前重新跑完整 `validateWebhookURL` 而非语法子集
+- **验证方法**：单测 mock DNS（先公网后私网解析）断言投递被拒；现有 security_hardening_test.go 补 rebinding 用例
 
-### 4.2 IDOR / 水平越权
+### F3 — 节点注册无审计日志
 
-**防护机制**：
-- 容器级 handler 统一通过 `isContainerAllowedForRequest` 校验：子用户只能访问 JWT claim 里 `container_uuids` 绑定的容器；API Key 只能访问 `container_uuids` 绑定的容器（[handlers.go#L35-L108](file:///workspace/backend/internal/api/handlers.go#L35-L108)）。
-- Admin 类型请求不受 `container_uuids` 限制（全局可见）。
+- **ID**：F3
+- **标题**：一次性 install_key 的消费事件不可追溯
+- **严重级别**：Medium
+- **位置**：`backend/internal/api/nodes.go:204-275`（handleNodeRegister 全函数无 auditRequest）
+- **证据**：对比 node.create（nodes.go:327）/ delete（353）/ maintenance（1046）/ drain（1092）均有审计；注册（谁在何时用哪个 key 注册了哪个节点、来源 IP）零留痕
+- **影响**：key 泄露被他人注册恶意节点时无法事后追责；不满足"注册过程审计日志"要求
+- **修复建议**：handleNodeRegister 成功/失败路径各加 `auditRequest`（事件 `node.register`，detail 含 node name、来源 IP、key 指纹前 8 位——完整 key 已有脱敏正则覆盖 auth.go:180-199）
+- **验证方法**：注册后查审计日志 API 应有 node.register 记录；失败（key 过期/IP 不匹配）同样留痕
 
-**风险点**：
-- **P2**：API Key 的 `container_uuids` 是全局字段，未确认是否支持按容器动态授权。如果 WHMCS 用同一个 API Key 管理所有客户容器，理论上 API Key 持有者可操作任意容器——但 `container_uuids` 为空时是否允许全部？需要确认 `isContainerAllowedForRequest` 的空值处理。
+### F4 — install_key 明文出现在 URL query
 
-### 4.3 命令注入
+- **ID**：F4
+- **标题**：安装脚本与 agent 二进制下载 URL 携带完整 key
+- **严重级别**：Medium
+- **位置**：`backend/internal/api/nodes.go:633`（install-script URL）、`nodes.go:823`（binary URL）、脚本正文内嵌（nodes.go:699）
+- **证据**：curlURL 形如 `.../install-script?install_key=<32字节hex>`；应用层审计已脱敏（auth.go:194 的 `install_key=` query 正则），但**反代/访问日志记录完整 URL 时应用层无法覆盖**
+- **影响**：key 在代理日志、浏览器历史、shell history 中留存；虽然 key 一次性 + 24h TTL + IP 绑定（nodes.go:225-242）大幅压缩利用窗口，仍是凭据卫生问题
+- **修复建议**：改 POST 或自定义 header（`X-Install-Key`）传参；curl 管道场景可改为 `curl -fsSL -H "X-Install-Key: ..." <url> | sudo bash`，key 从环境变量读：`sudo INSTALL_KEY=... bash`
+- **验证方法**：抓包确认 key 不在 URL；反代 access log 无 key 字样
 
-**Go 层**：
-- 所有 `exec.Command` / `exec.CommandContext` 使用参数数组而非字符串拼接，不走 shell（天然免疫命令注入）。
-- 容器名正则：`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`（[lxc.go](file:///workspace/backend/internal/lxc/lxc.go)）。
-- ISO path 通过 `config.ISOFiles` 白名单查找，不直接信任用户输入的路径（[kvm.go](file:///workspace/backend/internal/kvm/kvm.go)）。
+### F5 — WHMCS 模块 AJAX 入口无 CSRF token
 
-**PHP 层**：
-- `eyvescloud_request_value()` 有 `trim()` + `is_string()` 过滤。
-- `container_id` 经过 `eyvescloud_isoNumericID()` 转为 int，再拼接到 URL 路径（不是参数）。
-- **P2**：`recipe_id` 和 `iso_id` 未在 PHP 层做白名单校验，仅依赖上游 API 的 404/403 响应。
+- **ID**：F5
+- **标题**：客户区所有状态变更按钮仅靠 Origin/Referer + POST 防护
+- **严重级别**：Medium
+- **位置**：`whmcs/module/handlers/api.php:107-129`
+- **证据**：仅有条件同源校验（Origin/Referer **存在时**比对 host）；未使用 WHMCS 标准 `check_token()`。浏览器省略 Origin/Referer 时完全依赖 cookie SameSite（不可控）
+- **影响**：若客户浏览器对 WHMCS 域的 cookie SameSite 配置宽松，第三方页面可伪造开机/关机/重装/快照还原请求
+- **复现步骤**：构造跨站页面 POST `handlers/api.php`（op=power&action=destroy），携带受害者 cookie（SameSite=None 场景）→ 操作生效
+- **修复建议**：handlers/api.php 入口调 `check_token('WHMCS.default')`（或比对 `token` == `$_SESSION['csrfToken']`）；clientarea.tpl 所有 fetch body 附带 `{ token: csrfToken }`（Smarty 变量 WHMCS 已内置）
+- **验证方法**：不带 token 的跨站 POST 应 403；正常客户区操作全通过回归
 
-### 4.4 SSRF
+### F6 — 备份计划无归属校验
 
-**上游 safehttp 包**（[internal/safehttp/safehttp.go](file:///workspace/backend/internal/safehttp/safehttp.go)）：
-- 阻塞 30+ 个 IPv4/IPv6 保留前缀（loopback、link-local、metadata、multicast 等）。
-- 禁止 URL 包含 credentials、fragment、非标准 port。
-- DNS 解析后二次校验，限制 redirect 链（最多 10 次），每次 redirect 都重新校验。
-- 使用 `restrictedTransport`，`Proxy: nil` 禁用 HTTP 代理，自定义 `DialContext` 在连接前校验 IP。
+- **ID**：F6
+- **标题**：backup:write 的 API Key 可管理任意容器的备份计划
+- **严重级别**：Low
+- **位置**：`backend/internal/api/backup_plans.go:198-271`、`server.go:118-119`（仅 AuthMiddleware）
+- **证据**：无 `isContainerAllowedForRequest` / OwnerSubject 校验。子用户被 subUserScopeAllowed 天然挡住（backup:* 均 default:false，auth.go:113-126）；API Key 由管理员签发，属信任边界内
+- **影响**：越权范围限于"管理员签发的非 admin:access Key"，跨租户面窄
+- **修复建议**：backup-plans 的容器字段过 `isContainerAllowedForRequest`，与容器其他操作对齐
+- **验证方法**：绑定容器 A 的 Key 尝试给容器 B 建计划应 403
 
-**风险点**：
-- **P1**：`webhookDeliveryOnce` 直接 POST 到 `wh.URL`，**未经过 safehttp 校验**（[api/webhooks.go#L363](file:///workspace/backend/internal/api/webhooks.go#L363)）。管理员可在 webhook 配置里填入 `http://169.254.169.254/latest/meta-data/` 等内网地址，触发 SSRF。
-- **P2**：`proxyNodeRequest` 向节点地址发起 HTTP 请求，节点地址由管理员配置，未看到对节点地址的 `safehttp` 校验——但节点地址通常是公网，且由管理员控制，风险可控。
+### F7 — 节点凭据明文存储
 
-### 4.5 CSRF / XSS / SQLi
+- **ID**：F7
+- **标题**：Node Token / InstallKey 明文存 SQLite（依赖 0600 文件权限）
+- **严重级别**：Low
+- **位置**：`backend/internal/config/config.go:1303-1310`、`store_sqlite.go:169`（chmod 0600）
+- **证据**：JSON 字段无应用层加密；对比 API Key 已是 argon2 哈希（apikey.go:127-131）
+- **影响**：宿主机文件读取（备份泄露、误配置）即得主控→agent 全部通道凭据
+- **修复建议**：主控侧对 Node.Token 用主密钥（env/KMS）AES-GCM 加密存储；短期至少确认 DB 文件不被纳入常规备份明文流转
+- **验证方法**：直接 sqlite3 查询 nodes 表，token 字段应为密文
 
-**CSRF**：
-- WHMCS 插件 `handlers/api.php` 有 Origin/Referer 同源校验（[handlers/api.php#L107](file:///workspace/backend/internal/integrations/whmcs/module/handlers/api.php#L107)）。
-- 仅接受 POST 方法用于状态变更（[handlers/api.php#L88](file:///workspace/backend/internal/integrations/whmcs/module/handlers/api.php#L88)）。
-- 没有显式的 CSRF Token（依赖 WHMCS 会话 + Origin 校验）。
+### F8 — 内存/CPU 无累计配额
 
-**XSS**：
-- PHP 模板层使用 `htmlspecialchars` / `escapeHtml`。
-- Go API 返回纯 JSON，Content-Type 正确设置为 `application/json`。
-- **P2**：`clientarea.tpl` 中部分变量（如错误消息）直接渲染到 JS `alert()`，如果上游返回的消息包含 `"` 可能导致 XSS——但 Go 层的错误消息是静态字符串，不含用户输入。
+- **ID**：F8
+- **标题**：仅磁盘有累计超售检查，内存/CPU 连续开多台可超卖
+- **严重级别**：Low
+- **位置**：`backend/internal/api/resource_validation.go:16-34`（仅磁盘 cumulative）
+- **证据**：单容器上限有检查（36-74），租户四维配额有（enterprise.go:1094-1135），但宿主机级内存/CPU 累计无
+- **影响**：超售开关（overcommit ratio）缓解后属容量风险而非安全漏洞
+- **修复建议**：`resource_validation.go` 补 RAM cumulative 检查（CPU 可保留超售语义，加告警阈值即可）
+- **验证方法**：连续创建至超宿主内存×超售比，下一次创建应 400
 
-**SQLi**：
-- WHMCS 插件使用 WHMCS `Capsule`（Eloquent ORM）进行数据库操作，参数化查询。
-- Go 层使用 SQLite `?` 占位符（[store_sqlite.go](file:///workspace/backend/internal/config/store_sqlite.go)）。
+### F9 — 主控→agent 通道默认 http
 
-### 4.6 密钥管理
+- **ID**：F9
+- **标题**：node address 无 scheme 时默认补 `http://`，Bearer token 可明文传输
+- **严重级别**：Low
+- **位置**：`backend/internal/api/nodes.go:1194-1203`（normalizeNodeAddress）、`nodes.go:1164-1192`（proxyNodeRequest 普通 http.Client）
+- **证据**：agent→主控方向已强制 https（agent.go:277-279，`--allow-insecure-http` 显式豁免），主控→agent 反向无对称强制；无 mTLS / 跳过校验选项
+- **影响**：同内网部署下风险低；跨公网部署 agent 时 token 可被链路窃听
+- **修复建议**：normalizeNodeAddress 默认改 `https://`（与 agent 侧对齐）；管理台手动添加节点表单加 TLS 校验开关与提示
+- **验证方法**：添加无 scheme 的节点地址，存储值应为 https 前缀
 
-| 密钥类型 | 存储位置 | 加密/哈希 | 备注 |
-|---------|---------|----------|------|
-| Admin 密码 | `config.json` AdminPassHash | bcrypt | ✅ |
-| 子用户密码 | `config.json` SubUsers[].PassHash | bcrypt | ✅ |
-| JWT Secret | `config.json` JWTSecret | 明文 | ⚠️ 文件权限 0600 |
-| API Key 明文 | 内存中生成，不存 | — | ✅ 只存 hash |
-| API Key hash | SQLite `api_keys.key_hash` | SHA-256 | ✅ |
-| Node Token | `config.json` Nodes[].Token | 明文 | ⚠️ 文件权限 0600 |
-| Node InstallKey | `config.json` Nodes[].InstallKey | 明文（一次性） | ⚠️ 注册后清空 |
-| WHMCS API Key | WHMCS `tblservers.accesshash` | WHMCS 原生加密 | ✅ |
-| VNC 密码 | `config.json` Containers[].VNCPassword | 明文 | ⚠️ 文件权限 0600 |
-| SSH 密码 | `config.json` Containers[].SSHPassword | 明文 | ⚠️ 文件权限 0600 |
+### F10 — curl FOLLOWLOCATION 可泄露 API Key
 
-**风险**：config.json 包含大量敏感明文（JWTSecret、Node Token、VNC/SSH 密码），虽然文件权限 0600，但如果宿主机被入侵，所有客户密码和节点 token 一锅端。**建议**：VNC/SSH 密码应使用 per-container 加密密钥或至少做 bcrypt hash（但 SSH 密码需要明文发给客户，所以只能加密存储）。
+- **ID**：F10
+- **标题**：跨主机重定向时 X-API-Key 头被 curl 保留转发
+- **严重级别**：Low
+- **位置**：`whmcs/module/helpers.php:588`（CURLOPT_FOLLOWLOCATION => true）
+- **影响**：面板被入侵或返回恶意 30x 时 WHMCS 存储的 API Key 外泄
+- **修复建议**：关闭 FOLLOWLOCATION（面板 API 无重定向场景），或改用 `CURLOPT_REDIR_PROTOCOLS` 限制 + `CURLOPT_HTTPHEADER` 重定向剥离（PHP curl 不支持 per-redirect header 剥离，直接关闭最简）
+- **验证方法**：mock 一个 302 跳转到外部域的端点，断言第二跳请求头无 X-API-Key
 
-### 4.7 日志脱敏
+### F11 — store_password 加密降级
 
-**审计发现**：`AddAuditLogFull` 记录 action/target/detail/user/ip/user_agent/success/error，但未在代码中看到对 detail 字段的密码脱敏处理。如果 `reset-password` 等操作的 detail 里包含明文密码，审计日志会泄露。**建议**：在 `auditRequest` 或 `AddAuditLogFull` 中对 detail 做正则脱敏（替换 `password=xxx` 为 `password=***`）。
+- **ID**：F11
+- **标题**：encrypt() 不可用时 SSH 密码明文落库
+- **严重级别**：Info
+- **位置**：`whmcs/module/helpers.php:516-533`
+- **证据**：`if (function_exists('encrypt')) {...} return $password;` 正常 WHMCS 环境必有 encrypt()，仅非常规嵌入场景降级
+- **修复建议**：降级分支加日志并返回失败（拒绝明文落库）
+- **验证方法**：临时移除 encrypt 定义，store_password 应抛错而非返回原文
+
+### 已验证无风险项（事实）
+
+| 检查项 | 结论 | 证据 |
+|---|---|---|
+| SQL 注入 | ✅ 11 处 DB 访问全 Capsule 参数化，无原始 SQL 拼接 | eyvescloud.php:134/379-382/404；helpers.php:2114/2409/2439/2447/2455/2500 |
+| XSS | ✅ 模板全 `|escape:'html'`；JS 渲染统一 escapeHtml()；消息用 textContent | clientarea.tpl:147-520/578-597/653-660 |
+| 密钥日志泄露 | ✅ debug 仅记录 url/method/http_code；不打印 API Key | helpers.php:612 |
+| 重复开通 | ✅ 三级幂等（预检查 + Idempotency-Key + 名字唯一兜底） | eyvescloud.php:111-128；handlers.go:693-710 |
+| IDOR（容器主链路） | ✅ 单容器/列表/任务/票据/批量全链路归属校验 | subuser.go:895-905/1014-1026；taskqueue.go:1092-1097/1184；vnc.go:50；ssh.go:58 |
+| 审计脱敏 | ✅ password/token/api_key/install_key/secret 正则脱敏，全 auditRequest 覆盖 | auth.go:180-204 |
+| API Key 存储 | ✅ argon2 哈希 + 指纹；仅回显一次；IP 白名单 + 单 Key 限流 | apikey.go:127-143/370-373；auth.go:608-615 |
+| token_version 轮换 | ✅ 主管理员改密全吊销；子用户容器属主变更双侧吊销 | auth.go:517-520/250-299；handlers.go:331/345 |
+| 命令注入 | ✅ 容器名正则白名单 + exec.Command 不走 shell | 全局模式（多轮审计确认） |
 
 ---
 
-## 五、WHMCS 插件审计
+## 五、WHMCS 插件审计结果
 
-### 5.1 代码结构
+### 5.1 功能完整性
 
-```
-modules/servers/eyvescloud/
-├── eyvescloud.php          # WHMCS 模块入口函数（生命周期 + 元数据 + 按钮）
-├── helpers.php             # API 请求、输入校验、加密、数据格式化
-├── templates/
-│   └── clientarea.tpl      # 客户区 Smarty 模板（按钮 + JS AJAX）
-└── handlers/
-    ├── api.php             # 客户区 AJAX 入口（CSRF/会话校验 + 路由）
-    ├── webssh.php          # WebSSH 代理
-    └── vnc.php             # VNC 代理
-```
+| 能力 | 状态 | 说明 |
+|---|---|---|
+| 生命周期 8 函数 | ✅ | 见 §三映射表 |
+| 幂等/竞态 | ✅ | CreateAccount 三级幂等；PUT 语义端点可安全重试 |
+| 暂停后客户端操作 | ⚠️ | 面板侧电源/控制台已断（F1 除外）；**WHMCS 侧 handlers/api.php 无 domainstatus 检查**（F1a） |
+| 容器定位健壮性 | ⚠️ | 全靠 `$params['domain']` 匹配容器名；客户改 hostname 后失配。建议 CreateAccount 成功时把 container_id 写 serviceid 自定义字段（自定义字段持久化缺失） |
+| ChangePackage 原子性 | ⚠️ | 三步串行不回滚；disk 缩容会被面板拒绝导致降级失败（WHMCS 侧应预检 disk 只增） |
+| 0 值配置语义 | ⚠️ | `array_filter` 剔除 0 → "0=不限"的套餐参数不推送（helpers.php:2141-2143） |
+| 日志 | ✅ | debug 数组只含端点/耗时/http_code |
+| 升级/卸载 | ⚠️ 未知 | 未发现 eyvescloud_ActivateDeactivate/升级钩子（需补充材料确认是否有 schema 变更需求） |
 
-### 5.2 已实现函数清单
+### 5.2 安全结论
 
-| WHMCS 函数 | 文件 | 行号 | 功能 |
-|-----------|------|------|------|
-| `eyvescloud_MetaData` | eyvescloud.php | L26 | 模块元数据 |
-| `eyvescloud_ConfigOptions` | eyvescloud.php | L46 | 产品配置项（虚拟化/模板/VCPU/RAM/磁盘/带宽/流量等） |
-| `eyvescloud_TestConnection` | eyvescloud.php | L87 | 连接测试 |
-| `eyvescloud_CreateAccount` | eyvescloud.php | L109 | 开通实例 |
-| `eyvescloud_SuspendAccount` | eyvescloud.php | L153 | 暂停（stop） |
-| `eyvescloud_UnsuspendAccount` | eyvescloud.php | L169 | 恢复（start） |
-| `eyvescloud_TerminateAccount` | eyvescloud.php | L185 | 删除实例 |
-| `eyvescloud_ChangePassword` | eyvescloud.php | L201 | 重置密码 |
-| `eyvescloud_ChangePackage` | eyvescloud.php | L230 | **返回 "不支持"** |
-| `eyvescloud_ClientArea` | eyvescloud.php | L245 | 客户区数据 + 模板渲染 |
-| `eyvescloud_UsageUpdate` | eyvescloud.php | L280 | 流量同步 |
-| `eyvescloud_ServiceStatus` | eyvescloud.php | L310 | 状态同步 |
-| `eyvescloud_LoginLink` | eyvescloud.php | L330 | SSO 登录链接 |
-| `eyvescloud_AdminServicesTabFields` | eyvescloud.php | L350 | 后台服务页字段 |
-| `eyvescloud_AdminCustomButtonArray` | eyvescloud.php | L400 | 后台自定义按钮（8 个） |
-| `eyvescloud_ClientAreaAllowedFunctions` | eyvescloud.php | L420 | 客户区白名单（11 个） |
-| `eyvescloud_On` | eyvescloud.php | L440 | 开机 |
-| `eyvescloud_Off` | eyvescloud.php | L450 | 关机 |
-| `eyvescloud_Reboot` | eyvescloud.php | L460 | 重启 |
-| `eyvescloud_HardOff` | eyvescloud.php | L470 | 硬关机 |
-| `eyvescloud_RescueMode` | eyvescloud.php | L480 | 救援模式 |
-| `eyvescloud_RescueExit` | eyvescloud.php | L490 | 退出救援 |
-| `eyvescloud_ISOAttach` | eyvescloud.php | L500 | ISO 挂载 |
-| `eyvescloud_ISODetach` | eyvescloud.php | L510 | ISO 卸载 |
-| `eyvescloud_VNC` | eyvescloud.php | L520 | VNC 控制台 |
-
-### 5.3 插件安全细节
-
-**凭据获取**（[helpers.php#L388](file:///workspace/backend/internal/integrations/whmcs/module/helpers.php#L388)）：
-```php
-function eyvescloud_api_key($params)
-{
-    foreach (['serveraccesshash', 'serverpassword', 'accesshash', 'server_password'] as $key) {
-        if (!empty($params[$key])) {
-            $value = $params[$key];
-            if (is_array($value)) { $value = reset($value); }
-            return trim((string)$value);
-        }
-    }
-    return '';
-}
-```
-- **正确**：优先 `serveraccesshash`（WHMCS 加密字段），不使用 `password`（客户实例密码）。
-- **正确**：`eyvescloud_decrypt()` 兼容 WHMCS `decrypt()` 和 `localAPI('DecryptPassword')`（[helpers.php#L473](file:///workspace/backend/internal/integrations/whmcs/module/helpers.php#L473)）。
-
-**AJAX 入口安全**（[handlers/api.php#L96-L129](file:///workspace/backend/internal/integrations/whmcs/module/handlers/api.php#L96-L129)）：
-```php
-$uid = isset($_SESSION['uid']) ? (int)$_SESSION['uid'] : 0;
-$adminId = isset($_SESSION['adminid']) ? (int)$_SESSION['adminid'] : 0;
-if ($uid <= 0 && $adminId <= 0) { /* 403 */ }
-
-// Origin/Referer 同源校验
-$selfHost = strtolower((string)parse_url('http://' . $_SERVER['HTTP_HOST'], PHP_URL_HOST));
-$originHost = '';
-foreach (['HTTP_ORIGIN', 'HTTP_REFERER'] as $headerKey) { ... }
-if ($selfHost !== '' && $originHost !== '' && $originHost !== $selfHost) { /* 403 */ }
-```
-- **正确**：双重校验 WHMCS 会话 + Origin/Referer。
-- **注意**：如果 WHMCS 部署在反向代理后，`HTTP_HOST` 可能不准确，需确认 WHMCS 的 `trusted_proxy` 配置。
+SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可控 + webssh/vnc 白名单 + 私网拒绝，仅 F10 重定向头残留）| 密钥 ✅（F11 降级 Info）| 竞态 ✅ | 计费绕过 ⚠️ F1/F1a（面板侧根因）
 
 ---
 
 ## 六、双端管理方案（管理员端 + 客户端）
 
-### 6.1 管理员端（Admin Area）
+### 6.1 权限边界（现状 + 目标）
 
-**当前状态**：插件只有 `AdminServicesTabFields`（6-10 个字段），没有 `AdminArea` 函数和 `adminarea.tpl`。
+| 操作面 | 主体 | 现状 | 目标 |
+|---|---|---|---|
+| WHMCS 客户区按钮 | 服务属主 | 11 个白名单函数（电源/救援/ISO/VNC/同步/流量重置） | 保持；suspend 态禁用写操作（F1a 修复后自动收敛） |
+| WHMCS 后台按钮 | WHMCS admin | 8 个（含 RescueMode/ISO/VNC） | 保持 |
+| 面板用户前台 | 面板账号 | 全功能（快照/备份/NAT/防火墙） | 保持 |
+| 面板子账号 | sub_user | viewer 只读+终端；operator 含电源/重装/密码/网络/快照写 | backup:*/node:*/apikey:* 保持禁用 ✅ |
+| API Key | 签发时定 scope | 通配 + 容器绑定 | backup-plans 补容器绑定校验（F6） |
 
-**推荐设计**：
+### 6.2 实现路径
 
-```php
-function eyvescloud_AdminArea(array $params)
-{
-    $cid = eyvescloud_isoNumericID($params);
-    $container = eyvescloud_request($params, "/api/v1/containers/{$cid}", [], 'GET', 30);
-    
-    return [
-        'tabOverviewReplacementHtml' => '',
-        'templatefile' => 'adminarea',
-        'vars' => [
-            'container' => $container['data'] ?? [],
-            'is_kvm' => ($container['data']['virtualization'] ?? '') === 'kvm',
-            'rescue_enabled' => $container['data']['rescue_enabled'] ?? false,
-            'optional_iso_id' => $container['data']['optional_iso_id'] ?? '',
-            'vnc_port' => $container['data']['vnc_port'] ?? '',
-            'node_id' => $container['data']['node_id'] ?? '',
-        ],
-    ];
-}
-```
-
-**adminarea.tpl 关键区块**：
-1. **实例概览**：ID / UUID / 虚拟化类型 / 节点 / 状态 / IP
-2. **资源规格**：VCPU / RAM / Disk / 带宽 / 流量（实时 vs 套餐上限）
-3. **KVM 专属状态**：救援模式（开/关 + ISO）、挂载 ISO、VNC 端口、Guest-Agent 状态
-4. **快速操作**：同步状态 / 硬关机 / 救援切换 / ISO 挂载 / VNC 快捷打开
-5. **节点信息**：所属节点名称 + 在线状态 + 最后心跳
-6. **审计日志**：最近 10 条操作记录（从上游 `/api/v1/audit-logs?target={id}` 拉取）
-
-### 6.2 客户端（Client Area）
-
-**当前状态**：`clientarea.tpl` 已实现完整工具栏 + AJAX + 危险操作二次确认。
-
-**推荐增强**：
-1. **状态徽章**：在按钮上方显示 "运行中 / 已停止 / 救援模式 / 维护中" 彩色徽章。
-2. **资源仪表盘**：用 Chart.js 展示最近 24h CPU/内存/带宽趋势（从 `?action=stats` 拉取）。
-3. **流量进度条**：本月已用流量 / 套餐上限 百分比条，接近 100% 变红。
-4. **Guest-Agent 提示**：KVM 容器如果 guest-agent 未安装，在 processes/services 按钮旁显示灰色提示 "需安装 qemu-guest-agent"。
-5. **ISO 挂载面板**：下拉选择可用 ISO + 挂载/卸载按钮 + 当前挂载状态显示。
-6. **Rescue 模式引导**：进入 rescue 时显示 "系统将在 60 秒内从救援 ISO 启动，请通过 VNC 连接"。
+1. **短期（纯插件侧）**：handlers/api.php 加 domainstatus 检查 + CSRF token（F5）；ChangePackage 前置 disk 只增预检
+2. **中期（面板侧）**：F1/F1a 的 Suspended 统一拦截；F3 注册审计；F4 key 传输改造
+3. **长期**：快照/备份/防火墙管理挂到 WHMCS 客户区（面板 handlers/api.php 已具备对应端点，仅缺 UI 入口——对齐 Virtualizor 客户区能力）
 
 ---
 
-## 七、节点添加方案对比与选择
+## 七、节点添加方案对比与最终选择
 
-### 7.1 四种方案对比
+### 7.1 四方案对比
 
-| 维度 | 方案 A：动态 install.sh + 一次性 token（当前） | 方案 B：静态 install.sh + 环境变量 | 方案 C：主控 SSH 推送 | 方案 D：签名命令 |
-|------|-----------------------------------------------|-----------------------------------|---------------------|----------------|
-| **安装命令** | `curl -fsSL <url>?install_key=xxx \| sudo bash` | `curl -fsSL <url> \| sudo bash` + `export EYVESCLOUD_KEY=xxx` | 主控 SSH 到被控执行安装 | 主控生成带签名的 base64 命令 |
-| **Token 传递** | URL query（一次性，注册后清空） | 环境变量（可能留在 shell history） | SSH 信道内 | 嵌入在签名 payload 中 |
-| **Controller 地址** | 脚本运行时自动探测（SSH_CONNECTION / ip route get） | 硬编码或环境变量 | 主控已知 | 主控已知 |
-| **HTTPS 强制** | ✅ 是 | ✅ 是 | N/A（SSH） | ✅ 是 |
-| **完整性校验** | ❌ **无 SHA256/GPG** | ❌ 无 | ✅ SSH 天然安全 | ✅ 签名验证 |
-| **IP 绑定** | ❌ 无 | ❌ 无 | ✅ SSH 目标 IP | ❌ 无 |
-| **脚本大小** | 小（动态生成，含 install_key） | 大（静态脚本需覆盖所有场景） | 无（主控控制） | 小 |
-| **离线可用** | ❌ 需 curl 主控 | ❌ 需 curl 主控 | ❌ 需 SSH 可达 | ❌ 需 curl 主控 |
-| **审计日志** | ✅ 注册即记录 audit_log | ✅ | ✅ SSH 日志 | ✅ |
-| **systemd 自启** | ✅ 脚本内配置 | ✅ | ✅ | ✅ |
-| **重装/换机** | ✅ 重新下载脚本即发新 key | 需改环境变量 | 需重新 SSH | 需重新生成 |
-| **管理员负担** | 低（复制一条命令） | 低 | 高（需 SSH 凭据） | 中（需理解签名） |
-| **安全风险** | **P1**：curl \| bash 无校验；install_key 在 URL 里可能被 nginx access_log 记录 | 环境变量可能被其他进程读取 | SSH 凭据泄露风险 | 签名密钥泄露可伪造命令 |
+| 维度 | A. 动态 install.sh + 一次性 token | B. 静态 install.sh + 环境变量 | C. 主控 SSH/cloud-init 推送 | D. 主控生成签名命令 |
+|---|---|---|---|---|
+| 免密钥入库 | ✅ key 服务端生成不下发脚本正文 | ⚠️ key 走环境变量仍入 shell history | ❌ 主控存 SSH 私钥（新增高价值凭据） | ✅ |
+| 一次性/短效 | ✅ 24h TTL + 用后清空 + IP 绑定 | ❌ 静态 key 长期有效 | — | ⚠️ 签名可带过期但实现复杂 |
+| 防重放 | ✅ 注册即作废 | ❌ | — | ⚠️ |
+| 部署摩擦 | ✅ curl 一行 | ✅ | ❌ 需主控可达被控 SSH/云 API | ✅ |
+| 审计追溯 | ✅ key→节点一一对应 | ❌ | ⚠️ | ⚠️ |
+| 实现复杂度 | 低 | 低 | 高（多云适配） | 高（签名/验签体系） |
 
-### 7.2 选择：方案 A + 增强（推荐）
+### 7.2 选择：方案 A（当前已实现，符合选择）
 
-**理由**：
-1. **用户体验最优**：管理员只需复制一条 `curl | bash` 命令，与 Virtualizor / SolusVM 行业惯例一致。
-2. **install_key 一次性**：注册成功后立即清空，即使 URL 被日志记录也无法重放（[nodes.go#L239](file:///workspace/backend/internal/api/nodes.go#L239)）。
-3. **Controller 自动探测**：无需管理员手动输入主控 IP，IPv4/IPv6 自适应（[nodes.go#L534-L541](file:///workspace/backend/internal/api/nodes.go#L534-L541)）。
-4. **增强后可弥补安全短板**。
+当前实现证据核对：
 
-**增强措施**：
+| 要求 | 状态 | 证据 |
+|---|---|---|
+| 一键生成安装脚本 URL | ✅ 动态生成 | nodes.go:620 buildAgentInstallScript |
+| token 一次性 | ✅ 注册成功即清空 | nodes.go:259-261 |
+| 短有效期 | ✅ 24h | nodes.go:225-232 |
+| 绑定 IP | ✅ 创建者 IP + /24 容差 | nodes.go:319/234-242（sameIPv4Prefix24:278-290） |
+| HTTPS | ✅ agent 侧强制，脚本默认 https + HSTS | agent.go:269-282；nodes.go:743/624 |
+| SHA256 校验 | ✅ 脚本 X-content-SHA256 + 独立校验端点 | nodes.go:621-627/645-678 |
+| systemd 自启 | ✅ Restart=always + StartLimitBurst=5 | nodes.go:841-859 |
+| 审计日志 | ❌ **缺失（F3）** | nodes.go:204-275 |
+| 不硬编码密钥 | ⚠️ key 进 URL query（F4） | nodes.go:633/699 |
+| 手动添加（地址/认证/TLS/SSRF/加密/日志） | ⚠️ | name+address 输入、admin-only + 审计 ✅（nodes.go:327）；Token 服务端生成 ✅（316-317）；TLS 开关 ❌（F9）；SSRF 校验 ❌（仅 scheme 校验，1205-1214）；加密存储 ❌（F7） |
 
-```go
-// 1. 脚本返回时附加 SHA256 校验和
-script := buildAgentInstallScript("", installKey, node.Name, "")
-scriptHash := sha256.Sum256([]byte(script))
-
-// 2. 同时返回校验和端点
-w.Header().Set("X-Content-SHA256", hex.EncodeToString(scriptHash[:]))
-
-// 3. 提供 "验证后执行" 的推荐命令
-// curl -fsSL <url>?install_key=xxx -o install.sh
-// echo "<hash>  install.sh" | sha256sum -c
-// sudo bash install.sh
-```
-
-**额外安全增强**：
-1. **install_key 绑定 IP**：创建节点时记录管理员当前 IP，`handleNodeRegister` 校验请求来源 IP 与创建时记录的 IP 匹配（或落在同一 /24）。
-2. **install_key 短有效期**：默认 24h 过期，超时需重新生成。
-3. **HTTPS + HSTS**：install-script 端点强制 301 跳转 HTTPS，返回 `Strict-Transport-Security`。
-4. **脚本内自我校验**：脚本开头检查 `set -euo pipefail`，安装完成后验证 agent 二进制 SHA256（从主控拉取校验和）。
-
-### 7.3 手动添加节点
-
-**推荐设计**：
-
-```
-表单字段：
-- 节点名称（必填）
-- 节点地址（IP 或域名，必填）
-- 认证方式（二选一）：
-  a) 自动生成 Token（推荐）：主控生成 node_token + install_key
-  b) 手动输入 Token：管理员自己生成 32 字节 hex
-- TLS 校验（勾选）：是否校验节点 HTTPS 证书
-- 节点指纹（可选）：预置节点公钥指纹，防止中间人
-- 标签 / 区域（可选）：用于调度策略
-```
-
-**安全细节**：
-- `validateNodeAddress` 校验地址格式（IP/域名），拒绝内网地址（可选配置）。
-- `proxyNodeRequest` 到节点时使用 `tls.Config` 校验证书（如果启用 TLS 校验）。
-- 节点 token 32 字节随机（`crypto/rand`），不在日志中打印。
+**结论**：方案 A 架构正确，安全要求满足 7/10；F3/F4/F7/F9 四项补齐后达 10/10。
 
 ---
 
 ## 八、竞品矩阵
 
+> 竞品标注：✅ 支持 / ⚠️ 部分 / ❌ 不支持 / 未知。Virtualizor 文档：virtualizor.com/docs；SolusVM 2：docs.solusvm.com；魔方云列基于国内 IDCSystem 类通用能力（**推断**，G3）。
+
 ### 8.1 API 能力矩阵
 
-| 能力 | EYVESCLOUD | 国内主流方案 | Virtualizor | SolusVM 2 |
+| 能力 | EYVESCLOUD | 魔方云(推断) | Virtualizor | SolusVM 2 |
 |------|-----------|--------|-------------|-----------|
-| **虚拟化** | LXC + KVM | KVM | OpenVZ/Xen/KVM | KVM/OpenVZ/Virtuozzo |
-| **API 风格** | REST JSON | REST JSON | REST/JSON/XML | REST JSON |
-| **API Key** | Scope-based + IP 白名单 | Token | API Key + Secret | API Token |
-| **多节点/集群** | ✅ 主控+Agent | ✅ 集群 | ✅ 集群 | ✅ 集群 |
-| **容器生命周期** | ✅ 完整 | ✅ 完整 | ✅ 完整 | ✅ 完整 |
-| **快照/备份** | ✅ 完整 | ✅ | ✅ 自动备份 | ✅ |
-| **ISO 挂载** | ✅ KVM | ✅ | ✅ | ✅ |
-| **救援模式** | ✅ KVM | ✅ | ✅ | ✅ |
-| **VNC 控制台** | ✅ WebSocket | ✅ | ✅ NoVNC | ✅ |
-| **WebSSH** | ✅ | ✅ | ✅ | ✅ |
-| **流量计费** | ✅ 宿主机 NIC | ✅ | ✅ | ✅ |
-| **弹性 IP** | ✅ IPv4/IPv6 | ✅ | ✅ | ✅ |
-| **防火墙/安全组** | ✅ SecGroup | ✅ | ✅ | ✅ |
-| **Guest Agent** | ⚠️ 部分支持 | ✅ | ✅ | ✅ |
-| **迁移/克隆** | ✅ Clone | ✅ | ✅ 迁移+克隆 | ✅ |
-| **Resize (热/冷)** | ❌ **P0 缺口** | ✅ | ✅ | ✅ |
-| **PAYG 按量计费** | ❌ 未支持 | ❌ | ❌ | ✅ |
-| **WHMCS 模块** | ✅ 自研 | ✅ 官方 | ✅ 官方 | ✅ 官方 |
-| **Reseller 模块** | ❌ 未支持 | ✅ | ✅ | ✅ |
-| **自定义镜像** | ✅ | ✅ | ✅ | ✅ |
-| **云 init** | ✅ | ✅ | ✅ | ✅ |
-| **审计日志** | ✅ SHA-256 链 | ⚠️ | ⚠️ | ✅ |
-| **2FA** | ✅ TOTP | ✅ | ✅ | ✅ |
-| **RBAC** | ✅ 4 角色 | ✅ | ✅ | ✅ |
-| **API 限流** | ✅ 单 Key 限流 | ⚠️ | ⚠️ | ✅ |
+| 虚拟化 | LXC + KVM | KVM | OpenVZ/KVM/LXC | KVM |
+| Resize（升降级） | ✅ **本轮已闭环**（resource-limit/traffic-limit/expiry） | ✅ | ✅ | ✅ |
+| 欠费停机强制 | ⚠️ 本地✅/跨节点❌（F1） | ✅ | ✅ | ✅ |
+| 快照/备份/计划 | ✅ | ✅ | ✅ | ✅ |
+| ISO/救援/VNC/WebSSH | ✅ | ✅ | ✅ | ✅ |
+| Scope-based API Key + 限流 | ✅ | ⚠️ Token | ⚠️ 单一 Key/Secret | ✅ |
+| 审计日志（SHA-256 链 + 脱敏） | ✅ | ⚠️ | ⚠️ | ✅ |
+| Webhook（HMAC 签名 + 重试 + 熔断） | ✅（SSRF 见 F2） | ⚠️ | ❌ | ✅ |
+| 多节点 agent 架构 | ✅ | ✅ | ✅ | ✅ |
+| 流量计费（多模式） | ✅ | ✅ | ✅ | ✅ |
+| 迁移（跨节点热迁） | ⚠️ 仅 Clone/导出导入 | ✅ | ✅ | ✅ |
+| Guest Agent | ⚠️ 部分（processes/services 需 qemu-guest-agent） | ✅ | ✅ | ✅ |
 
 ### 8.2 WHMCS 模块能力矩阵
 
-| WHMCS 功能 | EYVESCLOUD | 国内主流方案 | Virtualizor | SolusVM 2 |
+| WHMCS 功能 | EYVESCLOUD | 魔方云(推断) | Virtualizor | SolusVM 2 |
 |-----------|-----------|--------|-------------|-----------|
-| **CreateAccount** | ✅ | ✅ | ✅ | ✅ |
-| **Suspend/Unsuspend** | ✅ | ✅ | ✅ | ✅ |
-| **Terminate** | ✅ | ✅ | ✅ | ✅ |
-| **ChangePassword** | ✅ | ✅ | ✅ | ✅ |
-| **ChangePackage (Resize)** | ❌ | ✅ | ✅ | ✅ |
-| **UsageUpdate (流量)** | ✅ | ✅ | ✅ | ✅ |
-| **ClientArea 控制台** | ✅ | ✅ | ✅ | ✅ |
-| **AdminArea 定制** | ❌ | ✅ | ✅ | ✅ |
-| **VNC 控制台** | ✅ | ✅ | ✅ | ✅ |
-| **Rescue Mode** | ✅ | ✅ | ✅ | ✅ |
-| **ISO 挂载** | ✅ | ✅ | ✅ | ✅ |
-| **快照管理** | ⚠️ 未挂 WHMCS | ✅ | ✅ | ✅ |
-| **备份管理** | ⚠️ 未挂 WHMCS | ✅ | ✅ | ✅ |
-| **防火墙管理** | ⚠️ 未挂 WHMCS | ✅ | ✅ | ✅ |
-| **SSO 登录** | ✅ | ✅ | ✅ | ✅ |
-| **Configurable Options** | ✅ | ✅ | ✅ | ✅ |
-| **Additional Disk** | ❌ | ✅ | ✅ | ✅ |
-| **弹性 IP** | ❌ | ✅ | ✅ | ✅ |
-| **PAYG 计费** | ❌ | ❌ | ❌ | ✅ |
-| **自动续费** | ✅ WHMCS 原生 | ✅ | ✅ | ✅ |
-| **客户区按钮数** | 11 | ~15 | ~12 | ~12 |
-| **后台按钮数** | 8 | ~10 | ~8 | ~8 |
+| 全生命周期 8 函数 | ✅（本轮 ChangePackage 闭环） | ✅ | ✅ | ✅ |
+| UsageUpdate 流量同步 | ✅ | ✅ | ✅ | ✅ |
+| 客户区管理面板 | ✅ 11 按钮 | ✅ | ✅ | ✅ |
+| 后台按钮 + 服务页字段 | ✅ 8 按钮 + 10 字段 | ✅ | ✅ | ✅ |
+| Rescue/ISO/VNC 客户区直达 | ✅ | ✅ | ✅ | ✅ |
+| 快照/备份/防火墙挂 WHMCS | ❌ 仅面板（P2） | ✅ | ✅ | ✅ |
+| Additional Disk / 弹性 IP 计费 | ❌（P2） | ✅ | ✅ | ✅ |
+| PAYG 按量计费 | ❌ | ❌ | ❌ | ✅ |
+| Reseller 模块 | ❌ | ✅ | ✅ | ✅ |
+| SSO | ✅ | ✅ | ✅ | ✅ |
+
+**差距结论**：核心生命周期已无差距；剩余差距集中在**快照/备份/防火墙的 WHMCS 客户区入口**、**Additional Disk/弹性 IP 计费项**、**跨节点热迁移**、**PAYG**。
 
 ---
 
-## 九、P0/P1/P2 路线图
+## 九、修复优先级与路线图
 
-### P0（阻塞上线）
+### P0（阻塞 WHMCS 商用上线）
 
-| # | 任务 | 负责人 | 证据 |
-|---|------|--------|------|
-| 1 | **新增 Resize API**：`POST /api/v1/containers/{id}?action=resize` 支持 CPU/RAM/Disk 热/冷扩容 | 上游 | `ChangePackage` 当前返回 "不支持" |
-| 2 | **WHMCS 插件实现 `eyvescloud_ChangePackage`**：调用 resize API，支持有界轮询等待完成 | WHMCS 插件 | — |
+| # | 任务 | 侧 | 关联发现 |
+|---|------|----|---------|
+| 1 | agent 端电源操作 + 主控代理路径补 Suspended 检查（双端防御） | 面板 | F1 |
+| 2 | WHMCS handlers/api.php 补 CSRF token（check_token）+ clientarea.tpl 附带 token | 插件 | F5 |
 
-### P1（高风险，需尽快修复）
+### P1（上线后两周内）
 
-| # | 任务 | 证据 |
+| # | 任务 | 侧 | 关联 |
+|---|------|----|------|
+| 3 | 快照/备份还原/NAT/防火墙/ISO/救援/流量重置补 Suspended 拦截 + WHMCS domainstatus 检查 | 双侧 | F1a |
+| 4 | Webhook 投递改 safehttp / 投递前完整复查 + rebinding 用例 | 面板 | F2 |
+| 5 | handleNodeRegister 补审计日志（成功/失败双路径） | 面板 | F3 |
+| 6 | install_key 改 header/POST 传参，移出 URL query | 面板 | F4 |
+| 7 | agent 二进制下载补 SHA256（当前仅可执行性自检） | 面板 | G4 |
+| 8 | 关闭 curl FOLLOWLOCATION | 插件 | F10 |
+| 9 | ChangePackage 前置 disk 只增预检（避免降级订单半途失败） | 插件 | §5.1 |
+
+### P2（规划中）
+
+| # | 任务 | 关联 |
 |---|------|------|
-| 1 | **Webhook SSRF 防护**：`webhookDeliveryOnce` 使用 `safehttp.ValidateURL()` 校验 `wh.URL` | [api/webhooks.go#L363](file:///workspace/backend/internal/api/webhooks.go#L363) |
-| 2 | **Install Script 校验和**：`handleNodeInstallScript` 返回 `X-Content-SHA256` header，文档推荐 "先下载再校验" 流程 | [nodes.go#L578](file:///workspace/backend/internal/api/nodes.go#L578) |
-| 3 | **AdminArea 模板**：新增 `eyvescloud_AdminArea()` + `adminarea.tpl`，展示 KVM 专属状态 + 审计日志 | — |
-| 4 | **日志脱敏**：`AddAuditLogFull` / `auditRequest` 对 detail 中的 password/token 做正则脱敏 | — |
-| 5 | **Install Key IP 绑定 + 过期**：`createNode` 记录创建者 IP，`handleNodeRegister` 校验来源 IP；`install_key` 24h TTL | [nodes.go#L280](file:///workspace/backend/internal/api/nodes.go#L280) |
-
-### P2（改进项）
-
-| # | 任务 | 证据 |
-|---|------|------|
-| 1 | **KVM Guest-Agent 可用性 API**：`GET /api/v1/containers/{id}?action=guest-agent-status` 返回是否安装/在线 | processes/services 当前返回 "unavailable" |
-| 2 | **多节点 VNC Proxy**：主控通过 agent 转发 WebSocket 到远端 libvirt VNC socket | VNC 当前只连本地 |
-| 3 | **UsageUpdate 幂等键**：流量同步加入 `billing_cycle` + `sync_at` 去重，防止重复计费 | — |
-| 4 | **ClientArea 仪表盘**：Chart.js 展示 24h 资源趋势 + 流量进度条 | — |
-| 5 | **快照/备份 WHMCS 按钮**：新增 `snapshot/create`、`snapshot/restore`、`backup/now` 客户区按钮 | 上游 API 已有，未挂 WHMCS |
-| 6 | **防火墙/安全组 WHMCS 按钮**：客户区展示安全组规则 + 允许增删端口 | 上游 API 已有 SecGroup |
-| 7 | **VNC/SSH 密码加密存储**：config.json 中的 VNCPassword/SSHPassword 使用 AES-256-GCM 加密 | [config.go#L1383](file:///workspace/backend/internal/config/config.go#L1383) |
-| 8 | **API Key 容器绑定精细化**：支持 `container_uuids` 为空时 = 禁止（而非允许全部），或默认拒绝 | [auth.go#L103](file:///workspace/backend/internal/api/auth.go#L103) |
+| 10 | backup-plans 归属校验 | F6 |
+| 11 | 节点 Token AES-GCM 加密存储 | F7 |
+| 12 | RAM 累计配额检查 | F8 |
+| 13 | node address 默认 https + TLS 开关 | F9 |
+| 14 | store_password 降级分支拒绝明文落库 | F11 |
+| 15 | CreateAccount 持久化 container_id 自定义字段（抗 hostname 失配） | §5.1 |
+| 16 | 快照/备份/防火墙挂 WHMCS 客户区（对齐竞品） | §8.2 |
+| 17 | Additional Disk / 弹性 IP 计费项（Configurable Options 扩展） | §8.2 |
 
 ---
 
-## 十、测试用例与证据
+## 十、测试用例与验收标准
 
-### 10.1 上游 API 测试（Postman/curl）
+### 10.1 P0 修复验收
 
-```bash
-# 1. TestConnection
-GET https://<panel>/api/v1/dashboard
-Authorization: Bearer <admin_jwt>
+| 用例 | 步骤 | 预期 |
+|---|---|---|
+| TC-01 跨节点 Suspended | 双节点环境，suspend 跨节点容器 → 属主 `POST ?action=start` | 403 "容器已挂起"（与本地容器同文案） |
+| TC-02 本地回归 | suspend 本地容器 → start | 403（现有行为不回归） |
+| TC-03 admin 豁免 | admin 对 suspended 容器 start | 按设计决定（建议 admin 放行并在审计记录） |
+| TC-04 CSRF | 跨站 POST handlers/api.php（无 token） | 403 |
+| TC-05 CSRF 正常路径 | 客户区全部 11 按钮回归 | 全通过 |
 
-# 2. CreateAccount (开通)
-POST https://<panel>/api/v1/containers
-{"name":"test-whmcs","template_id":"ubuntu-22.04","virtualization":"lxc","vcpu":2,"ram_mb":2048,"disk_gb":20}
+### 10.2 P1 验收
 
-# 3. 容器级操作（多节点自动转发）
-POST https://<panel>/api/v1/containers/42?action=start
-POST https://<panel>/api/v1/containers/42?action=rescue
-{"enabled":true,"iso_id":"rescue-iso-1"}
+| 用例 | 预期 |
+|---|---|
+| TC-06 suspend 后快照创建/还原、备份还原、NAT/防火墙保存、ISO 挂载、救援、流量重置 | 全部 403 |
+| TC-07 webhook 指向 rebinding 域名（先公网后 169.254.169.254 解析） | 投递被拒 + 记录失败原因 |
+| TC-08 节点注册（成功/过期 key/IP 不匹配） | 三种结果均有 node.register 审计记录 |
+| TC-09 安装脚本 URL | 抓包无 install_key query 参数 |
+| TC-10 302 跳转外部域的 mock 端点 | 第二跳请求头无 X-API-Key |
+| TC-11 ChangePackage 降级套餐（disk 变小） | WHMCS 预检即报错，不发部分请求 |
 
-# 4. Resize (P0 缺口 — 当前 404)
-POST https://<panel>/api/v1/containers/42?action=resize
-{"vcpu":4,"ram_mb":4096,"disk_gb":40}
+### 10.3 回归基线
 
-# 5. Webhook SSRF 测试 (P1)
-POST https://<panel>/api/webhooks
-{"url":"http://169.254.169.254/latest/meta-data/","events":["container.created"]}
-# 预期：应返回 400 "blocked address"
-# 实际：当前可成功创建，触发事件时会向内网 POST
 ```
-
-### 10.2 WHMCS 插件测试
-
-```bash
-# 1. TestConnection（WHMCS 后台）
-# 路径：WHMCS Admin -> 系统设置 -> 服务器设置 -> 测试连接
-
-# 2. CreateAccount 端到端
-# 下单 -> 支付 -> 自动开通 -> 检查 tblhosting 的 assignedips / password 字段
-
-# 3. ChangePackage 失败测试
-# 客户升级套餐 -> WHMCS 调用 ChangePackage -> 预期："不支持"
-
-# 4. CSRF 测试
-# 伪造 Origin: https://evil.com 调用 handlers/api.php -> 预期：403 "请求来源不被信任"
-
-# 5. IDOR 测试
-# 用户 A 的 session 调用 {"serviceid": 用户B的服务ID, "func": "Off"} -> 预期：403（需确认 handlers/api.php 的服务归属校验）
-```
-
-### 10.3 安全测试
-
-```bash
-# 1. 命令注入
-POST /api/v1/containers/42?action=start
-# 容器名包含 ; rm -rf / — 但 Go 层正则拒绝，PHP 层 int 转换
-
-# 2. SSRF（safehttp）
-GET /api/images/download?url=http://127.0.0.1:22/
-# 预期：400 "blocked address"
-
-# 3. SSRF（webhook 绕过）
-POST /api/webhooks {"url":"http://127.0.0.1:22/"}
-# 预期：当前可成功创建（P1 风险）
-
-# 4. 密钥泄露
-# 检查 config.json 权限：ls -l /var/lib/eyvescloud/config.json
-# 预期：-rw------- (0600)
-
-# 5. 审计日志脱敏
-# 调用 reset-password 后检查 audit_logs 表
-# SELECT detail FROM audit_logs WHERE action='container.password' ORDER BY id DESC LIMIT 1;
-# 预期：不应包含明文密码
+go build ./... && go vet ./...          → clean
+go test -short -count=1 ./...           → 40/40 packages ok
+go test -race ./internal/api/...        → race clean
+php -l（模块全部 PHP 文件）              → No syntax errors
 ```
 
 ---
 
 ## 十一、证据索引
 
-### 上游核心代码证据
+| 证据 | 位置 |
+|---|---|
+| agent 端电源无 Suspended 检查 | backend/internal/api/agent_api.go:84-98 |
+| 主控代理路径无 Suspended 检查 | backend/internal/api/handlers.go:151-170 |
+| 本地任务队列 Suspended 拦截（对照） | backend/internal/api/taskqueue.go:621-627 |
+| install_key 一次性清空 / TTL / IP 绑定 | backend/internal/api/nodes.go:259-261 / 225-232 / 234-242 / 319 |
+| 安装脚本 SHA256 + HSTS + systemd | backend/internal/api/nodes.go:621-627 / 624 / 841-859 |
+| agent 侧强制 HTTPS | backend/internal/agent/agent.go:269-282 |
+| webhook 校验与投递 | backend/internal/api/notify.go:29-57、webhooks.go:364-381、security_hardening_test.go:221-246 |
+| safehttp 完整实现（未复用） | backend/internal/safehttp/safehttp.go:83-158 |
+| scope 白名单 / 通配 / requireScope | backend/internal/api/auth.go:113-159 |
+| 容器归属校验链 | backend/internal/api/subuser.go:895-905、1014-1026 |
+| 审计脱敏正则 | backend/internal/api/auth.go:180-204 |
+| API Key argon2 + 限流 | backend/internal/api/apikey.go:127-143、auth.go:608-615 |
+| ChangePackage 三端点 | whmcs/module/helpers.php:2129-2183、eyvescloud.php:221-239 |
+| CreateAccount 幂等 | whmcs/module/eyvescloud.php:111-128、backend handlers.go:693-710 |
+| CSRF 现状 | whmcs/module/handlers/api.php:107-129 |
+| FOLLOWLOCATION | whmcs/module/helpers.php:588 |
+| store_password 降级 | whmcs/module/helpers.php:516-533 |
+| 磁盘累计配额（仅磁盘） | backend/internal/api/resource_validation.go:16-34 |
+| 租户配额四维 | backend/internal/api/enterprise.go:1094-1135 |
+| Virtualizor Rescue/ISO/Enduser 文档 | virtualizor.com/docs/enduser/rescue-mode、/end-user-iso |
+| SolusVM 2 文档 | docs.solusvm.com |
 
-| 证据项 | 文件路径 | 行号 |
-|--------|---------|------|
-| 容器级 action switch | internal/api/handlers.go | L146-L254 |
-| RBAC 权限定义 | internal/rbac/rbac.go | L23-L69 |
-| RBAC 内置角色 | internal/rbac/rbac.go | L142-L196 |
-| 权限中间件 | internal/api/auth.go | L91-L158 |
-| AdminSessionMiddleware | internal/api/auth.go | L624-L638 |
-| JWT token_version 校验 | internal/api/auth.go | L226-L276 |
-| API Key 限流 | internal/api/auth.go | L585-L590 |
-| 节点注册（install_key） | internal/api/nodes.go | L202-L253 |
-| 节点创建（token/install_key） | internal/api/nodes.go | L255-L290 |
-| 一键安装脚本 | internal/api/nodes.go | L534-L581 |
-| install_key 一次性清空 | internal/api/nodes.go | L239 |
-| Webhook 投递（无 safehttp） | internal/api/webhooks.go | L358-L387 |
-| safehttp URL 校验 | internal/safehttp/safehttp.go | L46-L78 |
-| safehttp 阻塞前缀 | internal/safehttp/safehttp.go | L17-L44 |
-| 命令注入防护（容器名正则） | internal/lxc/lxc.go | — |
-| exec.Command 参数化 | internal/kvm/kvm.go | 多处 |
-| config.json 密钥字段 | internal/config/config.go | L1380-L1404 |
-| SQLite api_keys 表 | internal/config/store_sqlite.go | L314-L328 |
-| SQLite 文件权限 | internal/config/store_sqlite.go | L167-L169 |
-
-### WHMCS 插件证据
-
-| 证据项 | 文件路径 | 行号 |
-|--------|---------|------|
-| 模块入口函数 | internal/integrations/whmcs/module/eyvescloud.php | L26-L530 |
-| API Key 获取 | internal/integrations/whmcs/module/helpers.php | L388-L400 |
-| 解密函数 | internal/integrations/whmcs/module/helpers.php | L473-L508 |
-| AJAX 入口 | internal/integrations/whmcs/module/handlers/api.php | L1-L150 |
-| Origin/Referer 校验 | internal/integrations/whmcs/module/handlers/api.php | L107-L129 |
-| 客户区模板按钮 | internal/integrations/whmcs/module/templates/clientarea.tpl | L154-L1682 |
-
-### 竞品证据来源
-
-| 竞品 | 来源 |
-|------|------|
-| 国内主流方案 | [docs.idcsmart.com](https://docs.idcsmart.com/docs/%E9%AD%94%E6%96%B9%B9%E4%BA%91)、[idcsmart.com/wiki_search](https://www.idcsmart.com/wiki_search/F/20.html) |
-| Virtualizor | [apps.whmcs.com/cloud/virtualizor](https://apps.whmcs.com/cloud/virtualizor/)、[docs.whmcs.com/8-12/servers/server-modules/virtualizor](https://docs.whmcs.com/8-12/servers/server-modules/virtualizor/)、[virtualizor.com/docs/billing/whmcs-module](https://www.virtualizor.com/docs/billing/whmcs-module/) |
-| SolusVM | [apps.whmcs.com/cloud/solusvm](https://apps.whmcs.com/cloud/solusvm/)、[docs.solusvm.com/v2/billing-integration-guide](https://docs.solusvm.com/v2/billing-integration-guide/prepaid-billing/Configurable-options/Additional+disk.html)、[solusvm.com/features](https://www.solusvm.com/features) |
-
----
-
-*报告生成时间：2026-09-26*
-*审计范围：/workspace/backend/*
-*验证命令：`go build ./...` clean、`go test -short ./...` 40/40 pass*
+> 事实/推断标注：F1/F1a 的绕过路径为"代码路径成立"的推断（未起双节点实测），建议按 TC-01 实测确认；其余发现均有直接代码证据（事实）。魔方云列为推断（G3）。
