@@ -140,7 +140,7 @@ function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $ti
         CURLOPT_HTTPHEADER     => $headers,
         CURLOPT_SSL_VERIFYPEER => $insecure ? false : true,
         CURLOPT_SSL_VERIFYHOST => $insecure ? 0 : 2,
-        CURLOPT_USERAGENT      => 'Mofang-EYVESCLOUD',
+        CURLOPT_USERAGENT      => 'EYVESCLOUD-Billing',
     ];
 
     if ($method !== 'GET' && $data !== null) {
@@ -1422,7 +1422,7 @@ function eyvescloud_CrackPassword($params, $new_pass)
     return ['status' => 'success', 'msg' => eyvescloud_message($res, '密码重置成功')];
 }
 
-// WHMCS / 魔方财务客户改密码标准入口：从 $params['password'] 取新密码后委托给 CrackPassword。
+// WHMCS / 计费系统客户改密码标准入口：从 $params['password'] 取新密码后委托给 CrackPassword。
 function eyvescloud_ChangePassword($params)
 {
     $newPass = $params['password'] ?? '';
@@ -1664,7 +1664,7 @@ function eyvescloud_UsageUpdate($params)
     }
     $limitGB = eyvescloud_pick_number([$traffic], ['limit_gb', 'monthly_traffic_gb'], 0);
 
-    // 计费系统主机表流量用量字段：魔方财务沿用 WHMCS 的 bwusage / bwlimit（单位 MB）。
+    // 计费系统主机表流量用量字段：计费系统沿用 WHMCS 的 bwusage / bwlimit（单位 MB）。
     // TODO: 仓库内无该字段定义可核对，若目标计费系统字段名或单位不同，请按实际调整。
     $update = [
         'bwusage' => round($totalBytes / 1048576, 2),
