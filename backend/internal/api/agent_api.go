@@ -229,13 +229,15 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		return
 	case "resize":
 		var req struct {
+			VCPU   int     `json:"vcpu"`
+			RAMMB  int     `json:"ram_mb"`
 			DiskGB float64 `json:"disk_gb"`
 		}
 		if r.Body != nil {
 			_ = json.NewDecoder(r.Body).Decode(&req)
 		}
-		if req.DiskGB <= 0 {
-			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "disk_gb must be positive"})
+		if req.VCPU <= 0 && req.RAMMB <= 0 && req.DiskGB <= 0 {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "At least one of vcpu, ram_mb, disk_gb must be > 0"})
 			return
 		}
 		container := config.FindContainer(id)
@@ -243,24 +245,42 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
 			return
 		}
-		if req.DiskGB <= container.DiskGB {
-			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "disk_gb must be larger than current"})
-			return
+		if container.IsKVM() {
+			if err := kvmManager.ResizeContainer(id, req.VCPU, req.RAMMB, req.DiskGB); err != nil {
+				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+				return
+			}
+		} else {
+			if err := lxcManager.ResizeContainer(id, req.VCPU, req.RAMMB, req.DiskGB); err != nil {
+				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+				return
+			}
 		}
-		if err := resizeDiskByRuntime(container, req.DiskGB); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
-			return
+		if req.DiskGB > 0 && req.DiskGB > container.DiskGB {
+			if err := resizeDiskByRuntime(container, req.DiskGB); err != nil {
+				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+				return
+			}
 		}
 		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.Containers {
-				if cfg.Containers[i].ID == id {
-					cfg.Containers[i].DiskGB = req.DiskGB
-					break
+				if cfg.Containers[i].ID != id {
+					continue
 				}
+				if req.VCPU > 0 {
+					cfg.Containers[i].VCPU = req.VCPU
+				}
+				if req.RAMMB > 0 {
+					cfg.Containers[i].RAMMB = req.RAMMB
+				}
+				if req.DiskGB > 0 {
+					cfg.Containers[i].DiskGB = req.DiskGB
+				}
+				break
 			}
 		})
 		_ = config.SaveConfig()
-		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "disk resized", Data: map[string]float64{"disk_gb": req.DiskGB}})
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "resized", Data: map[string]interface{}{"vcpu": container.VCPU, "ram_mb": container.RAMMB, "disk_gb": container.DiskGB}})
 		return
 	case "snapshot":
 		var req struct {

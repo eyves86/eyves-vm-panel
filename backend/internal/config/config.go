@@ -1306,6 +1306,8 @@ type Node struct {
 	Address        string  `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
 	Token          string  `json:"token,omitempty"`
 	InstallKey     string  `json:"install_key,omitempty"`
+	InstallKeyCreatedAt string `json:"install_key_created_at,omitempty"`
+	InstallKeyIP        string `json:"install_key_ip,omitempty"`
 	Status         string  `json:"status"` // online / offline / pending
 	LastSeen       string  `json:"last_seen,omitempty"`
 	Version        string  `json:"version,omitempty"`

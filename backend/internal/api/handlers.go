@@ -249,6 +249,14 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updateContainerTags(w, r, id)
+	case action == "resize" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:resize") {
+			return
+		}
+		if routeToAgent("resize", r.Body) {
+			return
+		}
+		handleContainerResize(w, r, id, c)
 	case action == "tenant" && r.Method == http.MethodPut:
 		if !requireScope(w, r, "container:resize") {
 			return
@@ -1915,6 +1923,91 @@ func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
 			"lxc_name":  newLxcName,
 			"vnc_port":  newVNCPort,
 			"ssh_port":  newSSHPort,
+		},
+	})
+}
+
+// handleContainerResize 处理容器规格变更（CPU/RAM/Disk）。
+// LXC 支持在线/离线调整 CPU 和 RAM；Disk 扩容可在线（loopback rootfs），
+// 缩容需要停机。KVM 的 CPU/RAM 调整需要停机后通过 virsh setvcpus/setmem
+// 修改 domain XML，再 start；Disk 通过 qemu-img resize。
+func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *config.Container) {
+	var req struct {
+		VCPU   int     `json:"vcpu"`
+		RAMMB  int     `json:"ram_mb"`
+		DiskGB float64 `json:"disk_gb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	if req.VCPU <= 0 && req.RAMMB <= 0 && req.DiskGB <= 0 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "At least one of vcpu, ram_mb, disk_gb must be > 0"})
+		return
+	}
+	if req.VCPU < 0 || req.RAMMB < 0 || req.DiskGB < 0 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Resource values must be non-negative"})
+		return
+	}
+	if req.VCPU > 0 && req.VCPU > 256 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "vcpu exceeds maximum allowed (256)"})
+		return
+	}
+	if req.RAMMB > 0 && req.RAMMB > 1024*1024 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "ram_mb exceeds maximum allowed (1TB)"})
+		return
+	}
+	if req.DiskGB > 0 && req.DiskGB > 10240 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "disk_gb exceeds maximum allowed (10TB)"})
+		return
+	}
+
+	c = config.FindContainer(id)
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+
+	var err error
+	if c.IsKVM() {
+		err = kvmManager.ResizeContainer(id, req.VCPU, req.RAMMB, req.DiskGB)
+	} else {
+		err = lxcManager.ResizeContainer(id, req.VCPU, req.RAMMB, req.DiskGB)
+	}
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+
+	// 更新 config 中的规格（runtime 层已更新，这里同步持久化）
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID != id {
+				continue
+			}
+			if req.VCPU > 0 {
+				cfg.Containers[i].VCPU = req.VCPU
+			}
+			if req.RAMMB > 0 {
+				cfg.Containers[i].RAMMB = req.RAMMB
+			}
+			if req.DiskGB > 0 {
+				cfg.Containers[i].DiskGB = req.DiskGB
+			}
+			break
+		}
+	})
+	_ = config.SaveConfig()
+
+	detail := fmt.Sprintf("vcpu=%d ram_mb=%d disk_gb=%.1f", req.VCPU, req.RAMMB, req.DiskGB)
+	auditRequest(r, "container.resize", c.Name, detail, true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Container resized successfully",
+		Data: map[string]interface{}{
+			"vcpu":    c.VCPU,
+			"ram_mb":  c.RAMMB,
+			"disk_gb": c.DiskGB,
 		},
 	})
 }

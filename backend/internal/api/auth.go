@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -176,7 +177,29 @@ func AnyScopeMiddleware(scopes []string, next http.HandlerFunc) http.HandlerFunc
 	}
 }
 
+var (
+	auditPasswordRE      = regexp.MustCompile(`"password":"[^"]*"`)
+	auditNewPasswordRE   = regexp.MustCompile(`"new_password":"[^"]*"`)
+	auditTokenRE         = regexp.MustCompile(`"token":"[^"]*"`)
+	auditAPIKeyRE        = regexp.MustCompile(`"api_key":"[^"]*"`)
+	auditInstallKeyRE    = regexp.MustCompile(`"install_key":"[^"]*"`)
+	auditSecretRE        = regexp.MustCompile(`"secret":"[^"]*"`)
+	auditPasswordQueryRE = regexp.MustCompile(`password=[^&\s]*`)
+)
+
+func sanitizeAuditDetail(detail string) string {
+	detail = auditPasswordRE.ReplaceAllString(detail, `"password":"***"`)
+	detail = auditNewPasswordRE.ReplaceAllString(detail, `"new_password":"***"`)
+	detail = auditTokenRE.ReplaceAllString(detail, `"token":"***"`)
+	detail = auditAPIKeyRE.ReplaceAllString(detail, `"api_key":"***"`)
+	detail = auditInstallKeyRE.ReplaceAllString(detail, `"install_key":"***"`)
+	detail = auditSecretRE.ReplaceAllString(detail, `"secret":"***"`)
+	detail = auditPasswordQueryRE.ReplaceAllString(detail, `password=***`)
+	return detail
+}
+
 func auditRequest(r *http.Request, action, target, detail string, success bool, errMsg string) {
+	detail = sanitizeAuditDetail(detail)
 	config.AddAuditLogFull(action, target, detail, requestActor(r), clientIP(r), r.UserAgent(), success, errMsg)
 }
 

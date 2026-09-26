@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/safehttp"
 )
 
 // 事件订阅（Webhook）端点：企业集成方订阅容器状态变更回调。
@@ -359,6 +360,9 @@ func webhookDeliveryOnce(wh config.WebhookSubscription, evt webhookEvent, delive
 	body, err := json.Marshal(evt)
 	if err != nil {
 		return err
+	}
+	if _, err := safehttp.ValidateURL(wh.URL); err != nil {
+		return fmt.Errorf("unsafe webhook URL: %w", err)
 	}
 	req, err := http.NewRequest(http.MethodPost, wh.URL, bytes.NewReader(body))
 	if err != nil {

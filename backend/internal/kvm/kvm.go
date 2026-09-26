@@ -855,6 +855,81 @@ func (m *Manager) PoweroffContainer(id int) error {
 	return nil
 }
 
+// ResizeContainer 调整 KVM 虚拟机规格（CPU/RAM/Disk）。
+// KVM 的 CPU/RAM 调整需要先停机，修改 domain XML，再启动。
+// Disk 通过 qemu-img resize 扩容（不支持缩容）。
+func (m *Manager) ResizeContainer(id int, newVCPU int, newRAMMB int, newDiskGB float64) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	name := c.VirshName()
+	wasRunning := false
+	if status, _ := m.GetContainerStatus(name); status == "running" {
+		wasRunning = true
+		if err := m.StopContainer(id); err != nil {
+			return fmt.Errorf("failed to stop VM for resize: %v", err)
+		}
+	}
+
+	if newVCPU > 0 {
+		cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "setvcpus", "--config", "--maximum", name, fmt.Sprintf("%d", newVCPU))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setvcpus --maximum failed: %v, output: %s", err, string(output))
+		}
+		cmd = execWithTimeout(cmdTimeoutMedium, "virsh", "setvcpus", "--config", name, fmt.Sprintf("%d", newVCPU))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setvcpus failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	if newRAMMB > 0 {
+		maxMemKB := newRAMMB * 1024
+		cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "setmaxmem", "--config", name, fmt.Sprintf("%dK", maxMemKB))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setmaxmem failed: %v, output: %s", err, string(output))
+		}
+		cmd = execWithTimeout(cmdTimeoutMedium, "virsh", "setmem", "--config", name, fmt.Sprintf("%dK", maxMemKB))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setmem failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	if newDiskGB > 0 && newDiskGB > c.DiskGB {
+		if err := m.GrowKVMDisk(c, newDiskGB); err != nil {
+			return fmt.Errorf("failed to resize disk: %v", err)
+		}
+	}
+
+	if wasRunning {
+		if err := m.StartContainer(id); err != nil {
+			return fmt.Errorf("failed to restart VM after resize: %v", err)
+		}
+	}
+	return nil
+}
+
+// GrowKVMDisk 使用 qemu-img resize 在线扩大 KVM qcow2 磁盘（绝对容量）。
+// qemu-img 对缩小天然报错，因此本函数天然仅支持扩容。
+func (m *Manager) GrowKVMDisk(c *config.Container, newDiskGB float64) error {
+	if c.DiskImage == "" {
+		return nil
+	}
+	if _, err := os.Stat(c.DiskImage); err != nil {
+		return nil
+	}
+	diskMB := int64(math.Round(newDiskGB * 1024))
+	if diskMB < 128 {
+		diskMB = 128
+	}
+	cmd := execWithTimeout(cmdTimeoutMedium, "qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // startWithoutGuestInit 以 libvirt 直接启动域，不等待 IP/SSH/cloud-init。
 // 用于救援模式引导（救援 ISO 内无受管 guest，等待步骤无法完成）。
 func (m *Manager) startWithoutGuestInit(name string) error {

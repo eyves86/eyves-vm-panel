@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -80,6 +81,8 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeDrain(w, r, nodeID) })(w, r)
 	case rest == "install-script":
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScript(w, r, nodeID) })(w, r)
+	case rest == "install-script/sha256":
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScriptSHA256(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodGet:
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeContainers(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodPost:
@@ -219,6 +222,24 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid install key"})
 		return
 	}
+	if node.InstallKeyCreatedAt != "" {
+		createdAt, err := time.Parse(time.RFC3339, node.InstallKeyCreatedAt)
+		if err == nil && time.Since(createdAt) > 24*time.Hour {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "install key expired"})
+			return
+		}
+	}
+	if node.InstallKeyIP != "" {
+		reqIP := clientIP(r)
+		if reqIP != node.InstallKeyIP && !sameIPv4Prefix24(reqIP, node.InstallKeyIP) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "install key IP mismatch"})
+			return
+		}
+	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = node.Name
@@ -237,6 +258,7 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		n.Version = req.Version
 		// install_key 是一次性 token：注册成功后立即清空，防止重复注册或被已注册节点重放。
 		n.InstallKey = ""
+		n.InstallKeyCreatedAt = ""
 		if address != "" {
 			n.Address = address
 		}
@@ -250,6 +272,36 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		"token":   node.Token,
 		"name":    name,
 	}})
+}
+
+func clientIP(r *http.Request) string {
+	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
+		if idx := strings.Index(xff, ","); idx != -1 {
+			xff = strings.TrimSpace(xff[:idx])
+		}
+		if xff != "" {
+			return xff
+		}
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return strings.TrimPrefix(strings.TrimSuffix(r.RemoteAddr, "]"), "[")
+	}
+	return host
+}
+
+func sameIPv4Prefix24(a, b string) bool {
+	ipa := net.ParseIP(a)
+	ipb := net.ParseIP(b)
+	if ipa == nil || ipb == nil {
+		return false
+	}
+	ipa = ipa.To4()
+	ipb = ipb.To4()
+	if ipa == nil || ipb == nil {
+		return false
+	}
+	return ipa[0] == ipb[0] && ipa[1] == ipb[1] && ipa[2] == ipb[2]
 }
 
 func createNode(w http.ResponseWriter, r *http.Request) {
@@ -273,13 +325,15 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	node := config.Node{
-		ID:         newNodeID(),
-		Name:       name,
-		Address:    address,
-		Token:      randomNodeSecret(32),
-		InstallKey: randomNodeSecret(32),
-		Status:     "pending",
-		CreatedAt:  time.Now().Format("2006-01-02 15:04:05"),
+		ID:                  newNodeID(),
+		Name:                name,
+		Address:             address,
+		Token:               randomNodeSecret(32),
+		InstallKey:          randomNodeSecret(32),
+		InstallKeyCreatedAt: time.Now().UTC().Format(time.RFC3339),
+		InstallKeyIP:        clientIP(r),
+		Status:              "pending",
+		CreatedAt:           time.Now().Format("2006-01-02 15:04:05"),
 	}
 	if err := config.AddNode(node); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
@@ -571,13 +625,71 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 	installKey := node.InstallKey
 	if installKey == "" {
 		installKey = randomNodeSecret(32)
-		config.UpdateNode(node.ID, func(n *config.Node) { n.InstallKey = installKey })
+		config.UpdateNode(node.ID, func(n *config.Node) {
+			n.InstallKey = installKey
+			n.InstallKeyCreatedAt = time.Now().UTC().Format(time.RFC3339)
+			n.InstallKeyIP = clientIP(r)
+		})
 	}
 	// 不再硬编码 controller —— 脚本运行时自动探测
 	script := buildAgentInstallScript("", installKey, node.Name, "")
+	hashBytes := sha256.Sum256([]byte(script))
+	hash := hex.EncodeToString(hashBytes[:])
+
+	w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=eyvescloud-agent-%s.sh", node.Name))
-	_, _ = w.Write([]byte(script))
+	w.Header().Set("X-Content-SHA256", hash)
+
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script?install_key=%s", scheme, r.Host, nodeID, url.QueryEscape(installKey))
+
+	comments := fmt.Sprintf(`# 推荐安装方式（校验完整性）：
+# curl -fsSL %s -o install.sh
+# echo "%s  install.sh" | sha256sum -c
+# sudo bash install.sh
+#
+`, curlURL, hash)
+
+	_, _ = w.Write([]byte(comments + script))
+}
+
+func handleNodeInstallScriptSHA256(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	node, ok := config.FindNode(nodeID)
+	if !ok {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
+		return
+	}
+	authedByKey := false
+	if qk := strings.TrimSpace(r.URL.Query().Get("install_key")); qk != "" {
+		if kn, found := config.FindNodeByInstallKey(qk); found && kn.ID == nodeID {
+			authedByKey = true
+		}
+	}
+	if !authedByKey && !requireScope(w, r, "node:write") {
+		return
+	}
+	installKey := node.InstallKey
+	if installKey == "" {
+		installKey = randomNodeSecret(32)
+		config.UpdateNode(node.ID, func(n *config.Node) {
+			n.InstallKey = installKey
+			n.InstallKeyCreatedAt = time.Now().UTC().Format(time.RFC3339)
+			n.InstallKeyIP = clientIP(r)
+		})
+	}
+	script := buildAgentInstallScript("", installKey, node.Name, "")
+	hashBytes := sha256.Sum256([]byte(script))
+	hash := hex.EncodeToString(hashBytes[:])
+
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{"sha256": hash}})
 }
 
 func buildAgentInstallScript(controller, installKey, nodeName, defaultAddr string) string {

@@ -891,6 +891,9 @@ func containerByIdentifier(identifier string) *config.Container {
 }
 
 func isContainerAllowedForRequest(r *http.Request, identifier string) bool {
+	if ctx, ok := authContextFromRequest(r); ok && ctx.Type == authTypeAPIKey && len(ctx.ContainerUUIDs) == 0 {
+		return false
+	}
 	allowed, restricted := requestAllowedContainers(r)
 	if !restricted {
 		return true

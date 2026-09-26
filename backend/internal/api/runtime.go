@@ -373,7 +373,7 @@ func resizeDiskByRuntime(c *config.Container, newDiskGB float64) error {
 	if c.IsKVM() {
 		return growKVMQcow2Disk(c, newDiskGB)
 	}
-	return growLXCRootfsDisk(c, newDiskGB)
+	return lxcManager.GrowLXCRootfsDisk(c, newDiskGB)
 }
 
 func growKVMQcow2Disk(c *config.Container, newDiskGB float64) error {
@@ -394,60 +394,6 @@ func growKVMQcow2Disk(c *config.Container, newDiskGB float64) error {
 		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// growLXCRootfsDisk 扩大 LXC loopback rootfs.img 并在线扩展文件系统。
-// 仅当 rootfs.img 确实存在时才操作；不存在的容器目录（例如池抽取后无 loopback
-// 镜像）直接跳过。文件系统在线 resize2fs 失败视为扩容失败并返回错误。
-func growLXCRootfsDisk(c *config.Container, newDiskGB float64) error {
-	imagePath := filepath.Join(lxcManager.LxcPath, c.LxcName(), "rootfs.img")
-	if _, err := os.Stat(imagePath); err != nil {
-		return nil
-	}
-	diskMB := int64(math.Round(newDiskGB * 1024))
-	if diskMB < 128 {
-		diskMB = 128
-	}
- _ctx1, _cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
- defer _cancel1()
-	out, err := exec.CommandContext(_ctx1, "truncate", "-s", fmt.Sprintf("%dM", diskMB), imagePath).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("grow rootfs image failed: %v, output: %s", err, strings.TrimSpace(string(out)))
-	}
-	device := loopDeviceForImage(imagePath)
-	if device == "" {
-		// 未挂载则无法在线扩文件系统；文件已扩到目标容量，重启或下次挂载时由
-		// 文件系统自愈（resize2fs 幂等）。此处不报错，避免阻塞配置提交。
-		return nil
-	}
- _ctx2, _cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
- defer _cancel2()
-	out, err = exec.CommandContext(_ctx2, "resize2fs", device).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("resize2fs failed on %s: %v, output: %s", device, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// loopDeviceForImage 解析 rootfs.img 对应已挂载的 loop 设备（如 /dev/loop0）。
-func loopDeviceForImage(imagePath string) string {
- _ctx3, _cancel3 := context.WithTimeout(context.Background(), 15*time.Second)
- defer _cancel3()
-	out, err := exec.CommandContext(_ctx3, "losetup", "-j", imagePath).Output()
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		device := strings.TrimSuffix(strings.SplitN(line, ":", 2)[0], ":")
-		if device != "" {
-			return device
-		}
-	}
-	return ""
 }
 
 func validateRuntimeResourceRequest(runtime string, templateID string, vcpu float64, ramMB int, diskGB float64) error {
