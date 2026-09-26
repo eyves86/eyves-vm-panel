@@ -137,7 +137,7 @@ export default function PolicyManagement() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setEditing(emptyRule()); setMessage(null) }}
-            className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800"
+            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700"
           >
             <Plus className="w-4 h-4" />
             新建策略
@@ -281,7 +281,7 @@ export default function PolicyManagement() {
                   value={editing.name}
                   onChange={(e) => patch({ name: e.target.value })}
                   placeholder="例如：CPU 过载自动升配"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                 />
               </Field>
               <div className="grid grid-cols-2 gap-3">
@@ -289,7 +289,7 @@ export default function PolicyManagement() {
                   <select
                     value={editing.metric}
                     onChange={(e) => patch({ metric: e.target.value as PolicyRule['metric'] })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   >
                     {Object.entries(metricLabels).map(([k, v]) => (
                       <option key={k} value={k}>{v}</option>
@@ -300,7 +300,7 @@ export default function PolicyManagement() {
                   <select
                     value={editing.action}
                     onChange={(e) => patch({ action: e.target.value as PolicyRule['action'] })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   >
                     {Object.entries(actionLabels).map(([k, v]) => (
                       <option key={k} value={k}>{v}</option>
@@ -313,7 +313,7 @@ export default function PolicyManagement() {
                   <select
                     value={editing.operator}
                     onChange={(e) => patch({ operator: e.target.value as PolicyRule['operator'] })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   >
                     <option value="gt">大于 (gt)</option>
                     <option value="lt">小于 (lt)</option>
@@ -324,7 +324,7 @@ export default function PolicyManagement() {
                     type="number"
                     value={editing.threshold}
                     onChange={(e) => patch({ threshold: Number(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </Field>
               </div>
@@ -334,7 +334,7 @@ export default function PolicyManagement() {
                     type="number"
                     value={editing.adjust_vcpu}
                     onChange={(e) => patch({ adjust_vcpu: Number(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </Field>
               )}
@@ -344,7 +344,7 @@ export default function PolicyManagement() {
                     type="number"
                     value={editing.adjust_ram_mb}
                     onChange={(e) => patch({ adjust_ram_mb: Number(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </Field>
               )}
@@ -354,7 +354,7 @@ export default function PolicyManagement() {
                     type="number"
                     value={editing.adjust_bw_mbps}
                     onChange={(e) => patch({ adjust_bw_mbps: Number(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </Field>
               )}
@@ -364,14 +364,14 @@ export default function PolicyManagement() {
                     type="number"
                     value={editing.cooldown_minutes}
                     onChange={(e) => patch({ cooldown_minutes: Number(e.target.value) })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </Field>
                 <Field label="作用范围">
                   <select
                     value={editing.target_scope}
                     onChange={(e) => patch({ target_scope: e.target.value })}
-                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-black focus:outline-none"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   >
                     <option value="all">全部容器</option>
                     <option value="tenant:default">租户 default</option>
@@ -408,7 +408,7 @@ export default function PolicyManagement() {
               <button
                 onClick={handleSave}
                 disabled={saving}
-                className="rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {saving ? '保存中...' : '保存'}
               </button>

@@ -123,7 +123,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
               </button>
               <button
                 onClick={() => close(true)}
-                className="rounded-md bg-black px-4 py-2 text-sm text-white transition-colors hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {t('确认')}
               </button>

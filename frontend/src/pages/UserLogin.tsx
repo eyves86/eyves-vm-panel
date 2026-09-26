@@ -50,9 +50,10 @@ export default function UserLogin() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50 px-4 dark:bg-gray-950">
-      <div className="w-full max-w-md">
-        <div className="rounded-lg border border-gray-200 bg-white p-8 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+    <div className="hero-bg relative flex min-h-screen items-center justify-center px-4">
+      <div className="hero-grid" aria-hidden="true" />
+      <div className="hero-card relative z-10 w-full max-w-md">
+        <div className="rounded-xl border border-gray-200 bg-white/95 p-8 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95">
           <div className="mb-8 flex flex-col items-center">
             <div className="mb-4 flex h-16 w-16 items-center justify-center">
               <AppIcon className="h-10 w-10" />
@@ -65,14 +66,14 @@ export default function UserLogin() {
             <button
               type="button"
               onClick={() => switchMode('account')}
-              className={`rounded px-3 py-1.5 font-medium transition-colors ${mode === 'account' ? 'bg-white text-black shadow-sm dark:bg-gray-700 dark:text-white' : 'text-gray-500'}`}
+              className={`rounded px-3 py-1.5 font-medium transition-colors ${mode === 'account' ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500 dark:text-white' : 'text-gray-500 hover:text-brand-700 dark:hover:text-brand-300'}`}
             >
               {t('账号登录')}
             </button>
             <button
               type="button"
               onClick={() => switchMode('code')}
-              className={`rounded px-3 py-1.5 font-medium transition-colors ${mode === 'code' ? 'bg-white text-black shadow-sm dark:bg-gray-700 dark:text-white' : 'text-gray-500'}`}
+              className={`rounded px-3 py-1.5 font-medium transition-colors ${mode === 'code' ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500 dark:text-white' : 'text-gray-500 hover:text-brand-700 dark:hover:text-brand-300'}`}
             >
               {t('访问码登录')}
             </button>
@@ -94,7 +95,7 @@ export default function UserLogin() {
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-black focus:outline-none focus:ring-2 focus:ring-black dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                    className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                     placeholder={t('输入用户名')}
                     required
                     autoComplete="username"
@@ -113,7 +114,7 @@ export default function UserLogin() {
                     value={code}
                     onChange={(e) => setCode(e.target.value)}
                     disabled={!!urlCode}
-                    className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-black focus:outline-none focus:ring-2 focus:ring-black disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                    className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                     placeholder={t('输入访问码')}
                     required
                     autoComplete="off"
@@ -133,7 +134,7 @@ export default function UserLogin() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-black focus:outline-none focus:ring-2 focus:ring-black dark:border-gray-700 dark:bg-gray-800 dark:text-white"
+                  className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
                   placeholder={t('输入密码')}
                   required
                   autoComplete="current-password"
@@ -144,7 +145,7 @@ export default function UserLogin() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full rounded-md bg-black py-2.5 text-sm font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="w-full rounded-md bg-brand-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? t('登录中...') : t('登录')}
             </button>

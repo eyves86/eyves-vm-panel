@@ -66,19 +66,20 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div className="hero-bg relative min-h-screen flex items-center justify-center px-4">
       <AutoTranslate />
       <BrowserDialogTranslator />
+      <div className="hero-grid" aria-hidden="true" />
       <button
         type="button"
         onClick={() => { void toggleLanguage() }}
-        className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
+        className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm backdrop-blur hover:bg-white hover:text-brand-700"
       >
         <LanguageIcon className="h-3.5 w-3.5" />
         {language === 'en' ? '中文' : 'English'}
       </button>
-      <div className="w-full max-w-md">
-        <div className="bg-white rounded-lg border border-gray-200 shadow-sm p-8">
+      <div className="hero-card relative z-10 w-full max-w-md">
+        <div className="bg-white/95 backdrop-blur rounded-xl border border-gray-200 p-8 dark:bg-gray-900/95 dark:border-gray-700">
           <div className="flex flex-col items-center mb-8">
             <div className="w-16 h-16 flex items-center justify-center mb-4">
               <AppIcon className="w-10 h-10" />
@@ -107,7 +108,7 @@ export default function Login() {
                     type="text"
                     value={username}
                     onChange={(event) => setUsername(event.target.value)}
-                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm"
+                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
                     placeholder={t('输入管理员用户名')}
                     required
                     autoComplete="username"
@@ -137,7 +138,7 @@ export default function Login() {
                   type="password"
                   value={password}
                   onChange={(event) => setPassword(event.target.value)}
-                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm"
+                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
                   placeholder={t('输入密码')}
                   required
                   autoComplete="current-password"
@@ -158,7 +159,7 @@ export default function Login() {
                     type="text"
                     value={twoFACode}
                     onChange={(event) => setTwoFACode(event.target.value.replace(/\s+/g, ''))}
-                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-black focus:border-black text-sm tracking-widest"
+                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm tracking-widest"
                     placeholder={t('6 位动态口令或备份码')}
                     required
                     maxLength={32}
@@ -178,7 +179,7 @@ export default function Login() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-black text-white py-2.5 rounded-md hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
+              className="w-full bg-brand-600 text-white py-2.5 rounded-md hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
             >
               {loading ? t('登录中...') : t('登录管理员控制台')}
             </button>

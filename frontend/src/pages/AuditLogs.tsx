@@ -83,7 +83,7 @@ export default function AuditLogs() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -162,7 +162,7 @@ export default function AuditLogs() {
                       <td className="px-4 py-2.5 font-mono text-xs text-gray-500 whitespace-nowrap">{log.time}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         {log.user === 'admin' ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-black text-white">管理员</span>
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-brand-600 text-white">管理员</span>
                         ) : log.user?.startsWith('user:') ? (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-gray-100 text-gray-700">用户</span>
                         ) : (
@@ -184,7 +184,7 @@ export default function AuditLogs() {
                   <button onClick={() => setPage(1)} disabled={page === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="首页"><ChevronsLeft className="w-4 h-4" /></button>
                   <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="上一页"><ChevronLeft className="w-4 h-4" /></button>
                   {getPageNumbers(page, totalPages).map(n => (
-                    <button key={n} onClick={() => setPage(n)} className={`w-7 h-7 text-xs rounded ${n === page ? 'bg-black text-white' : 'border border-gray-200 hover:bg-gray-100'}`}>{n}</button>
+                    <button key={n} onClick={() => setPage(n)} className={`w-7 h-7 text-xs rounded ${n === page ? 'bg-brand-600 text-white' : 'border border-gray-200 hover:bg-gray-100'}`}>{n}</button>
                   ))}
                   <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="下一页"><ChevronRight className="w-4 h-4" /></button>
                   <button onClick={() => setPage(totalPages)} disabled={page >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="末页"><ChevronsRight className="w-4 h-4" /></button>

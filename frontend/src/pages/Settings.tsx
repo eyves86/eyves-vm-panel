@@ -741,7 +741,7 @@ export default function Settings() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black"></div>
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -766,7 +766,7 @@ export default function Settings() {
                   key={section.id}
                   type="button"
                   onClick={() => setActiveSection(section.id)}
-                  className={`flex items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-colors ${active ? 'bg-black text-white dark:bg-white dark:text-black' : 'text-gray-600 hover:bg-gray-100 hover:text-black dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-white'}`}
+                  className={`flex items-center gap-2 rounded-md px-3 py-2.5 text-left text-sm font-medium transition-colors ${active ? 'bg-brand-600 text-white dark:bg-brand-500 dark:text-white' : 'text-gray-600 hover:bg-gray-100 hover:text-black dark:text-gray-300 dark:hover:bg-brand-700 dark:hover:text-white'}`}
                 >
                   <Icon className="h-4 w-4 flex-shrink-0" />
                   <span>{t(section.label)}</span>
@@ -812,7 +812,7 @@ export default function Settings() {
                 </div>
               </div>
               <div className="mt-4 flex justify-end">
-                <button onClick={handleSaveAccount} className="rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">保存修改</button>
+                <button onClick={handleSaveAccount} className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">保存修改</button>
               </div>
             </div>
           )}
@@ -931,7 +931,7 @@ export default function Settings() {
                   type="button"
                   disabled={savingAdminPath}
                   onClick={() => { void handleSaveAdminPath() }}
-                  className="rounded-md bg-black px-3 py-2 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50"
+                  className="rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                   {savingAdminPath ? t('保存中...') : t('保存')}
                 </button>
@@ -1074,9 +1074,9 @@ function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
           role="switch"
           aria-checked={props.enabled}
           onClick={() => props.onEnabledChange(!props.enabled)}
-          className={`access-policy-switch relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-2 dark:focus:ring-white dark:focus:ring-offset-gray-900 ${
+          className={`access-policy-switch relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-white dark:focus:ring-offset-gray-900 ${
             props.enabled
-              ? 'border-black bg-black dark:border-white dark:bg-white'
+              ? 'border-brand-600 bg-brand-600 dark:border-white dark:bg-brand-500'
               : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'
           }`}
           title={props.enabled ? '关闭访问白名单' : '启用访问白名单'}
@@ -1100,7 +1100,7 @@ function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
             onChange={(event) => props.onAllowedSourcesTextChange(event.target.value)}
             rows={6}
             disabled={!props.enabled}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-black outline-none focus:border-black focus:ring-1 focus:ring-black disabled:bg-gray-50 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:border-white dark:focus:ring-white dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-black outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:bg-gray-50 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:border-white dark:focus:ring-white dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
             placeholder={'203.0.113.10\n192.168.1.0/24\n2001:db8::/32'}
           />
         </div>
@@ -1111,7 +1111,7 @@ function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
             onChange={(event) => props.onTrustedProxiesTextChange(event.target.value)}
             rows={6}
             disabled={!props.enabled}
-            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-black outline-none focus:border-black focus:ring-1 focus:ring-black disabled:bg-gray-50 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:border-white dark:focus:ring-white dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 font-mono text-xs text-black outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 disabled:bg-gray-50 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:border-white dark:focus:ring-white dark:disabled:bg-gray-800 dark:disabled:text-gray-500"
             placeholder={'127.0.0.1\n10.0.0.0/8'}
           />
           <p className="mt-1.5 text-xs text-gray-500 dark:text-gray-400">仅可信代理可提供真实客户端地址；未使用反向代理时留空</p>
@@ -1130,7 +1130,7 @@ function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
       </div>
 
       <div className="mt-4 flex justify-end">
-        <button type="button" onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button type="button" onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存访问策略'}
         </button>
@@ -1173,7 +1173,7 @@ function TaskQueueCard(props: TaskQueueCardProps) {
             max={16}
             value={props.concurrency}
             onChange={(event) => setBounded(Number(event.target.value) || 1)}
-            className="min-w-0 flex-1 border-y border-gray-300 px-2 text-center text-sm font-medium text-black outline-none focus:ring-2 focus:ring-inset focus:ring-black"
+            className="min-w-0 flex-1 border-y border-gray-300 px-2 text-center text-sm font-medium text-black outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500"
           />
           <button type="button" onClick={() => setBounded(props.concurrency + 1)} disabled={props.concurrency >= 16} className="flex w-10 items-center justify-center rounded-r-md border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-30" title="增加并发">
             <Plus className="h-4 w-4" />
@@ -1181,7 +1181,7 @@ function TaskQueueCard(props: TaskQueueCardProps) {
         </div>
       </div>
       <div className="mt-4 flex justify-end">
-        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50">
+        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存队列设置'}
         </button>
@@ -1258,7 +1258,7 @@ function AuditComplianceCard(props: AuditComplianceCardProps) {
       </div>
 
       <div className="mt-4 flex justify-end">
-        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存保留期'}
         </button>
@@ -1303,7 +1303,7 @@ function InstanceBackupCard(props: InstanceBackupCardProps) {
           role="switch"
           aria-checked={props.enabled}
           onClick={() => props.onEnabledChange(!props.enabled)}
-          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-black bg-black dark:border-white dark:bg-white' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-brand-600 bg-brand-600 dark:border-white dark:bg-brand-500' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
         >
           <span className={`pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${props.enabled ? 'translate-x-5 dark:bg-gray-900' : 'translate-x-0 dark:bg-gray-200'}`} />
         </button>
@@ -1321,7 +1321,7 @@ function InstanceBackupCard(props: InstanceBackupCardProps) {
       </div>
 
       <div className="mt-4 flex justify-end">
-        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存设置'}
         </button>
@@ -1371,7 +1371,7 @@ function BackupCard(props: BackupCardProps) {
           role="switch"
           aria-checked={props.enabled}
           onClick={() => props.onEnabledChange(!props.enabled)}
-          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-black bg-black dark:border-white dark:bg-white' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-brand-600 bg-brand-600 dark:border-white dark:bg-brand-500' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
         >
           <span className={`pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${props.enabled ? 'translate-x-5 dark:bg-gray-900' : 'translate-x-0 dark:bg-gray-200'}`} />
         </button>
@@ -1389,7 +1389,7 @@ function BackupCard(props: BackupCardProps) {
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-gray-100 pt-4 dark:border-gray-800">
-        <button onClick={props.onSave} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button onClick={props.onSave} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />保存设置
         </button>
         <button onClick={props.onCreate} disabled={props.creating} className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
@@ -1477,7 +1477,7 @@ function RateLimitCard(props: RateLimitCardProps) {
           role="switch"
           aria-checked={props.enabled}
           onClick={() => props.onEnabledChange(!props.enabled)}
-          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-black bg-black dark:border-white dark:bg-white' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
+          className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${props.enabled ? 'border-brand-600 bg-brand-600 dark:border-white dark:bg-brand-500' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
         >
           <span className={`pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${props.enabled ? 'translate-x-5 dark:bg-gray-900' : 'translate-x-0 dark:bg-gray-200'}`} />
         </button>
@@ -1508,7 +1508,7 @@ function RateLimitCard(props: RateLimitCardProps) {
       )}
 
       <div className="mt-4 flex justify-end">
-        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存限流设置'}
         </button>
@@ -1634,7 +1634,7 @@ function TwoFactorCard(props: TwoFactorCardProps) {
 
       {!enabled && !props.twoFASetup && (
         <div className="mt-4">
-          <button type="button" onClick={props.onSetup} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+          <button type="button" onClick={props.onSetup} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
             <KeyRound className="h-4 w-4" />开始设置
           </button>
         </div>
@@ -1703,9 +1703,9 @@ function TwoFactorCard(props: TwoFactorCardProps) {
                 value={props.verifyCode}
                 onChange={(e) => props.onSetVerifyCode(e.target.value.replace(/\D/g, ''))}
                 placeholder="123456"
-                className="w-40 rounded-md border border-gray-300 bg-white px-3 py-2 text-center font-mono text-base tracking-widest text-black outline-none focus:border-black focus:ring-1 focus:ring-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                className="w-40 rounded-md border border-gray-300 bg-white px-3 py-2 text-center font-mono text-base tracking-widest text-black outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
               />
-              <button type="button" onClick={props.onEnable} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+              <button type="button" onClick={props.onEnable} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
                 <ShieldCheck className="h-4 w-4" />启用两步验证
               </button>
             </div>
@@ -1726,7 +1726,7 @@ function TwoFactorCard(props: TwoFactorCardProps) {
                   value={props.twoFACode}
                   onChange={(e) => props.onSetTwoFACode(e.target.value.replace(/\D/g, ''))}
                   placeholder="123456"
-                  className="w-32 rounded-md border border-gray-300 bg-white px-3 py-2 text-center font-mono text-sm text-black outline-none focus:border-black focus:ring-1 focus:ring-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-32 rounded-md border border-gray-300 bg-white px-3 py-2 text-center font-mono text-sm text-black outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
                 <button type="button" onClick={props.onRegenerate} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-200 dark:hover:bg-gray-800">
                   重新生成备份码
@@ -1814,7 +1814,7 @@ function WebSSHOriginCard(props: WebSSHOriginCardProps) {
           <div className="mt-1">默认允许当前面板来源和本机回环来源；额外域名每行填写一个完整 Origin。</div>
         </div>
         <div className="flex justify-end">
-          <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50">
+          <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50">
             <Upload className="h-4 w-4" />
             {props.saving ? '保存中...' : '保存 Origin 白名单'}
           </button>
@@ -1853,7 +1853,7 @@ function SSLCard(props: SSLCardProps) {
             <button
               key={option.value}
               onClick={() => props.onModeChange(option.value)}
-              className={`rounded-md border px-3 py-2 text-sm ${props.sslMode === option.value ? 'border-black bg-black text-white' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+              className={`rounded-md border px-3 py-2 text-sm ${props.sslMode === option.value ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
             >
               {option.label}
             </button>
@@ -1926,7 +1926,7 @@ function SSLCard(props: SSLCardProps) {
         </label>
 
         <div className="flex justify-end">
-          <button onClick={props.onSave} disabled={props.savingSSL} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50">
+          <button onClick={props.onSave} disabled={props.savingSSL} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50">
             <Upload className="h-4 w-4" />
             {props.savingSSL ? '保存中...' : '保存 SSL 设置'}
           </button>
@@ -2124,7 +2124,7 @@ function NotificationCard(props: NotificationCardProps) {
           <SendIcon className="h-4 w-4" />
           {props.testing ? '发送中...' : '发送测试告警'}
         </button>
-        <button type="button" onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button type="button" onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存推送设置'}
         </button>
@@ -2191,7 +2191,7 @@ function OvercommitCard(props: OvercommitCardProps) {
         role="switch"
         aria-checked={enabled}
         onClick={() => onChange(!enabled)}
-        className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${enabled ? 'border-black bg-black dark:border-white dark:bg-white' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
+        className={`relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full border transition-colors ${enabled ? 'border-brand-600 bg-brand-600 dark:border-white dark:bg-brand-500' : 'border-gray-300 bg-gray-300 dark:border-gray-600 dark:bg-gray-700'}`}
       >
         <span className={`pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform ${enabled ? 'translate-x-5 dark:bg-gray-900' : 'translate-x-0 dark:bg-gray-200'}`} />
       </button>
@@ -2324,7 +2324,7 @@ function OvercommitCard(props: OvercommitCardProps) {
       )}
 
       <div className="mt-4 flex justify-end">
-        <button onClick={handleSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+        <button onClick={handleSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
           <Save className="h-4 w-4" />
           {props.saving ? '保存中...' : '保存超售设置'}
         </button>

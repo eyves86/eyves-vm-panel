@@ -93,7 +93,7 @@ export default function Monitoring() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -108,7 +108,7 @@ export default function Monitoring() {
             value={usageTenant}
             onChange={(e) => setUsageTenant(e.target.value)}
             placeholder="按租户过滤导出（可选）"
-            className="h-9 w-48 rounded-md border border-gray-300 px-3 text-sm text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+            className="h-9 w-48 rounded-md border border-gray-300 px-3 text-sm text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <button
             onClick={() => void exportUsage()}

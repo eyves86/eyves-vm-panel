@@ -191,7 +191,7 @@ export default function Recipes() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600" />
       </div>
     )
   }
@@ -215,7 +215,7 @@ export default function Recipes() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
           </button>
-          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
             <Plus className="h-4 w-4" />新建模板
           </button>
         </div>
@@ -373,7 +373,7 @@ export default function Recipes() {
               <button
                 onClick={() => { void submitForm() }}
                 disabled={saving}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 <Save className="h-4 w-4" />
                 {saving ? '保存中...' : (editing ? '保存' : '创建')}
@@ -440,7 +440,7 @@ export default function Recipes() {
                 </div>
                 {executing ? (
                   <div className="flex flex-col items-center justify-center rounded-md border border-gray-200 bg-gray-50 py-10 text-center dark:border-gray-700 dark:bg-gray-950">
-                    <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+                    <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
                     <div className="mt-3 text-sm text-gray-600 dark:text-gray-300">脚本执行中，耗时较长请耐心等待…</div>
                   </div>
                 ) : execResult ? (
@@ -472,7 +472,7 @@ export default function Recipes() {
                 <button
                   onClick={() => { void submitExec() }}
                   disabled={executing || execContainersLoading || execContainerId === ''}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
                 >
                   <Play className="h-4 w-4" />
                   {executing ? '执行中...' : '开始执行'}

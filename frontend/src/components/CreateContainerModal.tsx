@@ -431,7 +431,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     }`}
                   >
                     <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
-                      active || completed ? 'border-black bg-black text-white' : 'border-gray-300 bg-white'
+                      active || completed ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 bg-white'
                     }`}>
                       {completed ? <Check className="h-3.5 w-3.5" /> : index + 1}
                     </span>
@@ -470,7 +470,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               <button
                 type="button"
                 onClick={() => setForm((prev) => applyTemplateDefaults({ ...prev, virtualization: 'lxc', template_id: '', storage_pool_id: '', allowed_image_ids: [], image_limit_configured: false }))}
-                className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${form.virtualization === 'lxc' ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${form.virtualization === 'lxc' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
               >
                 LXC 容器
               </button>
@@ -483,7 +483,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     setForm((prev) => applyTemplateDefaults({ ...prev, virtualization: 'kvm', template_id: '', storage_pool_id: '', allowed_image_ids: [], image_limit_configured: false }))
                   }
                 }}
-                className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${form.virtualization === 'kvm' ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${form.virtualization === 'kvm' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
               >
                 KVM 虚拟机
               </button>
@@ -567,7 +567,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     const checked = (form.allowed_image_ids || []).includes(template.id)
                     const current = template.id === form.template_id
                     return (
-                      <label key={template.id} className={`flex cursor-pointer items-start gap-2 rounded border px-2.5 py-2 text-xs ${checked ? 'border-black bg-white' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
+                      <label key={template.id} className={`flex cursor-pointer items-start gap-2 rounded border px-2.5 py-2 text-xs ${checked ? 'border-brand-600 bg-white' : 'border-gray-200 bg-white hover:bg-gray-50'}`}>
                         <input
                           type="checkbox"
                           checked={checked}
@@ -576,7 +576,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                             const next = checked ? currentIDs.filter((id) => id !== template.id) : [...currentIDs, template.id]
                             setForm({ ...form, allowed_image_ids: next, image_limit_configured: true })
                           }}
-                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-black focus:ring-black"
+                          className="mt-0.5 h-4 w-4 rounded border-gray-300 text-black focus:ring-brand-500"
                         />
                         <span className="min-w-0">
                           <span className="block truncate font-medium text-gray-800">{template.name}{current ? '（当前系统）' : ''}</span>
@@ -603,7 +603,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     key={mode}
                     type="button"
                     onClick={() => setForm({ ...form, ssh_auth_mode: mode })}
-                    className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${sshAuthMode === mode ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${sshAuthMode === mode ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
                     {label}
                   </button>
@@ -775,7 +775,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 <select
                   value={form.lan_interface || defaultLANInterface}
                   onChange={(event) => setForm({ ...form, lan_interface: event.target.value })}
-                  className="h-9 w-32 shrink-0 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-black"
+                  className="h-9 w-32 shrink-0 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 >
                   {lanInterfaces.map((item) => (
                     <option key={item.name} value={item.name}>{item.name}</option>
@@ -789,14 +789,14 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                   <button
                     type="button"
                     onClick={() => setForm({ ...form, lan_ipv4_mode: 'dhcp' })}
-                    className={`rounded-md border px-3 py-2 text-xs font-medium ${form.lan_ipv4_mode === 'dhcp' ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    className={`rounded-md border px-3 py-2 text-xs font-medium ${form.lan_ipv4_mode === 'dhcp' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
                     DHCP 自动获取
                   </button>
                   <button
                     type="button"
                     onClick={() => setForm({ ...form, lan_ipv4_mode: 'static' })}
-                    className={`rounded-md border px-3 py-2 text-xs font-medium ${lanStaticEnabled ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    className={`rounded-md border px-3 py-2 text-xs font-medium ${lanStaticEnabled ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
                     手动配置
                   </button>
@@ -1331,7 +1331,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 type="button"
                 onClick={handleNextStep}
                 disabled={currentStep === 0 && storageLoading}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {t('下一步')}
                 <ArrowRight className="h-4 w-4" />
@@ -1341,7 +1341,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 type="button"
                 onClick={handleSubmit}
                 disabled={loading}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? t('创建中...') : t('确认创建')}
               </button>
@@ -1841,4 +1841,4 @@ function symmetricLimit(a: number, b: number) {
 }
 
 const inputClass =
-  'w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-black focus:border-black'
+  'w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500'

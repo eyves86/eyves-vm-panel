@@ -111,7 +111,7 @@ export default function AdminAccounts() {
           type="button"
           disabled={!canManage}
           onClick={() => setShowCreate((v) => !v)}
-          className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-xs font-medium text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
         >
           <Plus className="h-3.5 w-3.5" />
           {t('新建管理员')}
@@ -154,7 +154,7 @@ export default function AdminAccounts() {
             <button
               type="button"
               onClick={() => { void create() }}
-              className="rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
+              className="rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700"
             >
               {t('创建')}
             </button>
@@ -164,7 +164,7 @@ export default function AdminAccounts() {
 
       {loading ? (
         <div className="flex justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
@@ -281,7 +281,7 @@ export default function AdminAccounts() {
                   setPwdTarget(null)
                   void patch(target, { password: newPwd })
                 }}
-                className="rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800"
+                className="rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700"
               >
                 {t('确认重置')}
               </button>

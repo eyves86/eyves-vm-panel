@@ -109,7 +109,7 @@ export default function IPGroups() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600" />
       </div>
     )
   }
@@ -131,7 +131,7 @@ export default function IPGroups() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
           </button>
-          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black">
+          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
             <Plus className="h-4 w-4" />新建 IP 组
           </button>
         </div>
@@ -157,7 +157,7 @@ export default function IPGroups() {
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <button onClick={cancel} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">取消</button>
-            <button onClick={submit} className="rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black">{editingId ? '保存修改' : '创建 IP 组'}</button>
+            <button onClick={submit} className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">{editingId ? '保存修改' : '创建 IP 组'}</button>
           </div>
         </div>
       )}

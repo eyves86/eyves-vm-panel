@@ -184,7 +184,7 @@ export default function ISOs() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600" />
       </div>
     )
   }
@@ -206,7 +206,7 @@ export default function ISOs() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
           </button>
-          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black">
+          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
             <Plus className="h-4 w-4" />添加 ISO
           </button>
         </div>
@@ -219,13 +219,13 @@ export default function ISOs() {
           <div className="mb-4 flex gap-2">
             <button
               onClick={() => switchMode('url')}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${mode === 'url' ? 'bg-black text-white dark:bg-white dark:text-black' : 'border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'}`}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${mode === 'url' ? 'bg-brand-600 text-white dark:bg-brand-500 dark:text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'}`}
             >
               <ArrowDownToLine className="h-4 w-4" />在线下载
             </button>
             <button
               onClick={() => switchMode('upload')}
-              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${mode === 'upload' ? 'bg-black text-white dark:bg-white dark:text-black' : 'border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'}`}
+              className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${mode === 'upload' ? 'bg-brand-600 text-white dark:bg-brand-500 dark:text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'}`}
             >
               <Upload className="h-4 w-4" />本地上传
             </button>
@@ -257,7 +257,7 @@ export default function ISOs() {
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <button onClick={cancel} disabled={busy} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">取消</button>
-            <button onClick={mode === 'url' ? submitUrl : submitUpload} disabled={busy} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+            <button onClick={mode === 'url' ? submitUrl : submitUpload} disabled={busy} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
               {busy && <RefreshCw className="h-4 w-4 animate-spin" />}
               {busy ? (mode === 'url' ? '下载中…' : '上传中…') : (mode === 'url' ? '创建并下载' : '上传')}
             </button>
@@ -350,7 +350,7 @@ export default function ISOs() {
             <button
               onClick={() => { void mountISO() }}
               disabled={mounting || unmounting || !mountIsoId || !mountContainerId}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
             >
               {mounting && <RefreshCw className="h-4 w-4 animate-spin" />}
               {mounting ? '挂载中…' : '挂载并进入救援'}

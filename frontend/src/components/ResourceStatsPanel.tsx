@@ -67,7 +67,7 @@ export default function ResourceStatsPanel({
                 onClick={() => onRangeChange(item)}
                 className={`h-7 shrink-0 px-2 sm:px-3 rounded text-xs font-medium transition-colors ${
                   range === item
-                    ? 'bg-gray-800 text-white shadow-sm dark:bg-white dark:text-black'
+                    ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500 dark:text-white'
                     : 'text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white'
                 }`}
               >

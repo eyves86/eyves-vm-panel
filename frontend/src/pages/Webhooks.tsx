@@ -198,7 +198,7 @@ export default function Webhooks() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600" />
       </div>
     )
   }
@@ -222,7 +222,7 @@ export default function Webhooks() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
           </button>
-          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
             <Plus className="h-4 w-4" />新建订阅
           </button>
         </div>
@@ -430,7 +430,7 @@ export default function Webhooks() {
                   <button
                     onClick={() => { void submitCreate() }}
                     disabled={creating}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
                   >
                     <Plus className="h-4 w-4" />
                     {creating ? '创建中...' : '创建'}
@@ -443,7 +443,7 @@ export default function Webhooks() {
               <div className="flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-700 px-5 py-3">
                 <button
                   onClick={() => { void finishCreate() }}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
                 >
                   我已保存，关闭
                 </button>
@@ -512,7 +512,7 @@ export default function Webhooks() {
               <button
                 onClick={() => { void submitEdit() }}
                 disabled={savingEdit}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 <RefreshCw className={`h-4 w-4 ${savingEdit ? 'animate-spin' : ''}`} />
                 {savingEdit ? '保存中...' : '保存'}

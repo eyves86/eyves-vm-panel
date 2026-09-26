@@ -174,7 +174,7 @@ export default function ImageManagement() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -243,7 +243,7 @@ export default function ImageManagement() {
             onClick={() => setCustomModalOpen('lxc')}
             disabled={storageLoading || !imageStorageReady}
             title={storageLoading ? t('正在检查存储配置...') : imageStorageReady ? t('下载第三方 LXC 镜像') : t('请先在存储管理中开启镜像缓存存储')}
-            className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+            className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('第三方镜像')}
@@ -271,7 +271,7 @@ export default function ImageManagement() {
               onClick={() => setCustomModalOpen('kvm')}
               disabled={storageLoading || !imageStorageReady}
               title={storageLoading ? t('正在检查存储配置...') : imageStorageReady ? t('下载第三方 KVM 镜像') : t('请先在存储管理中开启镜像缓存存储')}
-              className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
             >
               <Plus className="h-3.5 w-3.5" />
               {t('第三方镜像')}
@@ -366,7 +366,7 @@ function CustomKVMImageModal({
     }
   }
 
-  const inputClass = 'mt-1.5 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black focus:ring-2 focus:ring-black/10 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:border-white dark:focus:ring-white/10'
+  const inputClass = 'mt-1.5 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500/10 dark:border-gray-700 dark:bg-gray-950 dark:text-white dark:focus:border-white dark:focus:ring-white/10'
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 dark:bg-black/75">
@@ -399,7 +399,7 @@ function CustomKVMImageModal({
                   disabled={arch !== 'amd64' && value !== 'linux-cloud-init'}
                   className={`rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
                     form.provisioner === value
-                      ? 'border-black bg-gray-50 dark:border-white dark:bg-gray-800'
+                      ? 'border-brand-600 bg-gray-50 dark:border-white dark:bg-gray-800'
                       : 'border-gray-200 hover:border-gray-400 dark:border-gray-700 dark:hover:border-gray-500'
                   }`}
                 >
@@ -456,7 +456,7 @@ function CustomKVMImageModal({
 
         <div className="flex justify-end gap-2 border-t border-gray-200 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
           <button type="button" onClick={onClose} disabled={submitting} className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-700">{t('取消')}</button>
-          <button type="button" onClick={submit} disabled={submitting} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200">
+          <button type="button" onClick={submit} disabled={submitting} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CloudDownload className="h-4 w-4" />}
             {submitting ? t('正在添加...') : t('添加并下载')}
           </button>
@@ -568,7 +568,7 @@ function ImageTable({
                             onClick={() => onDownload(img.id)}
                             disabled={isBusy || storageLoading || !storageReady}
                             title={storageLoading ? '正在检查存储配置...' : storageReady ? '下载镜像' : '请先在存储管理中开启镜像缓存存储'}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-black text-white rounded-md hover:bg-gray-800 transition-colors text-xs font-medium disabled:opacity-50"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors text-xs font-medium disabled:opacity-50"
                           >
                             {isBusy ? (
                               <Loader2 className="w-3.5 h-3.5 animate-spin" />

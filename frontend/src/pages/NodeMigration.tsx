@@ -230,7 +230,7 @@ export default function NodeMigration() {
           <button
             onClick={handleMigrate}
             disabled={!selectedContainer || !targetNodeId || migrating}
-            className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
           >
             <ArrowLeftRight className="w-4 h-4" />
             {migrating ? '迁移中...' : '开始迁移'}
@@ -325,7 +325,7 @@ export default function NodeMigration() {
           <button
             onClick={handleImport}
             disabled={!importBundle || busy}
-            className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
           >
             <Upload className="w-4 h-4" />
             导入容器

@@ -187,7 +187,7 @@ export default function WebVNCViewer({ containerName, onClose }: WebVNCViewerPro
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1 overflow-hidden bg-black">
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-brand-600">
         <div ref={screenRef} className="h-full w-full [&>div]:h-full [&>div]:w-full [&_canvas]:block" />
         {(status === 'connecting' || status === 'error' || (status === 'disconnected' && errorMsg)) && (
           <div className={`absolute inset-x-0 bottom-0 border-t px-4 py-2 text-sm ${status === 'error' ? 'border-red-900 bg-red-950 text-red-100' : 'border-gray-800 bg-gray-950 text-gray-200'}`}>

@@ -40,7 +40,7 @@ import Recipes from './pages/Recipes'
 function LoadingScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-white dark:bg-gray-950">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black dark:border-white"></div>
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600 dark:border-white"></div>
     </div>
   )
 }

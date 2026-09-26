@@ -201,7 +201,7 @@ export default function TaskCenter() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
       </div>
     )
   }
@@ -486,7 +486,7 @@ export default function TaskCenter() {
 
             {detailLoading || !detail ? (
               <div className="flex items-center justify-center py-16">
-                <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+                <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
               </div>
             ) : (
               <div className="max-h-[70vh] overflow-y-auto px-5 py-4">

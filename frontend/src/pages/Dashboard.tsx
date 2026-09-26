@@ -72,7 +72,7 @@ export default function Dashboard() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -178,7 +178,7 @@ function SummaryCard({
   muted?: boolean
 }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-5">
+    <div className="bg-white border border-gray-200 rounded-xl p-5 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-brand-200 hover:shadow-card dark:border-gray-700 dark:bg-gray-900 dark:hover:border-brand-500/40">
       <div className="flex items-center gap-2 text-sm text-gray-500 mb-2">
         {icon}
         {dot && <span className={`w-2 h-2 rounded-full ${dot}`}></span>}

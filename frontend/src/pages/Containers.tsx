@@ -360,7 +360,7 @@ export default function Containers() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -401,7 +401,7 @@ export default function Containers() {
           {!isSubUser && (
             <button
               onClick={() => setShowCreate(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-black text-white rounded-md hover:bg-gray-800 transition-colors text-xs font-medium whitespace-nowrap"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors text-xs font-medium whitespace-nowrap"
             >
               <Plus className="w-3.5 h-3.5" />
               创建容器
@@ -418,14 +418,14 @@ export default function Containers() {
               <input
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
-                className="h-8 w-full rounded-md border border-gray-300 bg-white pl-8 pr-2 text-xs text-black outline-none focus:border-black focus:ring-2 focus:ring-black"
+                className="h-8 w-full rounded-md border border-gray-300 bg-white pl-8 pr-2 text-xs text-black outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
                 placeholder="搜索名称、ID、UUID、IP"
               />
             </div>
             <select
               value={typeFilter}
               onChange={(event) => setTypeFilter(event.target.value)}
-              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
               title="类型筛选"
             >
               <option value="all">全部类型</option>
@@ -435,7 +435,7 @@ export default function Containers() {
             <select
               value={systemFilter}
               onChange={(event) => setSystemFilter(event.target.value)}
-              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
               title="系统筛选"
             >
               <option value="all">全部系统</option>
@@ -446,7 +446,7 @@ export default function Containers() {
             <select
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value)}
-              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
               title="状态筛选"
             >
               <option value="all">全部状态</option>
@@ -460,7 +460,7 @@ export default function Containers() {
               <select
                 value={tenantFilter}
                 onChange={(event) => setTenantFilter(event.target.value)}
-                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
                 title="租户筛选"
               >
                 <option value="all">全部租户</option>
@@ -473,7 +473,7 @@ export default function Containers() {
               <select
                 value={ownerFilter}
                 onChange={(event) => setOwnerFilter(event.target.value)}
-                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
                 title="属主筛选"
               >
                 <option value="all">全部属主</option>
@@ -486,7 +486,7 @@ export default function Containers() {
             <select
               value={pageSize}
               onChange={(event) => setPageSize(Number(event.target.value))}
-              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+              className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
               title="每页数量"
             >
               <option value={10}>10 / 页</option>
@@ -536,7 +536,7 @@ export default function Containers() {
                         checked={allFilteredSelected}
                         disabled={selectableIDs.length === 0}
                         onChange={toggleAll}
-                        className="w-4 h-4 rounded border-gray-300 text-black focus:ring-black accent-black"
+                        className="w-4 h-4 rounded border-gray-300 text-black focus:ring-brand-500 accent-brand-600"
                       />
                     )}
                   </th>
@@ -628,7 +628,7 @@ export default function Containers() {
                             checked={selected.has(container.id)}
                             onChange={() => toggleSelect(container.id)}
                             disabled={isPlaceholder || !!taskStatusMap[container.id] || !!taskNameMap[container.name]}
-                            className="w-3.5 h-3.5 rounded border-gray-300 text-black focus:ring-black accent-black disabled:opacity-30"
+                            className="w-3.5 h-3.5 rounded border-gray-300 text-black focus:ring-brand-500 accent-brand-600 disabled:opacity-30"
                           />
                         )}
                       </td>

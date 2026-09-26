@@ -289,7 +289,7 @@ export default function Routing() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600" />
       </div>
     )
   }
@@ -355,7 +355,7 @@ export default function Routing() {
               <button onClick={() => setEditingNAT4(false)} disabled={savingNAT4} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                 {text.cancel}
               </button>
-              <button onClick={saveNAT4Range} disabled={savingNAT4} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50">
+              <button onClick={saveNAT4Range} disabled={savingNAT4} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50">
                 <Save className="h-3.5 w-3.5" />
                 {savingNAT4 ? text.saving : text.save}
               </button>
@@ -494,7 +494,7 @@ export default function Routing() {
                 <button onClick={closeEditIPv4} disabled={savingIPv4} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                   {text.cancel}
                 </button>
-                <button onClick={saveIPv4Pool} disabled={savingIPv4} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50">
+                <button onClick={saveIPv4Pool} disabled={savingIPv4} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50">
                   <Save className="h-3.5 w-3.5" />
                   {savingIPv4 ? text.saving : text.save}
                 </button>
@@ -516,7 +516,7 @@ export default function Routing() {
                   value={scanCIDR}
                   onChange={(e) => setScanCIDR(e.target.value)}
                   placeholder="192.168.1.0/24"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
               </label>
               <label className="block">
@@ -526,7 +526,7 @@ export default function Routing() {
                   value={scanIface}
                   onChange={(e) => setScanIface(e.target.value)}
                   placeholder={defaultIPv4Interface}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
               </label>
               <label className="block">
@@ -536,7 +536,7 @@ export default function Routing() {
                   value={scanGateway}
                   onChange={(e) => setScanGateway(e.target.value)}
                   placeholder={defaultIPv4Gateway || text.gateway}
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500"
                 />
               </label>
             </div>
@@ -545,7 +545,7 @@ export default function Routing() {
                 type="checkbox"
                 checked={scanVerify}
                 onChange={(e) => setScanVerify(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300 accent-black"
+                className="h-4 w-4 rounded border-gray-300 accent-brand-600"
               />
               {text.scanVerify}
             </label>
@@ -553,7 +553,7 @@ export default function Routing() {
               <button onClick={() => setScanOpen(false)} disabled={scanning} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                 {text.cancel}
               </button>
-              <button onClick={() => { void runScan() }} disabled={scanning} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50">
+              <button onClick={() => { void runScan() }} disabled={scanning} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50">
                 <ScanSearch className="h-3.5 w-3.5" />
                 {scanning ? text.scanning : text.scanAction}
               </button>
@@ -680,7 +680,7 @@ export default function Routing() {
                 <button onClick={() => setEditingIPv6(false)} disabled={savingIPv6} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
                   {text.cancel}
                 </button>
-                <button onClick={saveIPv6Prefixes} disabled={savingIPv6} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50">
+                <button onClick={saveIPv6Prefixes} disabled={savingIPv6} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50">
                   <Save className="h-3.5 w-3.5" />
                   {savingIPv6 ? text.saving : text.save}
                 </button>
@@ -863,7 +863,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-7 text-xs text-black focus:outline-none focus:ring-1 focus:ring-black"
+        className="w-full rounded-md border border-gray-300 bg-white py-1.5 pl-8 pr-7 text-xs text-black focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
       {value && (
         <button onClick={() => onChange('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">
@@ -953,7 +953,7 @@ function LabeledNumberInput({ label, value, onChange, min, max }: {
         max={max}
         value={value || ''}
         onChange={(event) => onChange(Number(event.target.value))}
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500"
       />
     </label>
   )
@@ -1301,4 +1301,4 @@ function formatSource(source: string | undefined, language: Language) {
   return source
 }
 
-const smallInputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 font-mono text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-black'
+const smallInputClass = 'w-full rounded border border-gray-300 px-2 py-1.5 font-mono text-xs text-gray-800 focus:outline-none focus:ring-1 focus:ring-brand-500'

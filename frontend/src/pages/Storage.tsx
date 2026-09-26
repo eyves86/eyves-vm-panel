@@ -130,7 +130,7 @@ export default function Storage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black"></div>
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -146,7 +146,7 @@ export default function Storage() {
           <button onClick={fetchData} className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
             <RefreshCw className="h-4 w-4" />{t('刷新')}
           </button>
-          <button onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50">
+          <button onClick={save} disabled={saving} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50">
             <Save className="h-4 w-4" />{t(saving ? '保存中...' : '保存')}
           </button>
         </div>
@@ -226,7 +226,7 @@ export default function Storage() {
                                   aria-checked={isDefault}
                                   title={isDefault ? `${t('关闭')} ${t(label)} ${t('默认盘')}` : `${t('设为')} ${t(label)} ${t('默认盘')}`}
                                   onClick={() => toggleDefault(disk, value)}
-                                  className={`relative inline-flex h-5 w-9 shrink-0 appearance-none items-center rounded-full border p-0 transition-colors focus:outline-none focus:ring-2 focus:ring-black focus:ring-offset-1 ${isDefault ? 'border-black bg-black' : 'border-gray-300 bg-gray-200'}`}
+                                  className={`relative inline-flex h-5 w-9 shrink-0 appearance-none items-center rounded-full border p-0 transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-1 ${isDefault ? 'border-brand-600 bg-brand-600' : 'border-gray-300 bg-gray-200'}`}
                                 >
                                   <span className={`pointer-events-none absolute left-0.5 top-0.5 block h-4 w-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${isDefault ? 'translate-x-4' : 'translate-x-0'}`} />
                                 </button>

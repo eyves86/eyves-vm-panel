@@ -574,7 +574,7 @@ export default function NodeManagement() {
           </button>
           <button
             onClick={() => setShowCreate(true)}
-            className="flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+            className="flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('添加节点')}
@@ -584,7 +584,7 @@ export default function NodeManagement() {
 
       {loading ? (
         <div className="flex items-center justify-center py-20">
-          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white"></div>
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white"></div>
         </div>
       ) : nodes.length === 0 ? (
         <div className="rounded-lg border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-900">
@@ -592,7 +592,7 @@ export default function NodeManagement() {
           <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">{t('暂无被控节点')}</p>
           <button
             onClick={() => setShowCreate(true)}
-            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-black px-4 py-2 text-sm text-white dark:bg-white dark:text-black"
+            className="mt-4 inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-4 py-2 text-sm text-white dark:bg-brand-500 dark:text-white"
           >
             <Plus className="h-4 w-4" />
             {t('添加第一个节点')}
@@ -694,7 +694,7 @@ export default function NodeManagement() {
           </div>
           <button
             onClick={openGroupCreate}
-            className="flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+            className="flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('新建分组')}
@@ -762,7 +762,7 @@ export default function NodeManagement() {
           </div>
           <button
             onClick={openClusterCreate}
-            className="flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+            className="flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('新建集群')}
@@ -836,7 +836,7 @@ export default function NodeManagement() {
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
                   placeholder="node-1"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <div>
@@ -845,7 +845,7 @@ export default function NodeManagement() {
                   value={newAddress}
                   onChange={(e) => setNewAddress(e.target.value)}
                   placeholder="http://1.2.3.4:8999"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <p className="text-xs text-gray-400">{t('地址留空时，可在 Agent 安装脚本中通过第二个参数指定')}</p>
@@ -860,7 +860,7 @@ export default function NodeManagement() {
               <button
                 onClick={handleCreate}
                 disabled={creating}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {creating && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('创建')}
@@ -899,7 +899,7 @@ export default function NodeManagement() {
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button
                 onClick={copyScript}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 <Copy className="h-4 w-4" />
                 {t('复制脚本')}
@@ -941,7 +941,7 @@ export default function NodeManagement() {
             <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-5 py-2.5 dark:border-gray-700">
               <button
                 onClick={() => openCreateContainer(detailNode)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t('开通容器')}
@@ -1095,7 +1095,7 @@ export default function NodeManagement() {
                   value={createForm.name}
                   onChange={(e) => setCreateForm({ ...createForm, name: e.target.value })}
                   placeholder="ct-1"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <div>
@@ -1103,7 +1103,7 @@ export default function NodeManagement() {
                 <select
                   value={createForm.template_id}
                   onChange={(e) => setCreateForm({ ...createForm, template_id: e.target.value })}
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 >
                   <option value="">{t('请选择镜像')}</option>
                   {templates.map((tmpl) => (
@@ -1119,7 +1119,7 @@ export default function NodeManagement() {
                     min={1}
                     value={createForm.vcpu}
                     onChange={(e) => setCreateForm({ ...createForm, vcpu: Number(e.target.value) || 0 })}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                   />
                 </div>
                 <div>
@@ -1129,7 +1129,7 @@ export default function NodeManagement() {
                     min={128}
                     value={createForm.ram_mb}
                     onChange={(e) => setCreateForm({ ...createForm, ram_mb: Number(e.target.value) || 0 })}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                   />
                 </div>
                 <div>
@@ -1139,7 +1139,7 @@ export default function NodeManagement() {
                     min={1}
                     value={createForm.disk_gb}
                     onChange={(e) => setCreateForm({ ...createForm, disk_gb: Number(e.target.value) || 0 })}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                   />
                 </div>
                 <div>
@@ -1149,7 +1149,7 @@ export default function NodeManagement() {
                     min={0}
                     value={createForm.data_disk_gb ?? 0}
                     onChange={(e) => setCreateForm({ ...createForm, data_disk_gb: Number(e.target.value) || 0 })}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                   />
                 </div>
                 <div>
@@ -1159,7 +1159,7 @@ export default function NodeManagement() {
                     placeholder="/data"
                     value={createForm.data_disk_mount_path ?? ''}
                     onChange={(e) => setCreateForm({ ...createForm, data_disk_mount_path: e.target.value })}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                   />
                 </div>
               </div>
@@ -1175,7 +1175,7 @@ export default function NodeManagement() {
               <button
                 onClick={handleCreateContainer}
                 disabled={creatingContainer}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {creatingContainer && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('开通')}
@@ -1204,7 +1204,7 @@ export default function NodeManagement() {
                   value={groupName}
                   onChange={(e) => setGroupName(e.target.value)}
                   placeholder="group-1"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <div>
@@ -1213,7 +1213,7 @@ export default function NodeManagement() {
                   value={groupDesc}
                   onChange={(e) => setGroupDesc(e.target.value)}
                   placeholder={t('可选')}
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <div>
@@ -1221,7 +1221,7 @@ export default function NodeManagement() {
                 <select
                   value={groupRegionId}
                   onChange={(e) => setGroupRegionId(e.target.value)}
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 >
                   <option value="">{t('不关联区域')}</option>
                   {regions.map((region) => (
@@ -1273,7 +1273,7 @@ export default function NodeManagement() {
               <button
                 onClick={saveNodeGroup}
                 disabled={groupSaving}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {groupSaving && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('保存')}
@@ -1302,7 +1302,7 @@ export default function NodeManagement() {
                   value={clusterName}
                   onChange={(e) => setClusterName(e.target.value)}
                   placeholder="cluster-1"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <div>
@@ -1311,7 +1311,7 @@ export default function NodeManagement() {
                   value={clusterDesc}
                   onChange={(e) => setClusterDesc(e.target.value)}
                   placeholder={t('可选')}
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
               <div>
@@ -1377,7 +1377,7 @@ export default function NodeManagement() {
               <button
                 onClick={saveCluster}
                 disabled={clusterSaving}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {clusterSaving && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('保存')}

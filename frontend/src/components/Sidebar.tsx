@@ -351,10 +351,10 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
   const expanded = mobileOpen || !collapsed
 
   const itemClass = (active: boolean) =>
-    `w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors ${
+    `w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-all duration-200 ${
       active
-        ? 'bg-black text-white dark:bg-white dark:text-black'
-        : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800'
+        ? 'bg-brand-100 font-medium text-brand-700 dark:bg-brand-500/15 dark:text-brand-300'
+        : 'text-gray-700 hover:bg-gray-100 hover:text-brand-700 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-brand-300'
     }`
 
   return (

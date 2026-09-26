@@ -100,7 +100,7 @@ export default function MyServers() {
 
       {loading ? (
         <div className="flex justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+          <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
         </div>
       ) : servers.length === 0 ? (
         <div className="rounded-lg border border-dashed border-gray-300 bg-white py-16 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900">

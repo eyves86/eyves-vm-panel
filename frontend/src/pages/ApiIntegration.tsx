@@ -493,7 +493,7 @@ export default function ApiIntegration() {
         </div>
         <button
           onClick={openCreate}
-          className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800"
+          className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700"
         >
           <Plus className="h-4 w-4" />
           创建 Key
@@ -630,7 +630,7 @@ export default function ApiIntegration() {
               <button
                 onClick={downloadWhmcs}
                 disabled={whmcsDownloading}
-                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-60"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <Download className="h-4 w-4" />
                 {whmcsDownloading ? '打包中...' : '下载模块 zip'}
@@ -809,7 +809,7 @@ export default function ApiIntegration() {
                       type="checkbox"
                       checked={form.disabled}
                       onChange={e => setForm(prev => ({ ...prev, disabled: e.target.checked }))}
-                      className="h-4 w-4 accent-black"
+                      className="h-4 w-4 accent-brand-600"
                     />
                     禁用这个 Key
                   </label>
@@ -822,7 +822,7 @@ export default function ApiIntegration() {
                           type="checkbox"
                           checked={form.containerUUIDs.length === 0}
                           onChange={() => setForm(prev => ({ ...prev, containerUUIDs: [] }))}
-                          className="h-4 w-4 accent-black"
+                          className="h-4 w-4 accent-brand-600"
                         />
                         全部容器
                       </label>
@@ -832,7 +832,7 @@ export default function ApiIntegration() {
                             type="checkbox"
                             checked={form.containerUUIDs.includes(container.uuid)}
                             onChange={() => toggleContainer(container.uuid)}
-                            className="h-4 w-4 accent-black"
+                            className="h-4 w-4 accent-brand-600"
                           />
                           <span className="min-w-0 truncate">{container.name}</span>
                           <span className="shrink-0 font-mono text-[10px] text-gray-400">{container.uuid.slice(0, 8)}</span>
@@ -861,7 +861,7 @@ export default function ApiIntegration() {
                                 checked={form.scopes.includes('*') || form.scopes.includes(scope)}
                                 disabled={form.scopes.includes('*')}
                                 onChange={() => toggleScope(scope)}
-                                className="h-4 w-4 accent-black"
+                                className="h-4 w-4 accent-brand-600"
                               />
                               <span className="min-w-0 flex-1 truncate">{label}</span>
                               <code className="hidden shrink-0 font-mono text-[10px] text-gray-400 sm:block">{scope}</code>
@@ -886,7 +886,7 @@ export default function ApiIntegration() {
               <button
                 onClick={saveKey}
                 disabled={saving || !form.name.trim()}
-                className="rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {saving ? '保存中...' : '保存'}
               </button>

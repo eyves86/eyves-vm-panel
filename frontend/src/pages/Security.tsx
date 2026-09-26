@@ -207,7 +207,7 @@ export default function Security() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -511,7 +511,7 @@ export default function Security() {
                     value={checkTarget}
                     onChange={(e) => setCheckTarget(e.target.value)}
                     disabled={checking || checkContainersLoading}
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black focus:outline-none focus:ring-1 focus:ring-black disabled:opacity-50"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black focus:outline-none focus:ring-1 focus:ring-brand-500 disabled:opacity-50"
                   >
                     <option value="">{checkContainersLoading ? '加载容器中...' : '请选择容器'}</option>
                     {checkContainers.map((c) => (
@@ -522,7 +522,7 @@ export default function Security() {
                 <button
                   onClick={() => { void runCheck() }}
                   disabled={!checkTarget || checking}
-                  className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+                  className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
                 >
                   {checking ? <RefreshCw className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}
                   {checking ? '检查中...' : '立即检查'}

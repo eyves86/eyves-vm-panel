@@ -169,7 +169,7 @@ export default function SSHKeys() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
       </div>
     )
   }
@@ -191,7 +191,7 @@ export default function SSHKeys() {
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
           </button>
-          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black">
+          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
             <Plus className="h-4 w-4" />新建公钥
           </button>
         </div>
@@ -301,7 +301,7 @@ export default function SSHKeys() {
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
-              <button onClick={submitCreate} disabled={creating} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+              <button onClick={submitCreate} disabled={creating} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {creating && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {creating ? '创建中…' : '创建'}
               </button>
@@ -335,7 +335,7 @@ export default function SSHKeys() {
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button onClick={() => setRenameKey(null)} disabled={savingRename} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
-              <button onClick={submitRename} disabled={savingRename} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+              <button onClick={submitRename} disabled={savingRename} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {savingRename && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {savingRename ? '保存中…' : '保存'}
               </button>
@@ -357,7 +357,7 @@ export default function SSHKeys() {
             <div className="flex-1 overflow-auto px-5 py-4">
               {viewLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+                  <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
                 </div>
               ) : viewError ? (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{viewError}</div>
@@ -393,7 +393,7 @@ export default function SSHKeys() {
               <button
                 onClick={() => void copyPublicKey()}
                 disabled={!viewDetail?.public_key}
-                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black"
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white"
               >
                 <Copy className="h-4 w-4" />复制公钥
               </button>

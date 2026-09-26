@@ -205,7 +205,7 @@ export default function WebSSHViewer({ containerName, onClose }: WebSSHViewerPro
         </div>
       </div>
 
-      <div className="relative flex-1 bg-black min-h-[500px]">
+      <div className="relative flex-1 bg-brand-600 min-h-[500px]">
         <div ref={terminalRef} className="absolute inset-0 p-2" />
         {status === 'error' && (
           <div className="absolute inset-x-0 bottom-0 border-t border-red-900 bg-red-950 px-4 py-2 text-sm text-red-100">

@@ -52,7 +52,7 @@ export default function ContainerCard({ container, onRefresh }: ContainerCardPro
   const statusText = container.status === 'running' ? '运行中' : '已停止'
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-5 hover:shadow-md transition-shadow">
+    <div className="bg-white border border-gray-200 rounded-xl p-5 transition-all duration-300 ease-out hover:-translate-y-1 hover:border-brand-200 hover:shadow-card dark:border-gray-700 dark:bg-gray-900 dark:hover:border-brand-500/40">
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3">

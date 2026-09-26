@@ -131,7 +131,7 @@ import ResourceStatsPanel, {
 import { generateSSHPassword, sshPasswordError, sshPublicKeyError, type ReinstallSSHAuthMode } from '../utils/sshAuth'
 
 const PUBLIC_HOST = window.location.hostname
-const inputClass = 'w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-black focus:border-black'
+const inputClass = 'w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500'
 
 type MetricPoint = {
   ts: number
@@ -1558,7 +1558,7 @@ export default function ContainerDetail() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-black"></div>
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600"></div>
       </div>
     )
   }
@@ -2136,7 +2136,7 @@ export default function ContainerDetail() {
             )}
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setShowTrafficEdit(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">取消</button>
-              <button onClick={saveTrafficLimit} disabled={savingTraffic} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">{savingTraffic ? '保存中...' : '保存'}</button>
+              <button onClick={saveTrafficLimit} disabled={savingTraffic} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">{savingTraffic ? '保存中...' : '保存'}</button>
             </div>
           </div>
         </Modal>
@@ -2189,7 +2189,7 @@ export default function ContainerDetail() {
               <button
                 onClick={handleResetPassword}
                 disabled={resetPasswordSaving || !resetPasswordDraft || !!resetPasswordError(resetPasswordDraft)}
-                className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {resetPasswordSaving ? '修改中...' : '确认修改'}
               </button>
@@ -2259,7 +2259,7 @@ export default function ContainerDetail() {
               <button
                 onClick={handleCreateAccount}
                 disabled={accountSaving || !accountUsername || !!accountUsernameError(accountUsername) || !accountPassword || !!sshPasswordError(accountPassword)}
-                className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 {accountSaving ? '创建中...' : '确认创建'}
               </button>
@@ -2337,7 +2337,7 @@ export default function ContainerDetail() {
               <button
                 onClick={handleCreateSnapshot}
                 disabled={!!snapshotBusy || storageLoading || !snapshotStorageReady || (isSubUser && snapshots.length >= snapshotQuota)}
-                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 <Camera className="w-3.5 h-3.5" />
                 {snapshotBusy === 'create' ? '创建中...' : '新建快照'}
@@ -2401,7 +2401,7 @@ export default function ContainerDetail() {
                   <select
                     value={snapshotStoragePoolID}
                     onChange={(event) => setSnapshotStoragePoolID(event.target.value)}
-                    className="w-72 px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-black focus:border-black"
+                    className="w-72 px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                   >
                     <option value="">自动选择（默认盘优先，空间不足自动切换）</option>
                     {snapshotStoragePools.map((pool) => (
@@ -2424,7 +2424,7 @@ export default function ContainerDetail() {
                     max={999}
                     value={snapshotQuotaDraft}
                     onChange={(event) => setSnapshotQuotaDraft(Math.max(1, Math.round(Number(event.target.value) || 1)))}
-                    className="w-44 px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-black focus:border-black"
+                    className="w-44 px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500"
                   />
                 </Field>
                 <div className="flex gap-2 pb-0.5">
@@ -2441,7 +2441,7 @@ export default function ContainerDetail() {
                   <button
                     onClick={saveSnapshotQuota}
                     disabled={snapshotBusy === 'quota'}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
                   >
                     <Save className="w-4 h-4" />
                     {snapshotBusy === 'quota' ? '保存中...' : '保存'}
@@ -2476,7 +2476,7 @@ export default function ContainerDetail() {
               <button
                 onClick={handleCreateBackup}
                 disabled={!!backupBusy || isSubUserPolicyBlocked || readOnly}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 {backupBusy === 'create' ? '备份中...' : '新建备份'}
@@ -2577,7 +2577,7 @@ export default function ContainerDetail() {
                 <button
                   onClick={() => saveSnapshotSchedule(true)}
                   disabled={snapshotBusy === 'schedule'}
-                  className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                  className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
                 >
                   {snapshotBusy === 'schedule' ? '保存中...' : '保存'}
                 </button>
@@ -2629,7 +2629,7 @@ export default function ContainerDetail() {
               <button
                 onClick={saveReverseDNS}
                 disabled={rdnsSaving || rdnsLoading || rdnsRecords.length === 0 || readOnly || isSubUserPolicyBlocked}
-                className="inline-flex items-center gap-1.5 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 <Save className="h-3.5 w-3.5" />
                 {rdnsSaving ? '保存中...' : '保存'}
@@ -2646,7 +2646,7 @@ export default function ContainerDetail() {
               onClick={addFirewallRule}
               disabled={firewallNetworkOptions.length === 0}
               title={firewallNetworkOptions.length === 0 ? '当前容器没有可配置的 NAT、公网 IPv4 或 IPv6' : undefined}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-black text-white rounded-md text-xs hover:bg-gray-800 disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-md text-xs hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <Plus className="w-3.5 h-3.5" />添加规则
             </button>
@@ -2680,7 +2680,7 @@ export default function ContainerDetail() {
                 value={firewallDefaultAction}
                 onChange={(e) => setFirewallDefaultAction(e.target.value as 'ACCEPT' | 'DROP')}
                 disabled={isSubUser}
-                className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-800 focus:border-black focus:outline-none focus:ring-2 focus:ring-black disabled:opacity-60"
+                className="rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs text-gray-800 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:opacity-60"
               >
                 <option value="DROP">未匹配拒绝</option>
                 <option value="ACCEPT">未匹配放行</option>
@@ -2779,7 +2779,7 @@ export default function ContainerDetail() {
             {/* Save button */}
             {!isSubUser && (
               <div className="flex justify-end">
-                <button onClick={saveFirewall} disabled={firewallSaving} className="inline-flex items-center gap-1.5 px-4 py-2 bg-black text-white rounded-md text-sm hover:bg-gray-800 disabled:opacity-50">
+                <button onClick={saveFirewall} disabled={firewallSaving} className="inline-flex items-center gap-1.5 px-4 py-2 bg-brand-600 text-white rounded-md text-sm hover:bg-brand-700 disabled:opacity-50">
                   <Save className="w-3.5 h-3.5" />
                   {firewallSaving ? '保存中...' : '保存'}
                 </button>
@@ -2868,7 +2868,7 @@ export default function ContainerDetail() {
             </Field>
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => { setShowFirewallEditor(false); setEditingFirewallRule(null) }} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>
-              <button onClick={() => saveFirewallRule(editingFirewallRule)} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800">确定</button>
+              <button onClick={() => saveFirewallRule(editingFirewallRule)} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700">确定</button>
             </div>
           </div>
         </Modal>
@@ -2948,7 +2948,7 @@ export default function ContainerDetail() {
             <button onClick={() => setShowIPAssign(false)} disabled={savingIPAssign} className="rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50">
               取消
             </button>
-            <button onClick={submitIPAssign} disabled={savingIPAssign} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50">
+            <button onClick={submitIPAssign} disabled={savingIPAssign} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50">
               <Save className="h-4 w-4" />
               {savingIPAssign ? '保存中...' : '保存'}
             </button>
@@ -2959,7 +2959,7 @@ export default function ContainerDetail() {
       {showNat && !hasIndependentIPv4 && (
         <Modal title="IPv4 NAT 端口管理" onClose={() => { setShowNat(false); setDraft(emptyDraft); setShowMappingEditor(false) }} wide extra={
           !isSubUser && canAddMapping && (
-            <button onClick={openAddMapping} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-black text-white rounded-md text-xs hover:bg-gray-800">
+            <button onClick={openAddMapping} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-md text-xs hover:bg-brand-700">
               <Plus className="w-3.5 h-3.5" />添加映射
             </button>
           )
@@ -3041,7 +3041,7 @@ export default function ContainerDetail() {
                     key={mode}
                     type="button"
                     onClick={() => setReinstallMode(mode)}
-                    className={`rounded-md border px-3 py-2 text-left transition-colors ${reinstallMode === mode ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    className={`rounded-md border px-3 py-2 text-left transition-colors ${reinstallMode === mode ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
                     <div className="text-xs font-medium">{label}</div>
                     <div className={`mt-0.5 text-[11px] ${reinstallMode === mode ? 'text-gray-200' : 'text-gray-500'}`}>{hint}</div>
@@ -3070,7 +3070,7 @@ export default function ContainerDetail() {
                       key={mode}
                       type="button"
                       onClick={() => setReinstallAuthMode(mode)}
-                      className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${reinstallAuthMode === mode ? 'border-black bg-black text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                      className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${reinstallAuthMode === mode ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                     >
                       {label}
                     </button>
@@ -3107,7 +3107,7 @@ export default function ContainerDetail() {
             )}
             <div className="flex justify-end gap-3">
               <button onClick={() => setShowReinstall(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>
-              <button onClick={handleReinstall} disabled={reinstalling} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+              <button onClick={handleReinstall} disabled={reinstalling} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                 {reinstalling ? '重装中...' : '确认重装'}
               </button>
             </div>
@@ -3125,7 +3125,7 @@ export default function ContainerDetail() {
                 </p>
                 <div className="flex justify-end gap-3">
                   <button onClick={() => setShowRescue(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>
-                  <button onClick={() => submitRescue(false)} disabled={rescueBusy} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+                  <button onClick={() => submitRescue(false)} disabled={rescueBusy} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                     {rescueBusy ? '处理中...' : '退出救援模式'}
                   </button>
                 </div>
@@ -3151,7 +3151,7 @@ export default function ContainerDetail() {
                 )}
                 <div className="flex justify-end gap-3">
                   <button onClick={() => setShowRescue(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>
-                  <button onClick={() => submitRescue(true)} disabled={rescueBusy} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+                  <button onClick={() => submitRescue(true)} disabled={rescueBusy} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                     {rescueBusy ? '处理中...' : '进入救援模式'}
                   </button>
                 </div>
@@ -3191,7 +3191,7 @@ export default function ContainerDetail() {
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={() => setShowOwnerEdit(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>
-              <button onClick={() => { void handleChangeOwner() }} disabled={changingOwner} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+              <button onClick={() => { void handleChangeOwner() }} disabled={changingOwner} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                 {changingOwner ? '变更中...' : '确认变更'}
               </button>
             </div>
@@ -3224,7 +3224,7 @@ export default function ContainerDetail() {
                   fetchContainer()
                 } catch { /* ignore */ }
                 finally { setSavingExpiry(false) }
-              }} disabled={savingExpiry} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+              }} disabled={savingExpiry} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                 {savingExpiry ? '保存中...' : '保存'}
               </button>
             </div>
@@ -3277,7 +3277,7 @@ export default function ContainerDetail() {
             <p className="text-[11px] text-gray-400">磁盘容量不支持动态修改。修改后运行中的容器会立即应用新的 cgroup 限制。</p>
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setShowResourceEdit(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">取消</button>
-              <button onClick={saveResourceLimit} disabled={savingResource} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+              <button onClick={saveResourceLimit} disabled={savingResource} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                 {savingResource ? '保存中...' : '保存'}
               </button>
             </div>
@@ -3481,7 +3481,7 @@ export default function ContainerDetail() {
               <button
                 onClick={() => void createScheduled()}
                 disabled={scheduledBusy || !scheduledForm.executeAt}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
               >
                 <Plus className="w-4 h-4" />
                 {scheduledBusy ? '创建中...' : '创建任务'}
@@ -3539,13 +3539,13 @@ export default function ContainerDetail() {
               <div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
                 <button
                   onClick={() => void switchBandwidthMode('hourly')}
-                  className={`px-3 py-1.5 text-xs ${bandwidthMode === 'hourly' ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                  className={`px-3 py-1.5 text-xs ${bandwidthMode === 'hourly' ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
                 >
                   最近 24 小时
                 </button>
                 <button
                   onClick={() => void switchBandwidthMode('month')}
-                  className={`px-3 py-1.5 text-xs ${bandwidthMode === 'month' ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                  className={`px-3 py-1.5 text-xs ${bandwidthMode === 'month' ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
                 >
                   按月
                 </button>
@@ -3660,7 +3660,7 @@ export default function ContainerDetail() {
             <p className="text-[11px] text-gray-400">设置在下次启动虚拟机时生效，运行中的虚拟机不受影响。</p>
             <div className="flex justify-end gap-2 pt-2">
               <button onClick={() => setShowHVM(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">取消</button>
-              <button onClick={() => void saveHVMSettings()} disabled={hvmSaving} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+              <button onClick={() => void saveHVMSettings()} disabled={hvmSaving} className="px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50">
                 {hvmSaving ? '保存中...' : '保存'}
               </button>
             </div>
@@ -3692,7 +3692,7 @@ export default function ContainerDetail() {
             <button
               onClick={() => void runRecipeOnContainer()}
               disabled={!selectedRecipeId || recipeExecuting}
-              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
             >
               <Play className="w-4 h-4" />
               {recipeExecuting ? '执行中...' : '执行'}
@@ -3719,7 +3719,7 @@ function RangeSwitch({ value, onChange }: { value: StatsRangeKey; onChange: (val
         <button
           key={item}
           onClick={() => onChange(item)}
-          className={`px-3 py-1.5 text-xs ${value === item ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+          className={`px-3 py-1.5 text-xs ${value === item ? 'bg-brand-600 text-white' : 'text-gray-600 hover:bg-gray-50'}`}
         >
           {item === '30m' ? '30分钟' : item === '1h' ? '1小时' : item === '1d' ? '1天' : '1周'}
         </button>
@@ -3770,7 +3770,7 @@ function ActionButton({ children, onClick, disabled, dark = false }: { children:
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap ${dark ? 'bg-black text-white hover:bg-gray-800' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+      className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap ${dark ? 'bg-brand-600 text-white hover:bg-brand-700' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
     >
       {children}
     </button>
@@ -4029,7 +4029,7 @@ function MappingEditor({
         <button
           onClick={onSubmit}
           disabled={saving || (!isEditing && !canAddMapping)}
-          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+          className="inline-flex items-center justify-center gap-1.5 px-4 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
         >
           <Save className="w-4 h-4" />
           {saving ? '保存中...' : '保存'}
@@ -4342,7 +4342,7 @@ function TrafficBar({ container }: { container: Container }) {
           </div>
           {rxLimit > 0 && (
             <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div className="bg-black h-2.5 rounded-full transition-all" style={{ width: `${Math.min(rxPct, 100)}%` }} />
+              <div className="bg-brand-600 h-2.5 rounded-full transition-all" style={{ width: `${Math.min(rxPct, 100)}%` }} />
             </div>
           )}
         </div>
@@ -4353,7 +4353,7 @@ function TrafficBar({ container }: { container: Container }) {
           </div>
           {txLimit > 0 && (
             <div className="w-full bg-gray-200 rounded-full h-2.5">
-              <div className="bg-black h-2.5 rounded-full transition-all" style={{ width: `${Math.min(txPct, 100)}%` }} />
+              <div className="bg-brand-600 h-2.5 rounded-full transition-all" style={{ width: `${Math.min(txPct, 100)}%` }} />
             </div>
           )}
         </div>
@@ -4377,7 +4377,7 @@ function TrafficBar({ container }: { container: Container }) {
         </div>
       </div>
       <div className="w-full bg-gray-200 rounded-full h-2.5">
-        <div className="bg-black h-2.5 rounded-full transition-all" style={{ width: `${Math.min(totalPct, 100)}%` }} />
+        <div className="bg-brand-600 h-2.5 rounded-full transition-all" style={{ width: `${Math.min(totalPct, 100)}%` }} />
       </div>
     </div>
   )

@@ -378,7 +378,7 @@ export default function SubUserManagement() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600" />
       </div>
     )
   }
@@ -394,7 +394,7 @@ export default function SubUserManagement() {
         </div>
         <button
           onClick={() => { void openCreate() }}
-          className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+          className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
         >
           <Plus className="h-4 w-4" />
           {t('新建子用户')}
@@ -616,7 +616,7 @@ export default function SubUserManagement() {
                         type="checkbox"
                         checked={createSelected.includes(c.uuid)}
                         onChange={() => toggleCreateSelect(c.uuid)}
-                        className="h-4 w-4 rounded border-gray-300 accent-black"
+                        className="h-4 w-4 rounded border-gray-300 accent-brand-600"
                       />
                       <span className="font-medium text-black dark:text-white">{c.name}</span>
                       <span className="text-xs text-gray-400">#{c.id}</span>
@@ -630,7 +630,7 @@ export default function SubUserManagement() {
               <button
                 onClick={() => { void submitCreate() }}
                 disabled={creating}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 <Plus className="h-4 w-4" />
                 {creating ? '创建中...' : '创建'}
@@ -715,7 +715,7 @@ export default function SubUserManagement() {
               <button
                 onClick={() => { void submitEdit() }}
                 disabled={savingEdit}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 <Save className="h-4 w-4" />
                 {savingEdit ? '保存中...' : '保存'}
@@ -741,7 +741,7 @@ export default function SubUserManagement() {
             <div className="flex-1 overflow-y-auto p-5">
               {bindLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-black" />
+                  <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-brand-600" />
                 </div>
               ) : bindContainers.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">暂无容器</div>
@@ -757,7 +757,7 @@ export default function SubUserManagement() {
                           ownedByOther
                             ? 'cursor-not-allowed border-gray-100 dark:border-gray-800 opacity-50'
                             : checked
-                              ? 'cursor-pointer border-black bg-gray-50 dark:border-white dark:bg-gray-800'
+                              ? 'cursor-pointer border-brand-600 bg-gray-50 dark:border-white dark:bg-gray-800'
                               : 'cursor-pointer border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'
                         }`}
                         title={ownedByOther ? '已绑定给其他子用户，请先在容器上变更属主' : undefined}
@@ -767,7 +767,7 @@ export default function SubUserManagement() {
                           checked={checked}
                           disabled={ownedByOther}
                           onChange={() => toggleBind(c.uuid, ownedByOther)}
-                          className="h-4 w-4 rounded border-gray-300 accent-black"
+                          className="h-4 w-4 rounded border-gray-300 accent-brand-600"
                         />
                         <span className="min-w-0 flex-1">
                           <span className="font-medium text-black dark:text-white">{c.name}</span>
@@ -789,7 +789,7 @@ export default function SubUserManagement() {
                 <button
                   onClick={() => { void submitBind() }}
                   disabled={bindSaving || bindLoading}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
                 >
                   <Save className="h-4 w-4" />
                   {bindSaving ? '保存中...' : '保存'}
@@ -869,7 +869,7 @@ export default function SubUserManagement() {
             <div className="flex-1 overflow-y-auto p-5">
               {imagesLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-black" />
+                  <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-brand-600" />
                 </div>
               ) : images.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">
@@ -883,13 +883,13 @@ export default function SubUserManagement() {
                     return (
                       <label
                         key={image.id}
-                        className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-sm transition-colors ${checked ? 'border-black bg-gray-50 dark:border-white dark:bg-gray-800' : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'}`}
+                        className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-sm transition-colors ${checked ? 'border-brand-600 bg-gray-50 dark:border-white dark:bg-gray-800' : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'}`}
                       >
                         <input
                           type="checkbox"
                           checked={checked}
                           onChange={() => toggleImageID(image.id)}
-                          className="mt-1 h-4 w-4 rounded border-gray-300 text-black focus:ring-black"
+                          className="mt-1 h-4 w-4 rounded border-gray-300 text-black focus:ring-brand-500"
                         />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate font-medium text-black dark:text-white">{image.name}{current ? '（当前系统）' : ''}</span>
@@ -912,7 +912,7 @@ export default function SubUserManagement() {
                 <button
                   onClick={saveImageLimit}
                   disabled={savingImages || imagesLoading}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 disabled:opacity-50"
                 >
                   <Save className="h-4 w-4" />
                   {savingImages ? '保存中...' : '保存'}

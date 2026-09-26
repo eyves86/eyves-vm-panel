@@ -2,10 +2,40 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ============ 设计系统变量（对齐参考站） ============ */
+:root {
+  --accent: #7044ed;
+  --accent-hover: #5832cc;
+  --accent-soft: #f1ebff;
+  --text: #242135;
+  --muted: #777385;
+  --surface: #fff;
+  --soft: #faf9fd;
+  --line: #eae7f1;
+  --motion-ease: cubic-bezier(.22, 1, .36, 1);
+  --motion-fast: .18s;
+  --motion-normal: .3s;
+}
+
+.dark {
+  --accent: #ad8aff;
+  --accent-hover: #bea1ff;
+  --accent-soft: #2d2444;
+  --text: #eeeaf7;
+  --muted: #aaa1bb;
+  --surface: #191622;
+  --soft: #211c2c;
+  --line: #37303f;
+}
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 html,
@@ -16,9 +46,25 @@ body {
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  background-color: #ffffff;
-  color: #000000;
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  background-color: var(--surface);
+  color: var(--text);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 页面底色：浅紫白（参考站 --soft #faf9fd） */
+.bg-gray-50 {
+  background-color: #faf9fd;
+}
+
+/* 文字选中：品牌紫 */
+::selection {
+  background: rgba(112, 68, 237, 0.22);
+}
+.dark ::selection {
+  background: rgba(173, 138, 255, 0.32);
 }
 
 /* Scrollbar */
@@ -27,66 +73,181 @@ body {
   height: 6px;
 }
 ::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #888;
+  background: #cfc8e0;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #555;
+  background: #a99ec4;
+}
+
+/* ============ 按钮质感（参考站 .button 体系） ============ */
+
+/* 主按钮（bg-brand-600）：品牌紫 + 柔光阴影 + hover 上浮 + active 按压 */
+button.bg-brand-600,
+a.bg-brand-600,
+.bg-brand-600.bg-brand-600 {
+  box-shadow: 0 5px 13px rgba(112, 68, 237, 0.16);
+  transition: background-color var(--motion-fast) var(--motion-ease),
+    box-shadow var(--motion-normal) var(--motion-ease),
+    transform var(--motion-fast) var(--motion-ease);
+}
+button.bg-brand-600:hover,
+a.bg-brand-600:hover,
+.bg-brand-600.bg-brand-600:hover {
+  box-shadow: 0 8px 20px rgba(112, 68, 237, 0.26);
+  transform: translateY(-1px);
+}
+button.bg-brand-600:active,
+a.bg-brand-600:active,
+.bg-brand-600.bg-brand-600:active {
+  transform: translateY(0);
+  box-shadow: 0 3px 9px rgba(112, 68, 237, 0.2);
+}
+button.bg-brand-600:disabled,
+a.bg-brand-600:disabled {
+  transform: none;
+  box-shadow: none;
+}
+
+.dark button.bg-brand-600,
+.dark a.bg-brand-600,
+.dark .bg-brand-600.bg-brand-600 {
+  box-shadow: 0 5px 13px rgba(138, 92, 240, 0.2);
+}
+.dark button.bg-brand-600:hover,
+.dark a.bg-brand-600:hover,
+.dark .bg-brand-600.bg-brand-600:hover {
+  box-shadow: 0 8px 20px rgba(138, 92, 240, 0.3);
+}
+
+/* 次按钮（border 实线）：hover 边框染品牌紫 */
+button.border-gray-300:hover,
+button.border-gray-200:hover {
+  border-color: #c4b0f9;
+}
+.dark button.border-gray-600:hover,
+.dark button.border-gray-700:hover {
+  border-color: #5b4a86;
+}
+
+/* ============ 表单控件 ============ */
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(112, 68, 237, 0.14);
+}
+.dark input:focus-visible,
+.dark select:focus-visible,
+.dark textarea:focus-visible {
+  border-color: #ad8aff;
+  box-shadow: 0 0 0 3px rgba(173, 138, 255, 0.14);
+}
+
+input,
+select,
+textarea {
+  color-scheme: light;
+}
+
+/* ============ Hero 背景（参考站登录/门面风格） ============ */
+
+/* 紫色径向渐变 + 顶部柔光（参考站 .hero 背景） */
+.hero-bg {
+  position: relative;
+  background:
+    radial-gradient(ellipse at 76% 30%, #ede5ff 0, transparent 50%),
+    radial-gradient(ellipse at 12% 85%, #f1ebff 0, transparent 45%),
+    linear-gradient(180deg, #faf8ff, #fdfcff 70%, var(--surface));
+}
+.dark .hero-bg {
+  background:
+    radial-gradient(ellipse at 76% 30%, #33245c 0, transparent 52%),
+    radial-gradient(ellipse at 12% 85%, #2a2145 0, transparent 45%),
+    linear-gradient(180deg, #1d1828, #191622 70%);
+}
+
+/* 网格线叠加（参考站 .hero-grid，52px 方格 + 向下淡出遮罩） */
+.hero-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .5;
+  background-image:
+    linear-gradient(rgba(217, 209, 237, 0.45) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(217, 209, 237, 0.45) 1px, transparent 1px);
+  background-size: 52px 52px;
+  -webkit-mask-image: linear-gradient(180deg, #000, transparent 85%);
+  mask-image: linear-gradient(180deg, #000, transparent 85%);
+}
+.dark .hero-grid {
+  opacity: .35;
+  background-image:
+    linear-gradient(rgba(87, 60, 145, 0.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(87, 60, 145, 0.35) 1px, transparent 1px);
+}
+
+/* 门面卡片：柔光阴影 + 入场动画 */
+.hero-card {
+  animation: fade-up .6s cubic-bezier(.22, 1, .36, 1) both;
+  box-shadow: 0 15px 35px rgba(75, 52, 112, 0.1);
+}
+.dark .hero-card {
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
 }
 
 /* ============ DARK MODE OVERRIDES ============ */
 
-.dark ::-webkit-scrollbar-track {
-  background: #1f2937;
-}
 .dark ::-webkit-scrollbar-thumb {
-  background: #4b5563;
+  background: #453d54;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  background: #5c5270;
 }
 
 .dark body {
-  background-color: #030712;
-  color: #f9fafb;
+  background-color: #191622;
+  color: #eeeaf7;
 }
 
-/* Background overrides */
-.dark .bg-white { background-color: #111827 !important; }
-.dark .bg-gray-50 { background-color: #030712 !important; }
-.dark .bg-gray-100 { background-color: #1f2937 !important; }
-.dark .bg-gray-200 { background-color: #374151 !important; }
+/* Background overrides（参考站 surface/soft/line 体系） */
+.dark .bg-white { background-color: #211c2c !important; }
+.dark .bg-gray-50 { background-color: #191622 !important; }
+.dark .bg-gray-100 { background-color: #2a2438 !important; }
+.dark .bg-gray-200 { background-color: #37303f !important; }
 
 /* Text overrides */
-.dark .text-black { color: #f9fafb !important; }
-.dark .text-gray-950 { color: #f9fafb !important; }
-.dark .text-gray-900 { color: #f3f4f6 !important; }
-.dark .text-gray-800 { color: #e5e7eb !important; }
-.dark .text-gray-700 { color: #d1d5db !important; }
-.dark .text-gray-600 { color: #9ca3af !important; }
-.dark .text-gray-500 { color: #9ca3af !important; }
-.dark .text-gray-400 { color: #6b7280 !important; }
+.dark .text-black { color: #eeeaf7 !important; }
+.dark .text-gray-950 { color: #eeeaf7 !important; }
+.dark .text-gray-900 { color: #eeeaf7 !important; }
+.dark .text-gray-800 { color: #e2dcef !important; }
+.dark .text-gray-700 { color: #d2cbe2 !important; }
+.dark .text-gray-600 { color: #aaa1bb !important; }
+.dark .text-gray-500 { color: #aaa1bb !important; }
+.dark .text-gray-400 { color: #8a80a0 !important; }
 
 /* Border overrides */
-.dark .border-gray-100 { border-color: #1f2937 !important; }
-.dark .border-gray-200 { border-color: #374151 !important; }
-.dark .border-gray-300 { border-color: #4b5563 !important; }
+.dark .border-gray-100 { border-color: #2a2438 !important; }
+.dark .border-gray-200 { border-color: #37303f !important; }
+.dark .border-gray-300 { border-color: #453d54 !important; }
 
 /* Divider overrides */
-.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]) { border-color: #1f2937 !important; }
-.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: #1f2937 !important; }
+.dark .divide-gray-50 > :not([hidden]) ~ :not([hidden]) { border-color: #2a2438 !important; }
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: #2a2438 !important; }
 
 /* Hover background overrides */
-.dark .hover\:bg-gray-50:hover { background-color: #1f2937 !important; }
-.dark .hover\:bg-gray-100:hover { background-color: #1f2937 !important; }
-.dark .hover\:bg-gray-200:hover { background-color: #374151 !important; }
+.dark .hover\:bg-gray-50:hover { background-color: #2a2438 !important; }
+.dark .hover\:bg-gray-100:hover { background-color: #2a2438 !important; }
+.dark .hover\:bg-gray-200:hover { background-color: #37303f !important; }
 
 /* Hover text overrides */
-.dark .hover\:text-black:hover { color: #f9fafb !important; }
-.dark .hover\:text-gray-900:hover { color: #f3f4f6 !important; }
+.dark .hover\:text-black:hover { color: #eeeaf7 !important; }
+.dark .hover\:text-gray-900:hover { color: #eeeaf7 !important; }
 
 /* Shadow */
 .dark .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,0.3) !important; }
@@ -94,67 +255,46 @@ body {
 .dark .shadow-lg,
 .dark .shadow-xl { box-shadow: 0 12px 28px rgba(0,0,0,0.45) !important; }
 
-/* bg-black buttons in dark mode -> light */
-.dark .bg-black { background-color: #f9fafb !important; }
-.dark .bg-black + span,
-.dark button.bg-black { color: #111827 !important; }
-.dark button.bg-black span { color: #111827 !important; }
+/* 品牌紫按钮在 dark 下已是亮紫 token（dark:bg-brand-500），移除旧的黑白反转规则 */
 
-/* Fix for CTA buttons (bg-black text-white) */
-.dark button.bg-black,
-.dark a.bg-black {
-  background-color: #f9fafb !important;
-  color: #111827 !important;
-}
-
-/* Fix nested text-white inside bg-black in dark mode */
-.dark .bg-black .text-white,
-.dark .bg-black.text-white {
-  color: #111827 !important;
-}
-
-/* Invert sidebar active state */
-.dark button.bg-black.text-white,
-.dark button.bg-black > span {
-  color: #111827 !important;
-}
-.dark button.bg-black svg {
-  color: #111827 !important;
-}
-
-/* Hover: bg-gray-800 in dark mode */
-.dark .hover\:bg-gray-800:hover { background-color: #e5e7eb !important; color: #111827 !important; }
+/* Hover: bg-gray-800 in dark mode（原主按钮 hover 已迁移为 hover:bg-brand-700，此规则兜底遗留用法） */
+.dark .hover\:bg-gray-800:hover { background-color: #2a2438 !important; color: inherit !important; }
 
 /* Status badge backgrounds */
-.dark .bg-green-50 { background-color: #064e3b !important; }
-.dark .bg-red-50 { background-color: #450a0a !important; }
-.dark .bg-amber-50 { background-color: #451a03 !important; }
-.dark .bg-emerald-50 { background-color: #064e3b !important; }
-.dark .bg-amber-100 { background-color: #78350f !important; }
-.dark .bg-indigo-50 { background-color: #1e1b4b !important; }
+.dark .bg-green-50 { background-color: #1b322c !important; }
+.dark .bg-red-50 { background-color: #39202e !important; }
+.dark .bg-amber-50 { background-color: #3a2c1a !important; }
+.dark .bg-emerald-50 { background-color: #1b322c !important; }
+.dark .bg-amber-100 { background-color: #4a3820 !important; }
+.dark .bg-indigo-50 { background-color: #2d2444 !important; }
+.dark .bg-brand-50 { background-color: #2d2444 !important; }
+.dark .bg-brand-100 { background-color: #352a52 !important; }
 
 /* Status badge text */
-.dark .text-green-700 { color: #6ee7b7 !important; }
-.dark .text-red-600 { color: #fca5a5 !important; }
-.dark .text-red-700 { color: #fca5a5 !important; }
-.dark .text-amber-600 { color: #fcd34d !important; }
-.dark .text-amber-700 { color: #fcd34d !important; }
-.dark .text-emerald-700 { color: #6ee7b7 !important; }
-.dark .text-emerald-600 { color: #6ee7b7 !important; }
+.dark .text-green-700 { color: #9bd7bf !important; }
+.dark .text-red-600 { color: #f0a1b3 !important; }
+.dark .text-red-700 { color: #f0a1b3 !important; }
+.dark .text-amber-600 { color: #e8c88a !important; }
+.dark .text-amber-700 { color: #e8c88a !important; }
+.dark .text-emerald-700 { color: #9bd7bf !important; }
+.dark .text-emerald-600 { color: #9bd7bf !important; }
 .dark .text-amber-800 { color: #fde68a !important; }
-.dark .text-indigo-700 { color: #a5b4fc !important; }
+.dark .text-indigo-700 { color: #c4b0f9 !important; }
+.dark .text-brand-600 { color: #ad8aff !important; }
+.dark .text-brand-700 { color: #ad8aff !important; }
 
 /* Colored notification borders */
-.dark .border-emerald-200 { border-color: #065f46 !important; }
-.dark .border-red-200 { border-color: #991b1b !important; }
-.dark .border-amber-200 { border-color: #92400e !important; }
+.dark .border-emerald-200 { border-color: #2a5043 !important; }
+.dark .border-red-200 { border-color: #5b3045 !important; }
+.dark .border-amber-200 { border-color: #5c4726 !important; }
+.dark .border-brand-200 { border-color: #49345f !important; }
 
 /* Focus ring */
-.dark .focus\:ring-black:focus { --tw-ring-color: #f9fafb !important; }
-.dark .focus\:border-black:focus { border-color: #f9fafb !important; }
+.dark .focus\:ring-brand-500:focus { --tw-ring-color: #ad8aff !important; }
+.dark .focus\:border-brand-500:focus { border-color: #ad8aff !important; }
 
 /* Accent */
-.dark .accent-black { accent-color: #f9fafb !important; }
+.dark .accent-brand-600 { accent-color: #ad8aff !important; }
 
 /* Native form controls */
 .dark input,
@@ -162,51 +302,55 @@ body {
 .dark textarea { color-scheme: dark; }
 
 /* Explicit dark variants take precedence over the compatibility overrides above. */
-.dark .dark\:bg-white { background-color: #f9fafb !important; }
-.dark .dark\:bg-gray-950 { background-color: #030712 !important; }
-.dark .dark\:bg-gray-900 { background-color: #111827 !important; }
-.dark .dark\:bg-gray-800 { background-color: #1f2937 !important; }
-.dark .dark\:bg-gray-700 { background-color: #374151 !important; }
-.dark .dark\:bg-emerald-950 { background-color: #022c22 !important; }
-.dark .dark\:bg-red-950 { background-color: #450a0a !important; }
-.dark .dark\:bg-amber-950 { background-color: #451a03 !important; }
-.dark .dark\:text-white { color: #f9fafb !important; }
-.dark .dark\:text-black { color: #111827 !important; }
-.dark .dark\:text-gray-300 { color: #d1d5db !important; }
-.dark .dark\:text-gray-400 { color: #9ca3af !important; }
-.dark .dark\:text-gray-500 { color: #6b7280 !important; }
-.dark .dark\:text-emerald-300 { color: #6ee7b7 !important; }
-.dark .dark\:text-red-300 { color: #fca5a5 !important; }
-.dark .dark\:text-amber-300 { color: #fcd34d !important; }
-.dark .dark\:border-gray-700 { border-color: #374151 !important; }
-.dark .dark\:border-emerald-800 { border-color: #065f46 !important; }
-.dark .dark\:border-red-800 { border-color: #991b1b !important; }
-.dark .dark\:border-amber-800 { border-color: #92400e !important; }
-.dark .dark\:hover\:bg-gray-800:hover { background-color: #1f2937 !important; color: inherit !important; }
-.dark .dark\:hover\:bg-gray-700:hover { background-color: #374151 !important; color: inherit !important; }
-.dark .dark\:hover\:bg-gray-200:hover { background-color: #e5e7eb !important; color: #111827 !important; }
-.dark .dark\:hover\:text-white:hover { color: #f9fafb !important; }
+.dark .dark\:bg-white { background-color: #211c2c !important; }
+.dark .dark\:bg-gray-950 { background-color: #191622 !important; }
+.dark .dark\:bg-gray-900 { background-color: #211c2c !important; }
+.dark .dark\:bg-gray-800 { background-color: #2a2438 !important; }
+.dark .dark\:bg-gray-700 { background-color: #37303f !important; }
+.dark .dark\:bg-emerald-950 { background-color: #1b322c !important; }
+.dark .dark\:bg-red-950 { background-color: #39202e !important; }
+.dark .dark\:bg-amber-950 { background-color: #3a2c1a !important; }
+.dark .dark\:text-white { color: #eeeaf7 !important; }
+.dark .dark\:text-black { color: #242135 !important; }
+.dark .dark\:text-gray-300 { color: #d2cbe2 !important; }
+.dark .dark\:text-gray-400 { color: #aaa1bb !important; }
+.dark .dark\:text-gray-500 { color: #8a80a0 !important; }
+.dark .dark\:text-emerald-300 { color: #9bd7bf !important; }
+.dark .dark\:text-red-300 { color: #f0a1b3 !important; }
+.dark .dark\:text-amber-300 { color: #e8c88a !important; }
+.dark .dark\:border-gray-700 { border-color: #37303f !important; }
+.dark .dark\:border-gray-800 { border-color: #2a2438 !important; }
+.dark .dark\:border-emerald-800 { border-color: #2a5043 !important; }
+.dark .dark\:border-red-800 { border-color: #5b3045 !important; }
+.dark .dark\:border-amber-800 { border-color: #5c4726 !important; }
+.dark .dark\:hover\:bg-gray-800:hover { background-color: #2a2438 !important; color: inherit !important; }
+.dark .dark\:hover\:bg-gray-700:hover { background-color: #37303f !important; color: inherit !important; }
+.dark .dark\:hover\:bg-gray-200:hover { background-color: #37303f !important; color: inherit !important; }
+.dark .dark\:hover\:text-white:hover { color: #eeeaf7 !important; }
 
-/* Spinner */
-.dark .border-black { border-color: #f9fafb !important; }
-.dark .border-b-black { border-bottom-color: #f9fafb !important; }
-.dark .border-t-black { border-top-color: #f9fafb !important; }
-.dark .animate-spin.rounded-full { border-color: #f9fafb !important; border-bottom-color: transparent !important; }
+/* Spinner（原 border-black 已迁移为 border-brand-600） */
+.dark .border-brand-600 { border-color: #ad8aff !important; }
+.dark .border-b-brand-600 { border-bottom-color: #ad8aff !important; }
+.dark .border-t-brand-600 { border-top-color: #ad8aff !important; }
+.dark .animate-spin.rounded-full { border-color: #ad8aff !important; border-bottom-color: transparent !important; }
 
 /* Placeholder */
-.dark .placeholder-gray-400::placeholder { color: #6b7280 !important; }
+.dark .placeholder-gray-400::placeholder { color: #8a80a0 !important; }
 
 /* Success/Error text standalone */
-.dark .text-green-600 { color: #6ee7b7 !important; }
+.dark .text-green-600 { color: #9bd7bf !important; }
 
-/* Modal backdrop */
-.dark .bg-black\/50 { background-color: rgba(0,0,0,0.7) !important; }
+/* Modal backdrop（紫黑调遮罩） */
+.dark .bg-black\/50 { background-color: rgba(16, 12, 24, 0.72) !important; }
+.dark .bg-black\/55 { background-color: rgba(16, 12, 24, 0.75) !important; }
+.dark .bg-black\/70 { background-color: rgba(16, 12, 24, 0.78) !important; }
+.dark .bg-black\/75 { background-color: rgba(16, 12, 24, 0.8) !important; }
+.dark .bg-black\/40 { background-color: rgba(16, 12, 24, 0.62) !important; }
 
 /* Toggle / switch */
-.dark .bg-gray-300 { background-color: #4b5563 !important; }
-.dark .peer-checked\:bg-black:checked ~ * { background-color: #f9fafb !important; }
-.dark .peer-checked\:bg-black:checked + *,
-.dark input.peer:checked + .peer-checked\:bg-black { background-color: #f9fafb !important; }
-.dark .access-policy-switch .access-policy-switch-thumb { background-color: #e5e7eb !important; }
-.dark .access-policy-switch[aria-checked="true"] .access-policy-switch-thumb { background-color: #111827 !important; }
-
+.dark .bg-gray-300 { background-color: #453d54 !important; }
+.dark .peer-checked\:bg-brand-600:checked ~ * { background-color: #ad8aff !important; }
+.dark .peer-checked\:bg-brand-600:checked + *,
+.dark input.peer:checked + .peer-checked\:bg-brand-600 { background-color: #ad8aff !important; }
+.dark .access-policy-switch .access-policy-switch-thumb { background-color: #e2dcef !important; }
+.dark .access-policy-switch[aria-checked="true"] .access-policy-switch-thumb { background-color: #211c2c !important; }

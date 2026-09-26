@@ -240,7 +240,7 @@ export default function BackupPlans() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
       </div>
     )
   }
@@ -271,7 +271,7 @@ export default function BackupPlans() {
           </button>
           <button
             onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+            className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
           >
             <Plus className="h-4 w-4" />
             新建计划
@@ -413,7 +413,7 @@ export default function BackupPlans() {
                 type="button"
                 onClick={saveRemote}
                 disabled={remoteSaving || remoteTesting}
-                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white"
               >
                 <Save className="h-3.5 w-3.5" />
                 {remoteSaving ? '保存中…' : '保存设置'}
@@ -593,7 +593,7 @@ export default function BackupPlans() {
                       onClick={() => setForm({ ...form, cron: p.cron })}
                       className={`rounded border px-2 py-0.5 text-[11px] ${
                         form.cron === p.cron
-                          ? 'border-black bg-black text-white dark:border-white dark:bg-white dark:text-black'
+                          ? 'border-brand-600 bg-brand-600 text-white dark:border-white dark:bg-brand-500 dark:text-white'
                           : 'border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
                       }`}
                     >
@@ -642,7 +642,7 @@ export default function BackupPlans() {
                 type="button"
                 onClick={submit}
                 disabled={saving}
-                className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black"
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white"
               >
                 <Save className="h-3.5 w-3.5" />
                 {saving ? '保存中…' : '保存'}

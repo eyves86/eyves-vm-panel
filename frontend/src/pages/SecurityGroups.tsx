@@ -442,7 +442,7 @@ export default function SecurityGroups() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+        <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
       </div>
     )
   }
@@ -467,7 +467,7 @@ export default function SecurityGroups() {
           <button onClick={openBind} className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
             <Link2 className="h-4 w-4" />容器绑定
           </button>
-          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 dark:bg-white dark:text-black">
+          <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
             <Plus className="h-4 w-4" />新建安全组
           </button>
         </div>
@@ -593,7 +593,7 @@ export default function SecurityGroups() {
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
-              <button onClick={submitCreate} disabled={creating} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+              <button onClick={submitCreate} disabled={creating} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {creating && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {creating ? '创建中…' : '创建'}
               </button>
@@ -640,7 +640,7 @@ export default function SecurityGroups() {
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button onClick={() => setEditGroup(null)} disabled={savingEdit} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
-              <button onClick={submitEdit} disabled={savingEdit} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+              <button onClick={submitEdit} disabled={savingEdit} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {savingEdit && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {savingEdit ? '保存中…' : '保存'}
               </button>
@@ -664,7 +664,7 @@ export default function SecurityGroups() {
             <div className="flex-1 overflow-auto px-5 py-4">
               {detailLoading ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+                  <div className="h-6 w-6 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
                 </div>
               ) : detailError ? (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{detailError}</div>
@@ -734,7 +734,7 @@ export default function SecurityGroups() {
                       </div>
                       <div className="mt-3 flex justify-end gap-2">
                         <button onClick={() => { setShowRuleForm(false); setRuleError('') }} disabled={addingRule} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
-                        <button onClick={addRule} disabled={addingRule} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+                        <button onClick={addRule} disabled={addingRule} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                           {addingRule && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                           {addingRule ? '添加中…' : '添加规则'}
                         </button>
@@ -822,7 +822,7 @@ export default function SecurityGroups() {
                   </label>
                   {bindLoadingCurrent ? (
                     <div className="flex items-center justify-center py-6">
-                      <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-black dark:border-white" />
+                      <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
                     </div>
                   ) : groups.length === 0 ? (
                     <div className="py-4 text-center text-xs text-gray-400">暂无安全组，请先创建安全组</div>
@@ -847,7 +847,7 @@ export default function SecurityGroups() {
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button onClick={closeBind} disabled={bindSaving} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
-              <button onClick={submitBind} disabled={bindSaving || !bindContainerId} className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black">
+              <button onClick={submitBind} disabled={bindSaving || !bindContainerId} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {bindSaving && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {bindSaving ? '保存中…' : '保存绑定'}
               </button>
