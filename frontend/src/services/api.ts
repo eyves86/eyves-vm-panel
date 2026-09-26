@@ -860,6 +860,18 @@ export const getAdminPath = () =>
 export const updateAdminPath = (adminPath: string) =>
   api.put<APIResponse<AdminPathSettings>>('/admin-path', { admin_path: adminPath })
 
+// 登录页底部版权栏（自定义文字/隐藏；GET 公开，PUT 仅管理员）
+export interface LoginFooterSettings {
+  text: string
+  hidden: boolean
+}
+
+export const getLoginFooter = () =>
+  api.get<APIResponse<LoginFooterSettings>>('/login-footer')
+
+export const updateLoginFooter = (data: LoginFooterSettings) =>
+  api.put<APIResponse<LoginFooterSettings>>('/login-footer', data)
+
 // 外部告警推送
 export interface NotificationSettings {
   security_alerts_enabled: boolean

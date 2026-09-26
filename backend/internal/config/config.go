@@ -1475,6 +1475,12 @@ type EyvescloudConfig struct {
 	// 由主控定时巡检：ExecuteAt 到达且 Enabled=true 时调用容器启/停/重启/硬关机。
 	// 每容器最多 10 条，由创建者在请求接口按 container:power scope 写入。
 	ScheduledActions []ScheduledAction `json:"scheduled_actions,omitempty"`
+
+	// LoginFooterText 登录页底部版权栏的自定义文字；留空时前端显示默认版权
+	// （© <年份> EyvesCloud. All rights reserved.）。
+	LoginFooterText string `json:"login_footer_text,omitempty"`
+	// LoginFooterHidden 为 true 时登录页底部版权栏完全不渲染。
+	LoginFooterHidden bool `json:"login_footer_hidden,omitempty"`
 }
 
 // ScheduledAction 容器级定时任务（与 Virtualizor act=self_shutdown 对齐）。

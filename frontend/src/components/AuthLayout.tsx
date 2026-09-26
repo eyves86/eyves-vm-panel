@@ -1,6 +1,7 @@
-import { ReactNode } from 'react'
+import { ReactNode, useEffect, useState } from 'react'
 import AppIcon from './AppIcon'
 import { useLanguage } from '../contexts/LanguageContext'
+import { getLoginFooter } from '../services/api'
 
 function LanguageIcon({ className = '' }: { className?: string }) {
   return (
@@ -31,6 +32,21 @@ interface AuthLayoutProps {
 // 窄屏（<lg）自动退化为单栏表单。
 export default function AuthLayout({ greeting, title, subtitle, slogan, sloganSub, children }: AuthLayoutProps) {
   const { language, toggleLanguage, t } = useLanguage()
+
+  // 底部版权栏：管理员可在设置中自定义文字或隐藏（GET 为公开端点）。
+  // hidden=true 不渲染；text 为空显示默认版权；加载失败静默回退默认。
+  const [footer, setFooter] = useState<{ text: string; hidden: boolean }>({ text: '', hidden: false })
+
+  useEffect(() => {
+    getLoginFooter()
+      .then(res => {
+        const d = res.data?.data
+        if (d) setFooter({ text: d.text || '', hidden: !!d.hidden })
+      })
+      .catch(() => {})
+  }, [])
+
+  const footerText = footer.text || `© ${new Date().getFullYear()} EyvesCloud. All rights reserved.`
 
   return (
     <div className="flex min-h-screen bg-white dark:bg-gray-950">
@@ -65,8 +81,10 @@ export default function AuthLayout({ greeting, title, subtitle, slogan, sloganSu
           </div>
         </div>
 
-        {/* 底部版本信息 */}
-        <p className="shrink-0 pb-5 text-center text-xs text-gray-400 dark:text-gray-600">EyvesCloud v1.2.0</p>
+        {/* 底部版权栏（可在管理端设置中自定义文字或隐藏） */}
+        {!footer.hidden && (
+          <p className="shrink-0 pb-5 text-center text-xs text-gray-400 dark:text-gray-600">{footerText}</p>
+        )}
       </div>
 
       {/* ===== 右侧：品牌面板（窄屏隐藏） ===== */}

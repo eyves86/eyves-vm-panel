@@ -73,6 +73,8 @@ func setupRoutes(mux *http.ServeMux) {
 	// API routes
 	mux.HandleFunc("/api/login", corsMiddleware(api.HandleLogin))
 	mux.HandleFunc("/api/language", corsMiddleware(api.HandleLanguage))
+	// 登录页底部版权栏（自定义文字/隐藏）：GET 公开（登录页未认证需读取），PUT 仅管理员。
+	mux.HandleFunc("/api/login-footer", corsMiddleware(api.HandleLoginFooter))
 	mux.HandleFunc("/api/check-auth", corsMiddleware(api.AuthMiddleware(api.HandleCheckAuth)))
 	mux.HandleFunc("/api/change-password", corsMiddleware(api.AdminSessionMiddleware(api.HandleAdminPasswordChange)))
 	mux.HandleFunc("/api/change-username", corsMiddleware(api.AdminSessionMiddleware(api.HandleAdminUsernameChange)))

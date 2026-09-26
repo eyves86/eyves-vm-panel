@@ -18,6 +18,7 @@ import {
   getOvercommitSettings,
   getNotificationSettings,
   getAdminPath,
+  getLoginFooter,
   getPanelAccessPolicy,
   getRateLimitSettings,
   getSSLSettings,
@@ -43,6 +44,7 @@ import {
   updateTaskQueueSettings,
   updateSSLSettings,
   updateAdminPath,
+  updateLoginFooter,
   updatePanelAccessPolicy,
   updateWebSSHOriginSettings,
   WebSSHOriginSettings,
@@ -106,6 +108,11 @@ export default function Settings() {
   const [adminPathInput, setAdminPathInput] = useState('/')
   const [savingAdminPath, setSavingAdminPath] = useState(false)
   const [adminPathMsg, setAdminPathMsg] = useState('')
+  // 登录页底部版权栏（自定义文字 / 隐藏）
+  const [loginFooterText, setLoginFooterText] = useState('')
+  const [loginFooterHidden, setLoginFooterHidden] = useState(false)
+  const [savingLoginFooter, setSavingLoginFooter] = useState(false)
+  const [loginFooterMsg, setLoginFooterMsg] = useState('')
   const [activeSection, setActiveSection] = useState<SettingsSection>('tasks')
 
   // 两步验证 (TOTP)
@@ -236,6 +243,18 @@ export default function Settings() {
     }
   }, [])
 
+  const fetchLoginFooter = useCallback(async () => {
+    try {
+      const res = await getLoginFooter()
+      const data = res.data.data
+      if (!data) return
+      setLoginFooterText(data.text || '')
+      setLoginFooterHidden(!!data.hidden)
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await getNotificationSettings()
@@ -350,6 +369,7 @@ export default function Settings() {
     fetchTaskQueue()
     fetchAccessPolicy()
     fetchAdminPath()
+    fetchLoginFooter()
     fetchNotifications()
     fetch2FA()
     fetchAudit()
@@ -363,7 +383,7 @@ export default function Settings() {
       clearInterval(logTimer)
       clearInterval(taskTimer)
     }
-  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAudit, fetchBackup, fetchHealth, fetchLogs, fetchNotifications, fetchOvercommit, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchWebSSHOrigins])
+  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAudit, fetchBackup, fetchHealth, fetchLoginFooter, fetchLogs, fetchNotifications, fetchOvercommit, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchWebSSHOrigins])
 
   const handleSaveAdminPath = async () => {
     setSavingAdminPath(true)
@@ -380,6 +400,20 @@ export default function Settings() {
       setAdminPathMsg(e.response?.data?.message || t('保存失败'))
     } finally {
       setSavingAdminPath(false)
+    }
+  }
+
+  const handleSaveLoginFooter = async () => {
+    setSavingLoginFooter(true)
+    setLoginFooterMsg('')
+    try {
+      await updateLoginFooter({ text: loginFooterText.trim(), hidden: loginFooterHidden })
+      setLoginFooterMsg(t('已保存，刷新登录页即可看到新版权栏'))
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setLoginFooterMsg(e.response?.data?.message || t('保存失败'))
+    } finally {
+      setSavingLoginFooter(false)
     }
   }
 
@@ -954,6 +988,52 @@ export default function Settings() {
               <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
                 {t('注意：修改后请立即用新地址访问并收藏，忘记路径需要通过配置文件或 CLI 恢复。')}
               </p>
+            </div>
+          )}
+
+          {activeSection === 'access' && (
+            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('登录页版权栏')}</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                {t('自定义登录页底部的版权文字；留空显示默认版权（© 年份 EyvesCloud. All rights reserved.），勾选「隐藏」则完全不显示。')}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  maxLength={120}
+                  className="min-w-[240px] flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                  value={loginFooterText}
+                  onChange={(e) => setLoginFooterText(e.target.value)}
+                  placeholder={t('例如：© 2026 我的公司. 保留所有权利.')}
+                  disabled={loginFooterHidden}
+                />
+                <button
+                  type="button"
+                  disabled={savingLoginFooter}
+                  onClick={() => { void handleSaveLoginFooter() }}
+                  className="rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {savingLoginFooter ? t('保存中...') : t('保存')}
+                </button>
+                <button
+                  type="button"
+                  disabled={savingLoginFooter}
+                  onClick={() => { void fetchLoginFooter() }}
+                  className="rounded-md border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {t('刷新')}
+                </button>
+              </div>
+              <label className="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={loginFooterHidden}
+                  onChange={(e) => setLoginFooterHidden(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                {t('隐藏登录页底部版权栏')}
+              </label>
+              {loginFooterMsg && <p className="mt-2 text-xs text-amber-600">{loginFooterMsg}</p>}
             </div>
           )}
 
