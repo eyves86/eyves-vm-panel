@@ -881,6 +881,11 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
+	// F8：内存累计配额检查（与磁盘同口径）
+	if err := validateCumulativeRAMQuota(cfg.RAMMB); err != nil {
+		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
 	if err := validateCreateStoragePool(&cfg); err != nil {
 		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
 		return
@@ -1249,6 +1254,14 @@ func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 	if err := validateRuntimeResourceRequest(c.Runtime(), c.Template, nextVCPU, nextRAMMB, c.DiskGB); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
+	}
+	// F8：内存调增时补累计配额检查（按增量计——容器自身存量已计入总和，
+	// 扩容路径只需校验新增部分；缩容不产生新增占用，无需校验）。
+	if nextRAMMB > c.RAMMB {
+		if err := validateCumulativeRAMQuota(nextRAMMB - c.RAMMB); err != nil {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
 	}
 	for name, value := range map[string]*int{
 		"network_bw_mbps":   req.BWMbps,

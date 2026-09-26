@@ -1221,8 +1221,191 @@ function eyvescloud_container_payload($params)
 
 function eyvescloud_find_container($params)
 {
+    // P2-15：优先用持久化的 container ID 定位容器（抗 hostname 失配）——
+    // 客户在 WHMCS 修改主机名后，后续操作仍能命中正确容器。
+    $containerId = eyvescloud_stored_container_id($params);
+    if ($containerId > 0) {
+        $res = eyvescloud_request($params, '/api/v1/containers/' . $containerId, [], 'GET');
+        if (eyvescloud_success($res)) {
+            return $res;
+        }
+        // ID 查不到（容器被删除/重建）时回退按主机名查找。
+    }
     $name = eyvescloud_container_name($params);
     return eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name), [], 'GET');
+}
+
+/* -------------------------------------------------------------------------
+ * Container ID 自定义字段（P2-15：抗 hostname 失配）
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 产品自定义字段名约定：在产品上创建名为「Container ID」的字段后，
+ * 模块会把面板容器 ID 写入该字段，后续操作优先按 ID 定位容器。
+ */
+function eyvescloud_container_id_field_label()
+{
+    return 'Container ID';
+}
+
+/**
+ * 字段名宽松匹配（忽略大小写/空格/下划线/连字符），兼容管理员建字段时的写法差异。
+ */
+function eyvescloud_field_name_matches($a, $b)
+{
+    $normalize = static function ($value) {
+        $value = strtolower(trim((string)$value));
+        return preg_replace('/[\s_\-]+/', '', $value);
+    };
+    return $normalize($a) !== '' && $normalize($a) === $normalize($b);
+}
+
+/**
+ * 读取已持久化的面板容器 ID。
+ * 优先取 $params['customfields']（WHMCS 调用模块时自动注入），
+ * handlers/api.php 重建的 params 无该数据时回退查库。
+ *
+ * @return int
+ */
+function eyvescloud_stored_container_id($params)
+{
+    $label = eyvescloud_container_id_field_label();
+
+    $customFields = $params['customfields'] ?? [];
+    if (is_array($customFields)) {
+        foreach ($customFields as $key => $value) {
+            if (eyvescloud_field_name_matches($key, $label)) {
+                $id = (int)$value;
+                if ($id > 0) {
+                    return $id;
+                }
+            }
+        }
+    }
+
+    if (!class_exists('\WHMCS\Database\Capsule')) {
+        return 0;
+    }
+    $serviceId = eyvescloud_host_id($params);
+    if ($serviceId <= 0) {
+        return 0;
+    }
+    try {
+        $rows = \WHMCS\Database\Capsule::table('tblcustomfieldsvalues as v')
+            ->join('tblcustomfields as f', 'f.id', '=', 'v.fieldid')
+            ->where('v.relid', $serviceId)
+            ->where('f.type', 'product')
+            ->get(['f.fieldname', 'v.value']);
+        foreach ($rows as $row) {
+            if (eyvescloud_field_name_matches($row->fieldname ?? '', $label)) {
+                $id = (int)($row->value ?? 0);
+                if ($id > 0) {
+                    return $id;
+                }
+            }
+        }
+    } catch (\Throwable $e) {
+        eyvescloud_debug('stored_container_id query failed', $e->getMessage());
+    }
+    return 0;
+}
+
+/**
+ * 定位产品上「Container ID」自定义字段的 fieldid；不存在返回 0。
+ *
+ * @return int
+ */
+function eyvescloud_container_id_field_id($params)
+{
+    if (!class_exists('\WHMCS\Database\Capsule')) {
+        return 0;
+    }
+    $packageId = (int)($params['packageid'] ?? ($params['pid'] ?? 0));
+    if ($packageId <= 0) {
+        return 0;
+    }
+    $label = eyvescloud_container_id_field_label();
+    try {
+        $fields = \WHMCS\Database\Capsule::table('tblcustomfields')
+            ->where('type', 'product')
+            ->where('relid', $packageId)
+            ->get(['id', 'fieldname']);
+        foreach ($fields as $field) {
+            if (eyvescloud_field_name_matches($field->fieldname ?? '', $label)) {
+                return (int)$field->id;
+            }
+        }
+    } catch (\Throwable $e) {
+        eyvescloud_debug('container_id_field_id query failed', $e->getMessage());
+    }
+    return 0;
+}
+
+/**
+ * 把面板容器 ID 持久化到服务的自定义字段（产品需建有「Container ID」字段）。
+ * 字段不存在时静默跳过（仅记录调试日志），不影响主流程。
+ *
+ * @param array $params
+ * @param mixed $containerId
+ */
+function eyvescloud_persist_container_id($params, $containerId)
+{
+    $containerId = (int)$containerId;
+    if ($containerId <= 0 || !class_exists('\WHMCS\Database\Capsule')) {
+        return;
+    }
+    $serviceId = eyvescloud_host_id($params);
+    if ($serviceId <= 0) {
+        return;
+    }
+    $fieldId = eyvescloud_container_id_field_id($params);
+    if ($fieldId <= 0) {
+        eyvescloud_debug('persist_container_id: product has no Container ID custom field');
+        return;
+    }
+    try {
+        $existing = \WHMCS\Database\Capsule::table('tblcustomfieldsvalues')
+            ->where('fieldid', $fieldId)
+            ->where('relid', $serviceId)
+            ->first();
+        if ($existing) {
+            \WHMCS\Database\Capsule::table('tblcustomfieldsvalues')
+                ->where('fieldid', $fieldId)
+                ->where('relid', $serviceId)
+                ->update(['value' => (string)$containerId]);
+        } else {
+            \WHMCS\Database\Capsule::table('tblcustomfieldsvalues')->insert([
+                'fieldid' => $fieldId,
+                'relid'   => $serviceId,
+                'value'   => (string)$containerId,
+            ]);
+        }
+    } catch (\Throwable $e) {
+        eyvescloud_debug('persist_container_id failed', $e->getMessage());
+    }
+}
+
+/**
+ * 清空已持久化的容器 ID（Terminate 后调用，避免残留 ID 指向已删容器）。
+ */
+function eyvescloud_clear_container_id($params)
+{
+    if (!class_exists('\WHMCS\Database\Capsule')) {
+        return;
+    }
+    $serviceId = eyvescloud_host_id($params);
+    $fieldId = eyvescloud_container_id_field_id($params);
+    if ($serviceId <= 0 || $fieldId <= 0) {
+        return;
+    }
+    try {
+        \WHMCS\Database\Capsule::table('tblcustomfieldsvalues')
+            ->where('fieldid', $fieldId)
+            ->where('relid', $serviceId)
+            ->update(['value' => '']);
+    } catch (\Throwable $e) {
+        eyvescloud_debug('clear_container_id failed', $e->getMessage());
+    }
 }
 
 function eyvescloud_task_matches_container($task, $name)
@@ -2470,6 +2653,13 @@ function eyvescloud_update_host_from_container($params, $container)
     } catch (\Throwable $e) {
         eyvescloud_debug('tblhosting update failed', $e->getMessage());
     }
+
+    // P2-15：同步时自愈持久化容器 ID（老服务升级 / 手工建字段后自动补齐）。
+    if (!empty($container['id'])) {
+        if (eyvescloud_stored_container_id($params) !== (int)$container['id']) {
+            eyvescloud_persist_container_id($params, $container['id']);
+        }
+    }
 }
 
 /* -------------------------------------------------------------------------
@@ -2553,6 +2743,20 @@ function eyvescloud_service_params($serviceid)
             continue;
         }
         $params['configoptions'][$label] = $params['configoption' . ($keyIndexMap[$key] + 1)] ?? '';
+    }
+
+    // P2-15：加载服务自定义字段（含 Container ID），AJAX 路径按 ID 定位容器。
+    try {
+        $cfRows = \WHMCS\Database\Capsule::table('tblcustomfieldsvalues as v')
+            ->join('tblcustomfields as f', 'f.id', '=', 'v.fieldid')
+            ->where('v.relid', $serviceid)
+            ->where('f.type', 'product')
+            ->get(['f.fieldname', 'v.value']);
+        foreach ($cfRows as $cf) {
+            $params['customfields'][$cf->fieldname] = $cf->value;
+        }
+    } catch (\Throwable $e) {
+        eyvescloud_debug('service_params customfields load failed', $e->getMessage());
     }
 
     // 客户详情（部分场景需要，例如 SSO 显示）。

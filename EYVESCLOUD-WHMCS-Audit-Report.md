@@ -393,10 +393,10 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 |---|------|------|------|
 | 10 | backup-plans 归属校验 | F6 | ✅ 已修复：计划 CRUD/run 全链路过 `isContainerAllowedForRequest` 同口径校验；受限请求（绑定容器的 Key/子用户）不能跨容器操作、不能建/见全局计划（container_id=0）；列表按绑定范围过滤。回归 `TestBackupPlanOwnershipEnforced` |
 | 11 | 节点 Token AES-GCM 加密存储 | F7 | 待做 |
-| 12 | RAM 累计配额检查 | F8 | 待做 |
+| 12 | RAM 累计配额检查 | F8 | ✅ 已修复：新增 `validateCumulativeRAMQuota`（与磁盘累计同口径，内存超售比可放宽）；接入单台创建、批量创建（整批内存总和）、resource-limit 内存调增（按增量计）三条路径。回归 `TestValidateCumulativeRAMQuota_Summation` |
 | 13 | node address 默认 https + TLS 开关 | F9 | ✅ 已修复：主控 `normalizeNodeAddress` 无 scheme 默认补 `https://`；agent 侧注册时按自身面板 SSL 状态显式补全 scheme（`normalizeSelfAddress`/`selfPanelScheme`），无 scheme 的 `--addr` 不会被误存 https 断链。回归 `TestNormalizeNodeAddressDefaultsHTTPS`/`TestNormalizeSelfAddressByPanelScheme` |
 | 14 | store_password 降级分支拒绝明文落库 | F11 | ✅ 已修复：`eyvescloud_store_password` 加密不可用时返回 null（记日志），两处调用方（reset-password / update_host_from_container）跳过 password 字段写库，保留库中旧值 |
-| 15 | CreateAccount 持久化 container_id 自定义字段（抗 hostname 失配） | §5.1 | 待做 |
+| 15 | CreateAccount 持久化 container_id 自定义字段（抗 hostname 失配） | §5.1 | ✅ 已修复：开通后把面板容器 ID 写入产品「Container ID」自定义字段；`eyvescloud_find_container` 优先按 ID 定位（ID 失效回退主机名）；同步时自愈补齐存量服务；Terminate 后清空；`eyvescloud_service_params` 为 AJAX 路径加载 customfields。产品需建有名为 Container ID 的自定义字段（缺失时静默降级为主机名查找） |
 | 16 | 快照/备份/防火墙挂 WHMCS 客户区（对齐竞品） | §8.2 | 待做 |
 | 17 | Additional Disk / 弹性 IP 计费项（Configurable Options 扩展） | §8.2 | 待做 |
 

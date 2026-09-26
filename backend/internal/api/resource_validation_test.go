@@ -181,3 +181,27 @@ func TestValidateCumulativeDiskQuota_DiskOvercommitRaisesCeiling(t *testing.T) {
 		t.Logf("disk overcommit allowed large request: %v", err)
 	}
 }
+
+// TestValidateCumulativeRAMQuota_Summation 回归 F8：内存累计配额检查。
+// 巨量请求必被拒绝（远超任何宿主物理内存）；常规小请求不应误伤。
+func TestValidateCumulativeRAMQuota_Summation(t *testing.T) {
+	prev := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = prev })
+
+	if config.AppConfig == nil {
+		config.AppConfig = &config.EyvescloudConfig{}
+	}
+	config.AppConfig.Containers = append([]config.Container{},
+		config.Container{ID: 1, RAMMB: 2048},
+		config.Container{ID: 2, RAMMB: 1024},
+	)
+
+	// 巨量请求（3 GB + 既有 3 GB 远超宿主内存）必被拒绝
+	if err := validateCumulativeRAMQuota(1024 * 1024 * 1024); err == nil {
+		t.Fatalf("expected cumulative RAM quota rejection for enormous request")
+	}
+	// 常规小请求不应误伤（512 MB 在任何宿主上都应放行）
+	if err := validateCumulativeRAMQuota(512); err != nil {
+		t.Fatalf("unexpected rejection for small request: %v", err)
+	}
+}

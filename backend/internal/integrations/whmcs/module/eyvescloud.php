@@ -144,6 +144,8 @@ function eyvescloud_CreateAccount(array $params)
     $wait = eyvescloud_wait_container_ready($params);
     if (!empty($wait['container'])) {
         eyvescloud_update_host_from_container($params, $wait['container']);
+        // P2-15：持久化面板容器 ID 到自定义字段，后续操作按 ID 定位（抗 hostname 失配）。
+        eyvescloud_persist_container_id($params, $wait['container']['id'] ?? 0);
     }
     if (!empty($wait['failed'])) {
         return '容器已创建，但' . ($wait['msg'] ?? '异步任务失败');
@@ -184,7 +186,12 @@ function eyvescloud_UnsuspendAccount(array $params)
 function eyvescloud_TerminateAccount(array $params)
 {
     $res = eyvescloud_container_delete($params);
-    return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? '删除失败');
+    if (($res['status'] ?? '') === 'success') {
+        // P2-15：删除成功后清空持久化的容器 ID，避免残留指向已删容器。
+        eyvescloud_clear_container_id($params);
+        return 'success';
+    }
+    return ($res['msg'] ?? '删除失败');
 }
 
 /* -------------------------------------------------------------------------

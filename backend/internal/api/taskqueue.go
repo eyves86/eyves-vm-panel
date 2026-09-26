@@ -890,6 +890,7 @@ func HandleBatchCreate(w http.ResponseWriter, r *http.Request) {
 	requestNATPorts := make(map[string]string)
 	var batchDiskSum float64
 	var batchDataDiskSum float64
+	var batchRAMSum int
 	for i := range req.Containers {
 		name := strings.TrimSpace(req.Containers[i].Name)
 		req.Containers[i].Name = name
@@ -1006,8 +1007,14 @@ func HandleBatchCreate(w http.ResponseWriter, r *http.Request) {
 		requestNames[name] = true
 		batchDiskSum += req.Containers[i].DiskGB
 		batchDataDiskSum += req.Containers[i].DataDiskGB
+		batchRAMSum += req.Containers[i].RAMMB
 	}
 	if err := validateCumulativeDiskQuota(batchDiskSum, batchDataDiskSum); err != nil {
+		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "batch: " + err.Error()})
+		return
+	}
+	// F8：内存累计配额检查（批量创建按整批内存总和）
+	if err := validateCumulativeRAMQuota(batchRAMSum); err != nil {
 		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "batch: " + err.Error()})
 		return
 	}
