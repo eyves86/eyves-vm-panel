@@ -2300,14 +2300,16 @@ function eyvescloud_vnc_ticket($params)
  */
 function eyvescloud_rescueMode($params)
 {
-    $image = trim((string)eyvescloud_request_value('image', ''));
+    // 后端 handler (rescue.go doRescue) 期望: {"enabled": true, "iso_id": "..."}。
+    // iso_id 可选——空时后端使用面板默认救援 ISO（admin 在面板设置里配置）。
+    $isoId = trim((string)eyvescloud_request_value('iso_id', eyvescloud_request_value('image', '')));
     $cid = eyvescloud_isoNumericID($params);
     if ($cid <= 0) {
         return ['status' => 'error', 'msg' => '无法解析容器编号，请确认实例名称与面板一致'];
     }
-    $payload = [];
-    if ($image !== '') {
-        $payload['image'] = $image;
+    $payload = ['enabled' => true];
+    if ($isoId !== '') {
+        $payload['iso_id'] = $isoId;
     }
     $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', $payload, 'POST', 120);
     if (!eyvescloud_success($res)) {
@@ -2326,11 +2328,12 @@ function eyvescloud_rescueMode($params)
  */
 function eyvescloud_rescueExit($params)
 {
+    // 后端 handler 用 enabled: false 表示退出救援模式，与 rescueMode (enabled: true) 共用同一 handler。
     $cid = eyvescloud_isoNumericID($params);
     if ($cid <= 0) {
         return ['status' => 'error', 'msg' => '无法解析容器编号，请确认实例名称与面板一致'];
     }
-    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue&exit=1', [], 'POST', 120);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', ['enabled' => false], 'POST', 120);
     if (!eyvescloud_success($res)) {
         return ['status' => 'error', 'msg' => eyvescloud_message($res, '退出救援模式失败')];
     }

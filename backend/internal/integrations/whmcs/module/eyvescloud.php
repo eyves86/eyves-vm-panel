@@ -267,14 +267,14 @@ function eyvescloud_HardOff(array $params)
  */
 function eyvescloud_RescueMode(array $params)
 {
-    $image = $_POST['image'] ?? $_GET['image'] ?? '';
+    $isoId = $_POST['iso_id'] ?? $_GET['iso_id'] ?? $_POST['image'] ?? $_GET['image'] ?? '';
     $cid = eyvescloud_host_id($params);
     if ($cid <= 0) {
         return '无法解析实例编号';
     }
-    $payload = [];
-    if ($image !== '') {
-        $payload['image'] = $image;
+    $payload = ['enabled' => true];
+    if ($isoId !== '') {
+        $payload['iso_id'] = $isoId;
     }
     $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', $payload, 'POST', 120);
     if (!eyvescloud_success($res)) {
@@ -292,7 +292,7 @@ function eyvescloud_RescueExit(array $params)
     if ($cid <= 0) {
         return '无法解析实例编号';
     }
-    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue&exit=1', [], 'POST', 120);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', ['enabled' => false], 'POST', 120);
     if (!eyvescloud_success($res)) {
         return eyvescloud_message($res, '退出救援模式失败');
     }
@@ -302,6 +302,37 @@ function eyvescloud_RescueExit(array $params)
 function eyvescloud_Reboot(array $params)
 {
     return eyvescloud_account_action($params, 'restart', '重启任务已提交');
+}
+
+/**
+ * VNC 控制台（KVM 专属）。拿到 ticket 后 WHMCS 可直接 iframe 打开。
+ * 返回 "success" 或可读错误消息（WHMCS 约定）。
+ */
+function eyvescloud_VNC(array $params)
+{
+    $res = eyvescloud_vnc_ticket($params);
+    if (($res['status'] ?? '') === 'success') {
+        return 'success';
+    }
+    return $res['msg'] ?? 'VNC 票据创建失败（仅 KVM 支持）';
+}
+
+/**
+ * ISO 挂载（KVM 专属）。请求体 iso_id 可从 $_POST/$_GET 取。
+ */
+function eyvescloud_ISOAttach(array $params)
+{
+    $res = eyvescloud_isoAttach($params);
+    return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? 'ISO 挂载失败');
+}
+
+/**
+ * ISO 卸载。
+ */
+function eyvescloud_ISODetach(array $params)
+{
+    $res = eyvescloud_isoDetach($params);
+    return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? 'ISO 卸载失败');
 }
 
 /* -------------------------------------------------------------------------
@@ -432,6 +463,9 @@ function eyvescloud_ClientAreaAllowedFunctions()
         '硬关机(强制)'  => 'HardOff',
         'KVM 救援模式'  => 'RescueMode',
         '退出救援模式'  => 'RescueExit',
+        'ISO 挂载'      => 'ISOAttach',
+        'ISO 卸载'      => 'ISODetach',
+        'VNC 控制台'    => 'VNC',
         '同步状态'      => 'Sync',
         '重置流量'      => 'TrafficReset',
     ];
@@ -536,6 +570,9 @@ function eyvescloud_AdminCustomButtonArray()
         '硬关机(强制)' => 'HardOff',
         'KVM 救援模式' => 'RescueMode',
         '退出救援模式' => 'RescueExit',
+        'ISO 挂载'     => 'ISOAttach',
+        'ISO 卸载'     => 'ISODetach',
+        'VNC 控制台'   => 'VNC',
     ];
 }
 
