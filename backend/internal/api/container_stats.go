@@ -1,0 +1,268 @@
+package api
+
+import (
+	"fmt"
+	"net/http"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"eyvescloud/internal/config"
+)
+
+var _ = exec.Command
+
+// statsResponse 容器一站式监控视图，对齐 Virtualizor act=monitor 的字段形态。
+// cpu/disk/ram 都返回 used/limit/percent 三元组，前端可直接渲染进度条。
+type statsResponse struct {
+	CPU       cpuStats   `json:"cpu"`
+	RAM       ramStats   `json:"ram"`
+	Disk      diskStats  `json:"disk"`
+	Inodes    inodesStats `json:"inodes"`
+	Uptime    int64      `json:"uptime_sec"`
+	SampledAt string     `json:"sampled_at"`
+	Source    string     `json:"source"` // "agent" / "local" / "unavailable"
+}
+
+type cpuStats struct {
+	UsedPercent float64 `json:"used_percent"`
+	Cores       int     `json:"cores"`
+	LimitCores  int     `json:"limit_cores"`
+}
+
+type ramStats struct {
+	UsedMB  int64   `json:"used_mb"`
+	LimitMB int64   `json:"limit_mb"`
+	Percent float64 `json:"percent"`
+	SwapMB  int64   `json:"swap_mb,omitempty"`
+}
+
+type diskStats struct {
+	UsedGB  float64 `json:"used_gb"`
+	LimitGB float64 `json:"limit_gb"`
+	Percent float64 `json:"percent"`
+}
+
+type inodesStats struct {
+	Used    int64   `json:"used"`
+	Limit   int64   `json:"limit"`
+	Percent float64 `json:"percent"`
+}
+
+// handleContainerStats 容器一站式监控（GET /api/containers/{id}/stats）。
+// 对齐 Virtualizor `act=monitor`，合并 cpu/ram/disk/inodes/uptime。
+//
+// 实现策略：
+//   - 多节点：转发到 agent（被控节点返回完整数据，主控不重复实现）
+//   - 单机 LXC：主控本地 lxc-attach 拿数据
+//   - KVM：无 guest-agent 时返回 partial 数据 + 提示
+//
+// 权限：container:read scope。子用户可访问自己容器（caller 校验已在上层完成）。
+func handleContainerStats(w http.ResponseWriter, r *http.Request, c *config.Container) {
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	if !requireScope(w, r, "container:read") {
+		return
+	}
+	if routeToAgent(w, r, c, "stats") {
+		return
+	}
+	resp := statsResponse{
+		CPU: cpuStats{
+			Cores:      int(c.VCPU),
+			LimitCores: int(c.VCPU),
+		},
+		RAM: ramStats{
+			LimitMB: int64(c.RAMMB),
+		},
+		Disk: diskStats{
+			LimitGB: c.DiskGB,
+		},
+		SampledAt: time.Now().UTC().Format(time.RFC3339),
+		Source:    "local",
+	}
+	if c.IsKVM() {
+		resp.Source = "unavailable"
+		jsonResponse(w, http.StatusOK, APIResponse{
+			Success: false,
+			Message: "KVM 实时监控需在容器内安装 qemu-guest-agent；当前只返回规格上限",
+			Data:    resp,
+		})
+		return
+	}
+	lxcName := c.LxcName()
+	if lxcName == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "容器 LXC 内部名缺失"})
+		return
+	}
+	// RAM：lxc-attach -n NAME -- free -m
+	if used, swap, err := lxcAttachFree(lxcName); err == nil {
+		resp.RAM.UsedMB = used
+		resp.RAM.SwapMB = swap
+		if resp.RAM.LimitMB > 0 {
+			resp.RAM.Percent = float64(used) / float64(resp.RAM.LimitMB) * 100.0
+		}
+	}
+	// Disk：df -PBG /
+	if usedGB, totalGB, err := lxcAttachDFBG(lxcName); err == nil && totalGB > 0 {
+		resp.Disk.UsedGB = usedGB
+		resp.Disk.LimitGB = totalGB
+		resp.Disk.Percent = usedGB / totalGB * 100.0
+	}
+	// Inodes：df -Pi /
+	if used, limit, err := lxcAttachDFInodes(lxcName); err == nil && limit > 0 {
+		resp.Inodes.Used = used
+		resp.Inodes.Limit = limit
+		resp.Inodes.Percent = float64(used) / float64(limit) * 100.0
+	}
+	// CPU：lxc info NAME 解析 CPU usage（瞬时值，前端差分得到占用率）
+	if used, err := lxcInfoCPUUsage(lxcName); err == nil {
+		resp.CPU.UsedPercent = used
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: resp})
+}
+
+func lxcAttachFree(name string) (usedMB, swapMB int64, err error) {
+	cmd := exec.Command("lxc-attach", "-n", name, "--", "free", "-m")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	usedMB = parseFreeUsedMB(string(out))
+	swapMB = parseFreeSwapMB(string(out))
+	return usedMB, swapMB, nil
+}
+
+func lxcAttachDFBG(name string) (usedGB, totalGB float64, err error) {
+	cmd := exec.Command("lxc-attach", "-n", name, "--", "df", "-PBG", "/")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	used, total, perr := parseDFBG(string(out))
+	if perr != nil {
+		return 0, 0, perr
+	}
+	return used, total, nil
+}
+
+func lxcAttachDFInodes(name string) (used, limit int64, err error) {
+	cmd := exec.Command("lxc-attach", "-n", name, "--", "df", "-Pi", "/")
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, 0, err
+	}
+	u, l, perr := parseDFInodes(string(out))
+	if perr != nil {
+		return 0, 0, perr
+	}
+	return u, l, nil
+}
+
+// lxcInfoCPUUsage 解析 `lxc info NAME` 输出中的 CPU usage（秒）。
+// 返回的是累计 CPU 时间，不是百分比；前端按时间窗差分得占用率。
+func lxcInfoCPUUsage(name string) (float64, error) {
+	cmd := exec.Command("lxc", "info", name)
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "CPU usage:") {
+			parts := strings.Fields(line)
+			if len(parts) >= 3 {
+				v, _ := strconv.ParseFloat(strings.TrimSuffix(parts[2], "s"), 64)
+				return v, nil
+			}
+		}
+	}
+	return 0, nil
+}
+
+func parseFreeUsedMB(s string) int64 {
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && (fields[0] == "Mem:" || fields[0] == "总计") {
+			v, _ := strconv.ParseInt(fields[2], 10, 64)
+			return v
+		}
+	}
+	return 0
+}
+
+func parseFreeSwapMB(s string) int64 {
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) >= 3 && (fields[0] == "Swap:" || fields[0] == "交换:") {
+			v, _ := strconv.ParseInt(fields[2], 10, 64)
+			return v
+		}
+	}
+	return 0
+}
+
+func parseDFBG(s string) (used, total float64, err error) {
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || !strings.HasSuffix(fields[0], "/") {
+			continue
+		}
+		t, terr := strconv.ParseFloat(strings.TrimSuffix(fields[1], "G"), 64)
+		u, uerr := strconv.ParseFloat(strings.TrimSuffix(fields[2], "G"), 64)
+		if terr != nil || uerr != nil {
+			return 0, 0, fmt.Errorf("parse df -PBG: %w/%w", terr, uerr)
+		}
+		return u, t, nil
+	}
+	return 0, 0, fmt.Errorf("no df row matched")
+}
+
+func parseDFInodes(s string) (used, limit int64, err error) {
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || !strings.HasSuffix(fields[0], "/") {
+			continue
+		}
+		u, uerr := strconv.ParseInt(fields[2], 10, 64)
+		l, lerr := strconv.ParseInt(fields[1], 10, 64)
+		if uerr != nil || lerr != nil {
+			return 0, 0, fmt.Errorf("parse df -i: %w/%w", uerr, lerr)
+		}
+		return u, l, nil
+	}
+	return 0, 0, fmt.Errorf("no df row matched")
+}
+
+// routeToAgent 容器级转发：与主 handler 内联 routeToAgent 类似。
+// 如果容器没有 NodeID（非多节点场景）直接返回 false，由调用方走本地实现。
+// agent 不可达或返回 5xx 也返回 false，让本地 fallback 接管（避免 agent 单点故障）。
+func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, action string) bool {
+	if c == nil || c.NodeID == "" {
+		return false
+	}
+	node, ok := config.FindNode(c.NodeID)
+	if !ok || node.Address == "" {
+		return false
+	}
+	method := http.MethodGet
+	switch action {
+	case "processes/kill", "services/action", "scheduled-actions", "scheduled-actions/delete":
+		method = http.MethodPost
+	}
+	data, status, err := proxyNodeRequest(r, node, method,
+		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, action), nil)
+	if err != nil || status >= 500 {
+		return false
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
+	return true
+}
+
+// 抑制未使用 fmt 告警（routeToAgent 内部用）
+var _ = fmt.Sprintf

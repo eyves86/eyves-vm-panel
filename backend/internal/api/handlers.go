@@ -561,6 +561,40 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updateReverseDNS(w, r, id)
+	// === Virtualizor 风格客户端容器自服务端点（v1.9.x） ===
+	case action == "stats" && r.Method == http.MethodGet:
+		// 一站式监控：CPU/RAM/Disk/Inodes/Uptime（Virtualizor act=monitor）。
+		handleContainerStats(w, r, c)
+	case action == "bandwidth" && r.Method == http.MethodGet:
+		// 流量明细（Virtualizor act=bandwidth）。
+		handleContainerBandwidth(w, r, c)
+	case action == "processes" && r.Method == http.MethodGet:
+		// 进程列表（Virtualizor act=processes）。
+		handleContainerProcesses(w, r, c)
+	case action == "processes/kill" && r.Method == http.MethodPost:
+		// 批量终止进程（Virtualizor act=processes + sel_proc[]）。
+		handleContainerProcessKill(w, r, c)
+	case action == "services" && r.Method == http.MethodGet:
+		// 服务列表（Virtualizor act=services）。
+		handleContainerServices(w, r, c)
+	case action == "services" && r.Method == http.MethodPost:
+		// 服务启停重启（Virtualizor act=services + start_x/stop_x）。
+		handleContainerServiceAction(w, r, c)
+	case action == "hvm-settings" && r.Method == http.MethodGet:
+		// KVM HVM 设置读取（Virtualizor act=hvmsettings）。
+		handleContainerHVMSettingsGet(w, r, c)
+	case action == "hvm-settings" && r.Method == http.MethodPut:
+		// KVM HVM 设置写入。
+		handleContainerHVMSettingsPut(w, r, c)
+	case action == "scheduled-actions" && r.Method == http.MethodGet:
+		// 定时任务列表（Virtualizor act=self_shutdown）。
+		handleScheduledActionsList(w, r, c)
+	case action == "scheduled-actions" && r.Method == http.MethodPost:
+		// 创建定时任务。
+		handleScheduledActionCreate(w, r, c)
+	case strings.HasPrefix(action, "scheduled-actions/") && r.Method == http.MethodDelete:
+		// 取消定时任务。scheduled-actions/ 子路径在 action 中以 `scheduled-actions/{id}` 形式传入。
+		handleScheduledActionDelete(w, r, c, strings.TrimPrefix(action, "scheduled-actions/"))
 	case r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return

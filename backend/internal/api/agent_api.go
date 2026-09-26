@@ -408,6 +408,60 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		return
+	// === Virtualizor 风格容器自服务端点（agent 本地实现）===
+	case "stats":
+		handleContainerStats(w, r, c)
+		return
+	case "bandwidth":
+		handleContainerBandwidth(w, r, c)
+		return
+	case "processes":
+		handleContainerProcesses(w, r, c)
+		return
+	case "processes/kill":
+		handleContainerProcessKill(w, r, c)
+		return
+	case "services":
+		handleContainerServices(w, r, c)
+		return
+	case "services/action":
+		handleContainerServiceAction(w, r, c)
+		return
+	case "hvm-settings":
+		if r.Method == http.MethodGet {
+			handleContainerHVMSettingsGet(w, r, c)
+			return
+		}
+		if r.Method == http.MethodPut {
+			handleContainerHVMSettingsPut(w, r, c)
+			return
+		}
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	case "scheduled-actions":
+		if r.Method == http.MethodGet {
+			handleScheduledActionsList(w, r, c)
+			return
+		}
+		if r.Method == http.MethodPost {
+			handleScheduledActionCreate(w, r, c)
+			return
+		}
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	case "scheduled-actions/delete":
+		var req struct {
+			ActionID string `json:"action_id"`
+		}
+		if r.Body != nil {
+			_ = json.NewDecoder(r.Body).Decode(&req)
+		}
+		if req.ActionID == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "action_id required"})
+			return
+		}
+		handleScheduledActionDelete(w, r, c, req.ActionID)
+		return
 	default:
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Unknown action: " + action})
 		return

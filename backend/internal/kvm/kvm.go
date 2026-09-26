@@ -829,6 +829,32 @@ func (m *Manager) RestartContainer(id int) error {
 	return m.StartContainer(id)
 }
 
+// PoweroffContainer 强制断电（等价 virsh destroy）。
+//
+// 与 StopContainer 的区别：Stop 先 virsh shutdown 走优雅关机路径，
+// 等待 20s 才 fallback 到 virsh destroy；Poweroff 跳过 shutdown 直接 destroy，
+// 用于定时任务 / 紧急停机场景（避免优雅关机链路卡死导致定时任务不释放）。
+func (m *Manager) PoweroffContainer(id int) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	_ = lxc.NewManager().CleanPortMappings(id)
+	lxc.CleanFirewallRules(id)
+	name := c.VirshName()
+	status, _ := m.GetContainerStatus(name)
+	if status != "running" {
+		config.UpdateContainerStatusAndRestore(id, "stopped", false)
+		return nil
+	}
+	cmd := exec.Command("virsh", "destroy", name)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("virsh destroy failed: %v, output: %s", err, string(output))
+	}
+	config.UpdateContainerStatusAndRestore(id, "stopped", false)
+	return nil
+}
+
 // startWithoutGuestInit 以 libvirt 直接启动域，不等待 IP/SSH/cloud-init。
 // 用于救援模式引导（救援 ISO 内无受管 guest，等待步骤无法完成）。
 func (m *Manager) startWithoutGuestInit(name string) error {

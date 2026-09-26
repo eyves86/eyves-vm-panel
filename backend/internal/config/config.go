@@ -173,6 +173,13 @@ type Container struct {
 	SSHPort                       int                    `json:"ssh_port"`
 	SSHPassword                   string                 `json:"ssh_password"`
 	SSHHostKey                    string                 `json:"ssh_host_key,omitempty"`
+	// HVM 设置（KVM 容器）：启动盘顺序 / 网卡驱动 / VNC 键位 / 硬件加速 / TUN PPP
+	HVMBootOrder                  string                 `json:"hvm_boot_order,omitempty"`
+	HVMNicDriver                  string                 `json:"hvm_nic_driver,omitempty"`
+	HVMVNCKeyMap                  string                 `json:"hvm_vnc_keymap,omitempty"`
+	HVMAcceleration               string                 `json:"hvm_acceleration,omitempty"`
+	HVMEnableTuntap               bool                   `json:"hvm_enable_tuntap,omitempty"`
+	HVMEnablePPP                  bool                   `json:"hvm_enable_ppp,omitempty"`
 	PortMappings                  []PortMapping          `json:"port_mappings"`
 	PortMappingLimit              int                    `json:"port_mapping_limit"`
 	FirewallEnabled               bool                   `json:"firewall_enabled"`
@@ -1455,6 +1462,29 @@ type EyvescloudConfig struct {
 	// Webhooks 事件订阅端点（企业集成：容器状态变更回调，类比 AWS EventBridge / GitHub Webhooks）。
 	// 每次容器状态变化（running/stopped）会向订阅 URL POST 签名 JSON 载荷。
 	Webhooks []WebhookSubscription `json:"webhooks,omitempty"`
+
+	// ScheduledActions 容器级定时启停任务（对齐 Virtualizor act=self_shutdown）。
+	// 由主控定时巡检：ExecuteAt 到达且 Enabled=true 时调用容器启/停/重启/硬关机。
+	// 每容器最多 10 条，由创建者在请求接口按 container:power scope 写入。
+	ScheduledActions []ScheduledAction `json:"scheduled_actions,omitempty"`
+}
+
+// ScheduledAction 容器级定时任务（与 Virtualizor act=self_shutdown 对齐）。
+type ScheduledAction struct {
+	ID            string `json:"id"`
+	ContainerID   int    `json:"container_id"`
+	ContainerName string `json:"container_name,omitempty"`
+	// Type 任务类型：start/stop/restart/poweroff
+	Type   string `json:"type"`
+	Repeat string `json:"repeat,omitempty"` // none/daily/weekly/monthly
+	// ExecuteAt 下次执行时间（RFC3339）。Repeat=weekly 时仅用于首次；
+	// repeat=daily/weekly/monthly 时由主控 cron 计算下次。
+	ExecuteAt string `json:"execute_at"`
+	// LastRunAt 最近一次执行时间，omitempty
+	LastRunAt string `json:"last_run_at,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at,omitempty"`
+	CreatedBy string `json:"created_by,omitempty"`
 }
 
 // WebhookSubscription 是一个事件订阅端点。
@@ -2624,6 +2654,75 @@ func MutateGlobal(fn func(*EyvescloudConfig)) error {
 	defer AppConfigMu.Unlock()
 	fn(AppConfig)
 	return saveConfigToDB()
+}
+
+// UpdateContainer 整体替换容器配置（按 ID 匹配），写回 DB。
+// 用于 HVM 设置等元数据持久化。
+func UpdateContainer(c *Container) error {
+	if c == nil {
+		return fmt.Errorf("container is nil")
+	}
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == c.ID {
+				cfg.Containers[i] = *c
+				return
+			}
+		}
+	})
+}
+
+// ListScheduledActions 列出某容器的定时任务。
+func ListScheduledActions(containerID int) []ScheduledAction {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	out := make([]ScheduledAction, 0)
+	for _, a := range AppConfig.ScheduledActions {
+		if a.ContainerID == containerID {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// ListAllScheduledActions 列出全部定时任务（不区分容器），用于后台调度器扫描。
+func ListAllScheduledActions() []ScheduledAction {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	out := make([]ScheduledAction, len(AppConfig.ScheduledActions))
+	copy(out, AppConfig.ScheduledActions)
+	return out
+}
+
+// SaveScheduledAction 保存（upsert）定时任务。
+func SaveScheduledAction(a ScheduledAction) error {
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		found := false
+		for i := range cfg.ScheduledActions {
+			if cfg.ScheduledActions[i].ID == a.ID {
+				cfg.ScheduledActions[i] = a
+				found = true
+				break
+			}
+		}
+		if !found {
+			cfg.ScheduledActions = append(cfg.ScheduledActions, a)
+		}
+	})
+}
+
+// DeleteScheduledAction 删除某容器的某条定时任务。
+func DeleteScheduledAction(containerID int, actionID string) error {
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		out := cfg.ScheduledActions[:0]
+		for _, a := range cfg.ScheduledActions {
+			if a.ContainerID == containerID && a.ID == actionID {
+				continue
+			}
+			out = append(out, a)
+		}
+		cfg.ScheduledActions = out
+	})
 }
 
 // BackupDirectory returns the fixed, safe backup directory under the data dir.

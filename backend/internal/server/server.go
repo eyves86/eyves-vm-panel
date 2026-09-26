@@ -652,6 +652,8 @@ func Run() error {
 	api.StartInstanceBackupScheduler()
 	api.StartBackupPlanScheduler()
 	api.StartUptimeTracking()
+	// 容器级定时启停任务（对齐 Virtualizor act=self_shutdown）。
+	api.StartScheduledActionsWorker()
 	// 事件订阅引擎：容器状态变更 → Webhook 回调（幂等注册）。
 	api.StartWebhookEngine()
 

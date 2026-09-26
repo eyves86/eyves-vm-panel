@@ -42,6 +42,23 @@ func openAPIExtraPaths() map[string]map[string]string {
 		"/containers/{id}/usage":   {"get": "实时用量（CPU/内存/磁盘/网络/磁盘 IO）"},
 		"/containers/{id}/traffic": {"get": "流量统计（已用/上限）"},
 		"/containers/{id}/history": {"get": "历史指标时序（原始采样 + 小时聚合），用于绘制曲线"},
+		"/containers/{id}/stats":   {"get": "一站式监控：CPU/RAM/Disk/Inodes/Uptime（Virtualizor act=monitor）"},
+		"/containers/{id}/bandwidth": {"get": "流量明细（按周期聚合，对齐 Virtualizor act=bandwidth）"},
+		"/containers/{id}/processes": {"get": "容器内进程列表（对齐 Virtualizor act=processes，仅 LXC）"},
+		"/containers/{id}/processes/kill": {"post": "批量终止容器内进程（对齐 Virtualizor act=processes + sel_proc[]）"},
+		"/containers/{id}/services": {"get": "容器内 systemd 服务列表（对齐 Virtualizor act=services）"},
+		"/containers/{id}/services/action": {"post": "服务启停/启用禁用（对齐 Virtualizor act=services + start_x/stop_x）"},
+		"/containers/{id}/hvm-settings": {
+			"get": "KVM HVM 设置（启动盘/网卡驱动/VNC 键位/加速/TUN PPP）",
+			"put": "更新 KVM HVM 设置（白名单校验）",
+		},
+		"/containers/{id}/scheduled-actions": {
+			"get":  "列出定时任务（对齐 Virtualizor act=self_shutdown）",
+			"post": "创建定时任务（启/停/重启/硬关机 + 重复周期）",
+		},
+		"/containers/{id}/scheduled-actions/{actionID}": {
+			"delete": "删除定时任务",
+		},
 		"/usage":                   {"get": "全量用量导出（供财务系统拉取：按租户过滤，含每容器配置/实时用量/流量/到期/挂起状态）"},
 
 		// ---- 容器：网络 ----
