@@ -205,6 +205,12 @@ type Container struct {
 	RescueEnabled                 bool                   `json:"rescue_enabled,omitempty"`  // 是否处于救援模式（KVM 从救援 ISO 引导）
 	RescueISOID                   string                 `json:"rescue_iso_id,omitempty"`   // 当前使用的救援 ISO 目录条目 ID
 	RescueISOPath                 string                 `json:"rescue_iso_path,omitempty"` // 救援 ISO 的本地绝对路径
+	// OptionalISOID/OptionalISOPath: 通过单独 AttachISO 挂到 KVM CD-ROM (sdb) 的 ISO。
+	// 与 Rescue 模式两条独立路径——Rescue 会 redefine + reboot，而 AttachISO 只是
+	// 加 CD-ROM 设备，不改变启动盘顺序（Windows 安装/LiveCD 工具）。
+	// DetachISO 会清空这两个字段；ExitRescue 不清空（可能同时有 rescue ISO + 可选 ISO）。
+	OptionalISOID   string `json:"optional_iso_id,omitempty"`
+	OptionalISOPath string `json:"optional_iso_path,omitempty"`
 	// RootVolumeID 根卷 ID（P0-1 存储抽象层）：新容器在 dir 后端池上创建的根目录卷。
 	// 为空表示旧数据直连路径模式（沿用 StoragePath，读路径完全向后兼容，不做迁移）。
 	RootVolumeID string `json:"root_volume_id,omitempty"`

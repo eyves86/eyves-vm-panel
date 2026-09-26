@@ -974,6 +974,27 @@ func (m *Manager) AttachISO(id int, isoPath string) error {
 		"--type", "cdrom", "--mode", "readonly").CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh attach-disk failed: %v, output: %s", err, string(out))
 	}
+	// 写回 config：记录当前挂载的可选 ISO（与 Rescue 模式的 RescueISO* 字段独立）。
+	// isoID 通过 isoPath 反查——调用方可能没直接传 isoID 字符串。
+	isoID := ""
+	config.AppConfigMu.RLock()
+	for _, iso := range config.AppConfig.ISOFiles {
+		if iso.Path == isoPath {
+			isoID = iso.ID
+			break
+		}
+	}
+	config.AppConfigMu.RUnlock()
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == id {
+				cfg.Containers[i].OptionalISOID = isoID
+				cfg.Containers[i].OptionalISOPath = isoPath
+				break
+			}
+		}
+	})
+	_ = config.SaveConfig()
 	return nil
 }
 
@@ -998,6 +1019,17 @@ func (m *Manager) DetachISO(id int) error {
 		}
 		return fmt.Errorf("virsh detach-disk failed: %v, output: %s", err, outStr)
 	}
+	// 清空 config 里的可选 ISO 记录。
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == id {
+				cfg.Containers[i].OptionalISOID = ""
+				cfg.Containers[i].OptionalISOPath = ""
+				break
+			}
+		}
+	})
+	_ = config.SaveConfig()
 	return nil
 }
 

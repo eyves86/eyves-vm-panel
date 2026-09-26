@@ -547,14 +547,44 @@ function eyvescloud_AdminServicesTabFields(array $params)
         ? '<a href="' . htmlspecialchars($panelUrl, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener noreferrer">打开面板控制台</a>'
         : '-';
 
-    return [
+    $virt = strtolower(trim((string)($container['virtualization'] ?? ($container['type'] ?? 'lxc'))));
+    $isKVM = $virt === 'kvm';
+
+    // KVM 专属状态字段
+    $rows = [
         '实例名称' => htmlspecialchars((string)($container['name'] ?? eyvescloud_container_name($params)), ENT_QUOTES, 'UTF-8'),
+        '虚拟化类型' => htmlspecialchars(strtoupper($virt), ENT_QUOTES, 'UTF-8'),
         '运行状态' => htmlspecialchars($statusText, ENT_QUOTES, 'UTF-8'),
         'SSH 地址' => htmlspecialchars(eyvescloud_public_host($params, $container, true), ENT_QUOTES, 'UTF-8'),
         'SSH 端口' => htmlspecialchars((string)($container['ssh_port'] ?? '-'), ENT_QUOTES, 'UTF-8'),
         '到期时间' => htmlspecialchars((string)($container['expires_at'] ?? '-'), ENT_QUOTES, 'UTF-8'),
         '面板入口' => $panelLink,
     ];
+
+    if ($isKVM) {
+        // Rescue 模式状态
+        $rescueEnabled = !empty($container['rescue_enabled']);
+        $rescueIsoId = trim((string)($container['rescue_iso_id'] ?? ''));
+        if ($rescueEnabled) {
+            $rows['救援模式'] = '<span style="color:#b45309;font-weight:600">已启用</span> ' . htmlspecialchars($rescueIsoId ?: '(默认救援 ISO)', ENT_QUOTES, 'UTF-8');
+        } else {
+            $rows['救援模式'] = '<span style="color:#16a34a">未启用</span>';
+        }
+
+        // 可选 ISO 挂载状态（AttachISO 单独挂载的 CD-ROM，与 Rescue 独立）
+        $optIsoId = trim((string)($container['optional_iso_id'] ?? ''));
+        if ($optIsoId !== '') {
+            $rows['挂载 ISO'] = htmlspecialchars($optIsoId, ENT_QUOTES, 'UTF-8');
+        } else {
+            $rows['挂载 ISO'] = '<span style="color:#6b7280">未挂载</span>';
+        }
+
+        // VNC 端口
+        $vncPort = (int)($container['vnc_port'] ?? 0);
+        $rows['VNC 端口'] = $vncPort > 0 ? (string)$vncPort : '<span style="color:#6b7280">-</span>';
+    }
+
+    return $rows;
 }
 
 /**
