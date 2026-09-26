@@ -823,6 +823,17 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["nodes"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Nodes)
 	}
+	// F7/P2-11：读取时把 enc:v1: 密文还原为明文 Token（内存态保持明文）。
+	// 存量明文值（无前缀）原样通过；解密失败不阻断启动，但该节点 Token
+	// 置空使其失效，等待重新注册——宁可断连也不能拿密文当凭据误用。
+	for i := range cfg.Nodes {
+		plain, err := DecryptNodeToken(cfg.Nodes[i].Token)
+		if err != nil {
+			cfg.Nodes[i].Token = ""
+			continue
+		}
+		cfg.Nodes[i].Token = plain
+	}
 	if cfg.Nodes == nil {
 		cfg.Nodes = []Node{}
 	}
@@ -935,7 +946,19 @@ func saveMeta(tx *sql.Tx) error {
 	customLXCImagesJSON, _ := json.Marshal(AppConfig.CustomLXCImages)
 	policyRulesJSON, _ := json.Marshal(AppConfig.PolicyRules)
 	policyHistoryJSON, _ := json.Marshal(AppConfig.PolicyHistory)
-	nodesJSON, _ := json.Marshal(AppConfig.Nodes)
+	// F7/P2-11：落库前对节点 Token 副本做 AES-GCM 加密（内存态不改动，
+	// 业务层心跳校验/agent 转发仍用明文）。加密失败时拒绝落库——静默
+	// 落明文等于关掉该保护。
+	nodesForDisk := make([]Node, len(AppConfig.Nodes))
+	for i, n := range AppConfig.Nodes {
+		nodesForDisk[i] = n
+		enc, err := EncryptNodeToken(n.Token)
+		if err != nil {
+			return fmt.Errorf("加密节点 %s Token 失败: %w", n.ID, err)
+		}
+		nodesForDisk[i].Token = enc
+	}
+	nodesJSON, _ := json.Marshal(nodesForDisk)
 	regionsJSON, _ := json.Marshal(AppConfig.Regions)
 	ipGroupsJSON, _ := json.Marshal(AppConfig.IPGroups)
 	isoFilesJSON, _ := json.Marshal(AppConfig.ISOFiles)

@@ -22,9 +22,9 @@
 | CSRF | ✅ 模块 AJAX 入口 session token + hash_equals（F5 已修复，待真机端到端） |
 | SSRF | ✅ 面板侧 safehttp 到位；Webhook 投递改走 safehttp.Post，DNS 解析期 + 拨号期二次校验（F2 已修复） |
 | 节点添加 | ✅ 一键（一次性 token + 24h TTL + IP 绑定 + SHA256 + systemd）+ 手动（admin-only）；注册审计日志已补（F3 已修复）；install_key 全链路走 `X-Install-Key` 头（F4 已修复） |
-| 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key、curl 不跟随重定向（F10 已修复）；⚠️ 面板侧节点 Token 明文存 SQLite（F7，低，P2） |
+| 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key、curl 不跟随重定向（F10 已修复）；✅ 面板侧节点 Token AES-256-GCM 静态加密存 SQLite（F7 已修复） |
 
-**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 已完成 6 项（F6 备份计划归属校验、F9 节点地址默认 https、F11 拒绝明文落库、F8 内存累计配额、P2-15 容器 ID 持久化、P2-16 快照/备份/防火墙挂客户区），余 2 项规划中。详见第九节路线图。
+**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 已完成 7 项（F6 备份计划归属校验、F7 节点 Token AES-GCM 加密存储、F9 节点地址默认 https、F11 拒绝明文落库、F8 内存累计配额、P2-15 容器 ID 持久化、P2-16 快照/备份/防火墙挂客户区），余 1 项（P2-17 Additional Disk/弹性 IP 计费项）规划中。详见第九节路线图。
 
 ---
 
@@ -392,7 +392,7 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 | # | 任务 | 关联 | 状态 |
 |---|------|------|------|
 | 10 | backup-plans 归属校验 | F6 | ✅ 已修复：计划 CRUD/run 全链路过 `isContainerAllowedForRequest` 同口径校验；受限请求（绑定容器的 Key/子用户）不能跨容器操作、不能建/见全局计划（container_id=0）；列表按绑定范围过滤。回归 `TestBackupPlanOwnershipEnforced` |
-| 11 | 节点 Token AES-GCM 加密存储 | F7 | 待做 |
+| 11 | 节点 Token AES-GCM 加密存储 | F7 | ✅ 已修复：存储层收口（store_sqlite.go），落库前对 Node.Token 副本 AES-256-GCM 加密（enc:v1: 前缀 + nonce‖密文 base64），读取时解密还原，内存态保持明文（心跳校验/agent 转发零改动）。密钥优先环境变量 EYVESCLOUD_NODE_TOKEN_KEY（64 位 hex），未设置时自动生成密钥文件 `<db>.tokenkey`（0600 原子写）。存量明文透明兼容（无前缀原样读出、下次落库自动重加密）；解密失败令该节点 Token 失效待重新注册。回归 TestNodeToken{RoundTrip,LegacyPlaintextPassthrough,TamperRejected,KeyFilePersist} |
 | 12 | RAM 累计配额检查 | F8 | ✅ 已修复：新增 `validateCumulativeRAMQuota`（与磁盘累计同口径，内存超售比可放宽）；接入单台创建、批量创建（整批内存总和）、resource-limit 内存调增（按增量计）三条路径。回归 `TestValidateCumulativeRAMQuota_Summation` |
 | 13 | node address 默认 https + TLS 开关 | F9 | ✅ 已修复：主控 `normalizeNodeAddress` 无 scheme 默认补 `https://`；agent 侧注册时按自身面板 SSL 状态显式补全 scheme（`normalizeSelfAddress`/`selfPanelScheme`），无 scheme 的 `--addr` 不会被误存 https 断链。回归 `TestNormalizeNodeAddressDefaultsHTTPS`/`TestNormalizeSelfAddressByPanelScheme` |
 | 14 | store_password 降级分支拒绝明文落库 | F11 | ✅ 已修复：`eyvescloud_store_password` 加密不可用时返回 null（记日志），两处调用方（reset-password / update_host_from_container）跳过 password 字段写库，保留库中旧值 |
