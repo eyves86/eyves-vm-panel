@@ -1,13 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -592,19 +592,31 @@ func HandleISOUpload(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: iso})
 }
 
+
+
 // HandleContainerISOAction attaches or detaches an ISO to/from a KVM VM (libvirt).
 // Request: {"container_id": int, "iso_id": "iso-...", "attach": bool}.
+//
+// 多节点：先读 body 再决定是否转发——body 只能 read 一次，所以 parse 和转发
+// 都必须基于同一份 buf 复用（bytes.NewReader 可多次 ReadAll）。
+//
+// agent 不可达则本地 fallback 直接调 attachISOByRuntime / detachISOByRuntime。
 func HandleContainerISOAction(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
 		return
 	}
+	buf, err := io.ReadAll(io.LimitReader(r.Body, 8*1024*1024))
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Failed to read body"})
+		return
+	}
 	var req struct {
 		ContainerID int    `json:"container_id"`
 		ISOID       string `json:"iso_id"`
-		Attach      bool   `json:"attach"` // false = detach
+		Attach      bool   `json:"attach"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(buf)).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request"})
 		return
 	}
@@ -617,35 +629,43 @@ func HandleContainerISOAction(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "ISO attach is only supported for KVM VMs"})
 		return
 	}
-	vm := c.VirshName()
-	if req.Attach {
-		var iso *config.ISOFile
-		config.AppConfigMu.RLock()
-		for i := range config.AppConfig.ISOFiles {
-			if config.AppConfig.ISOFiles[i].ID == req.ISOID {
-				v := config.AppConfig.ISOFiles[i]
-				iso = &v
-				break
+	// 多节点：容器在远端 agent 上则转发。必须用已缓存的 buf，因为 r.Body 已经 EOF。
+	if c.NodeID != "" {
+		if node, ok := config.FindNode(c.NodeID); ok && node.Address != "" {
+			data, status, pErr := proxyNodeRequest(r, node, http.MethodPost,
+				fmt.Sprintf("/api/agent/containers/%d/iso", c.ID),
+				bytes.NewReader(buf))
+			if pErr == nil && status < 500 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write(data)
+				return
 			}
+			// agent 不可达/5xx → fallback 到本地（本地大概率失败，但至少语义正确）
 		}
-		config.AppConfigMu.RUnlock()
+	}
+	// 本地执行
+	if req.Attach {
+		iso := findISOByID(req.ISOID)
 		if iso == nil || iso.Path == "" {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "ISO not found"})
 			return
 		}
-		if out, err := exec.Command("virsh", "attach-disk", vm, iso.Path, "sdb",
-			"--type", "cdrom", "--mode", "readonly").CombinedOutput(); err != nil {
-			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "attach failed: " + err.Error() + ": " + string(out)})
+		if err := attachISOByRuntime(c.ID, iso.Path); err != nil {
+			auditRequest(r, "container.iso_attach", c.Name, "挂载 ISO "+iso.Name+" 失败: "+err.Error(), false, err.Error())
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: err.Error()})
 			return
 		}
 		auditRequest(r, "container.iso_attach", c.Name, "挂载 ISO "+iso.Name, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "ISO attached"})
 		return
 	}
-	if out, err := exec.Command("virsh", "detach-disk", vm, "sdb").CombinedOutput(); err != nil {
-		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "detach failed: " + err.Error() + ": " + string(out)})
+	if err := detachISOByRuntime(c.ID); err != nil {
+		auditRequest(r, "container.iso_detach", c.Name, "卸载 ISO 失败: "+err.Error(), false, err.Error())
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
 	auditRequest(r, "container.iso_detach", c.Name, "卸载 ISO", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "ISO detached"})
 }
+

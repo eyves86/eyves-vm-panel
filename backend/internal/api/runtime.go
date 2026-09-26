@@ -147,6 +147,22 @@ func exitRescueByRuntime(id int) error {
 	return fmt.Errorf("rescue mode is only supported for KVM VMs")
 }
 
+func attachISOByRuntime(id int, isoPath string) error {
+	c := config.FindContainer(id)
+	if c != nil && c.IsKVM() {
+		return kvmManager.AttachISO(id, isoPath)
+	}
+	return fmt.Errorf("ISO attach is only supported for KVM VMs")
+}
+
+func detachISOByRuntime(id int) error {
+	c := config.FindContainer(id)
+	if c != nil && c.IsKVM() {
+		return kvmManager.DetachISO(id)
+	}
+	return fmt.Errorf("ISO detach is only supported for KVM VMs")
+}
+
 func reinstallByRuntime(id int, templateID string, authConfig ...lxc.ContainerConfig) error {
 	c := config.FindContainer(id)
 	if c != nil && c.IsKVM() {

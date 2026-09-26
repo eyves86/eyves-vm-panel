@@ -949,6 +949,58 @@ func (m *Manager) ExitRescue(id int) error {
 	return m.startWithoutGuestInit(name)
 }
 
+// AttachISO 向 KVM VM 挂载 ISO 作为 CD-ROM 设备（sdb）。
+// ISO 文件必须在本机（被调控节点）存在，否则 virsh attach-disk 会失败。
+//
+// 这与 EnterRescue 是两条独立路径：Rescue 模式会自动 redefine + reboot 以 ISO 引导；
+// 而单独挂载 ISO 只是加一个 CD-ROM 设备，不改变启动盘顺序，由 guest 自行
+// 处理（Windows 安装 / LiveCD 挂载工具）。
+func (m *Manager) AttachISO(id int, isoPath string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if !c.IsKVM() {
+		return fmt.Errorf("ISO attach is only supported for KVM VMs")
+	}
+	if isoPath == "" {
+		return fmt.Errorf("iso_path is required")
+	}
+	if _, err := os.Stat(isoPath); err != nil {
+		return fmt.Errorf("ISO not accessible on this node: %v", err)
+	}
+	vm := c.VirshName()
+	if out, err := exec.Command("virsh", "attach-disk", vm, isoPath, "sdb",
+		"--type", "cdrom", "--mode", "readonly").CombinedOutput(); err != nil {
+		return fmt.Errorf("virsh attach-disk failed: %v, output: %s", err, string(out))
+	}
+	return nil
+}
+
+// DetachISO 卸载之前用 AttachISO 挂到 sdb 的 CD-ROM 设备。
+// 静默忽略设备不存在的错误（幂等）。
+func (m *Manager) DetachISO(id int) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if !c.IsKVM() {
+		return fmt.Errorf("ISO detach is only supported for KVM VMs")
+	}
+	vm := c.VirshName()
+	out, err := exec.Command("virsh", "detach-disk", vm, "sdb").CombinedOutput()
+	if err != nil {
+		// virsh detach-disk 在设备不存在时返回非零 exit code，
+		// 我们把这种情况视为幂等成功（用户多次点 detach 不应报错）。
+		outStr := string(out)
+		if strings.Contains(outStr, "not found") || strings.Contains(outStr, "no disk") {
+			return nil
+		}
+		return fmt.Errorf("virsh detach-disk failed: %v, output: %s", err, outStr)
+	}
+	return nil
+}
+
 func (m *Manager) DestroyContainer(id int) error {
 	c := config.FindContainer(id)
 	if c == nil {

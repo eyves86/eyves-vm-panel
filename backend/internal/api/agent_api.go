@@ -462,6 +462,15 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		}
 		handleScheduledActionDelete(w, r, c, req.ActionID)
 		return
+	case "rescue":
+		// 主控转发过来的 rescue 请求。
+		// 直接复用 handleContainerRescuePost 的解析 + doRescue 逻辑。
+		handleContainerRescuePost(w, r, c)
+		return
+	case "iso":
+		// 主控转发过来的 ISO 挂载请求。
+		handleContainerISOActionPost(w, r, c)
+		return
 	default:
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Unknown action: " + action})
 		return

@@ -255,7 +255,7 @@ func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, a
 	}
 	method := http.MethodGet
 	switch action {
-	case "processes/kill", "services/action":
+	case "processes/kill", "services/action", "rescue", "iso":
 		method = http.MethodPost
 	case "scheduled-actions", "scheduled-actions/delete":
 		// 这两个 action 主控端允许 GET（list）和 POST（create）；

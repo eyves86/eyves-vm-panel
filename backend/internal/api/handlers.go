@@ -595,6 +595,20 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(action, "scheduled-actions/") && r.Method == http.MethodDelete:
 		// 取消定时任务。scheduled-actions/ 子路径在 action 中以 `scheduled-actions/{id}` 形式传入。
 		handleScheduledActionDelete(w, r, c, strings.TrimPrefix(action, "scheduled-actions/"))
+	case action == "rescue" && r.Method == http.MethodPost:
+		// KVM 救援模式进入/退出（Virtualizor Rescue Mode）。
+		// 请求体：{"enabled": true/false, "iso_id": "..."}
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		handleContainerRescuePost(w, r, c)
+	case action == "iso" && r.Method == http.MethodPost:
+		// KVM ISO 挂载/卸载（Virtualizor Enduser ISO）。
+		// 请求体：{"iso_id": "...", "attach": true/false}
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		handleContainerISOActionPost(w, r, c)
 	case r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return
