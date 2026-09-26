@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -67,8 +66,9 @@ func handleContainerServices(w http.ResponseWriter, r *http.Request, c *config.C
 		return
 	}
 	// systemctl list-units --type=service --all --no-legend --plain
-	cmd := exec.Command("lxc-attach", "-n", lxcName, "--",
+	cmd, cancel := execLXCAttachWithTimeout(lxcName,
 		"systemctl", "list-unit-files", "--type=service", "--no-legend", "--plain")
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		jsonResponse(w, http.StatusOK, APIResponse{
@@ -184,8 +184,8 @@ func handleContainerServiceAction(w http.ResponseWriter, r *http.Request, c *con
 		return
 	}
 	unit := req.Service + ".service"
-	cmd := exec.Command("lxc-attach", "-n", lxcName, "--",
-		"systemctl", req.Action, unit)
+	cmd, cancel := execLXCAttachWithTimeout(lxcName, "systemctl", req.Action, unit)
+	defer cancel()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		jsonResponse(w, http.StatusBadGateway, APIResponse{
 			Success: false,

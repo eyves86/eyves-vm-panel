@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -128,7 +129,8 @@ func handleContainerStats(w http.ResponseWriter, r *http.Request, c *config.Cont
 }
 
 func lxcAttachFree(name string) (usedMB, swapMB int64, err error) {
-	cmd := exec.Command("lxc-attach", "-n", name, "--", "free", "-m")
+	cmd, cancel := execLXCAttachWithTimeout(name, "free", "-m")
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -139,7 +141,8 @@ func lxcAttachFree(name string) (usedMB, swapMB int64, err error) {
 }
 
 func lxcAttachDFBG(name string) (usedGB, totalGB float64, err error) {
-	cmd := exec.Command("lxc-attach", "-n", name, "--", "df", "-PBG", "/")
+	cmd, cancel := execLXCAttachWithTimeout(name, "df", "-PBG", "/")
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -152,7 +155,8 @@ func lxcAttachDFBG(name string) (usedGB, totalGB float64, err error) {
 }
 
 func lxcAttachDFInodes(name string) (used, limit int64, err error) {
-	cmd := exec.Command("lxc-attach", "-n", name, "--", "df", "-Pi", "/")
+	cmd, cancel := execLXCAttachWithTimeout(name, "df", "-Pi", "/")
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, 0, err
@@ -167,7 +171,8 @@ func lxcAttachDFInodes(name string) (used, limit int64, err error) {
 // lxcInfoCPUUsage 解析 `lxc info NAME` 输出中的 CPU usage（秒）。
 // 返回的是累计 CPU 时间，不是百分比；前端按时间窗差分得占用率。
 func lxcInfoCPUUsage(name string) (float64, error) {
-	cmd := exec.Command("lxc", "info", name)
+	cmd, cancel := execWithTimeout("lxc", "info", name)
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		return 0, err
@@ -298,3 +303,18 @@ func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, a
 
 // 抑制未使用 fmt 告警（routeToAgent 内部用）
 var _ = fmt.Sprintf
+// ---- 命令执行超时工具 ----
+// 容器内命令超时（秒）。30s 足够 ps/free/df/systemctl 完成，同时能避免容器 stopped
+// 或 lxc-attach 挂住时 handler 永远阻塞（HTTP per-request goroutine 会被占住）。
+const execCommandTimeoutSec = 30
+
+func execLXCAttachWithTimeout(lxcName string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), execCommandTimeoutSec*time.Second)
+	fullArgs := append([]string{"-n", lxcName, "--"}, args...)
+	return exec.CommandContext(ctx, "lxc-attach", fullArgs...), cancel
+}
+
+func execWithTimeout(name string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), execCommandTimeoutSec*time.Second)
+	return exec.CommandContext(ctx, name, args...), cancel
+}

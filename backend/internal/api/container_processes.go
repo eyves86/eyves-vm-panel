@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -68,9 +67,10 @@ func handleContainerProcesses(w http.ResponseWriter, r *http.Request, c *config.
 		return
 	}
 	// ps -eo pid,user,%cpu,%mem,rss,stat,comm,args — 按 CPU% 倒序
-	cmd := exec.Command("lxc-attach", "-n", lxcName, "--",
+	cmd, cancel := execLXCAttachWithTimeout(lxcName,
 		"ps", "-eo", "pid=,user=,%cpu=,%mem=,rss=,stat=,comm=,args=",
 		"--sort=-%cpu")
+	defer cancel()
 	out, err := cmd.Output()
 	if err != nil {
 		jsonResponse(w, http.StatusBadGateway, APIResponse{
@@ -209,11 +209,12 @@ func handleContainerProcessKill(w http.ResponseWriter, r *http.Request, c *confi
 		return
 	}
 	// 在容器内 kill：lxc-attach -n NAME -- kill -SIG PID1 PID2 ...
-	args := []string{"-n", lxcName, "--", "kill", "-" + sig}
+	killArgs := []string{"kill", "-" + sig}
 	for _, pid := range req.PIDs {
-		args = append(args, strconv.Itoa(pid))
+		killArgs = append(killArgs, strconv.Itoa(pid))
 	}
-	cmd := exec.Command("lxc-attach", args...)
+	cmd, cancel := execLXCAttachWithTimeout(lxcName, killArgs...)
+	defer cancel()
 	if out, err := cmd.CombinedOutput(); err != nil {
 		jsonResponse(w, http.StatusBadGateway, APIResponse{
 			Success: false,
