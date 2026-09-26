@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Globe2, Network, Pencil, Plus, RefreshCw, Router, Save, Search, Server, Trash2, X } from 'lucide-react'
+import { Globe2, Network, Pencil, Plus, RefreshCw, Router, Save, ScanSearch, Search, Server, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { useLanguage, type Language } from '../contexts/LanguageContext'
 import {
   getRoutingInfo,
+  scanRoutingIPv4Segment,
   updateRoutingIPv6Prefixes,
   updateRoutingIPv4Pool,
   updateRoutingPools,
@@ -14,6 +15,7 @@ import {
   type NAT4PortRange,
   type NAT4Route,
   type PublicIPv4Info,
+  type PublicIPv4ScanResult,
   type RoutingInfo,
 } from '../services/api'
 
@@ -40,6 +42,13 @@ export default function Routing() {
   const [ipv6Page, setIPv6Page] = useState(1)
   const [nat4Search, setNat4Search] = useState('')
   const [ipv6Search, setIPv6Search] = useState('')
+  const [scanOpen, setScanOpen] = useState(false)
+  const [scanning, setScanning] = useState(false)
+  const [scanCIDR, setScanCIDR] = useState('')
+  const [scanIface, setScanIface] = useState('')
+  const [scanGateway, setScanGateway] = useState('')
+  const [scanVerify, setScanVerify] = useState(true)
+  const [scanResults, setScanResults] = useState<PublicIPv4ScanResult[] | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -230,6 +239,38 @@ export default function Routing() {
     }
   }
 
+  // ---- IPv4 网段扫描 ----------------------------------------------------------
+  const startScan = () => {
+    setScanCIDR(routing?.host_public_ipv4?.prefix || publicIPv4s[0]?.prefix || '')
+    setScanIface(defaultIPv4Interface)
+    setScanGateway(defaultIPv4Gateway)
+    setScanVerify(true)
+    setScanResults(null)
+    setScanOpen(true)
+  }
+
+  const runScan = async () => {
+    const cidr = scanCIDR.trim()
+    if (!cidr) {
+      alert(text.scanCIDRRequired)
+      return
+    }
+    setScanning(true)
+    try {
+      const res = await scanRoutingIPv4Segment({
+        cidr,
+        interface: scanIface.trim(),
+        gateway: scanGateway.trim(),
+        verify: scanVerify,
+      })
+      setScanResults(res.data.data || [])
+    } catch (err: any) {
+      alert(err?.response?.data?.message || text.scanFailed)
+    } finally {
+      setScanning(false)
+    }
+  }
+
   const filteredNat4 = useMemo(() => {
     const q = nat4Search.toLowerCase().trim()
     if (!q) return nat4Mappings
@@ -327,10 +368,16 @@ export default function Routing() {
         title={text.publicIPv4Pool}
         subtitle={formatIPv4PoolSubtitle(publicIPv4s.length, ipv4Assignments.length, language)}
         action={
-          <button onClick={startEditIPv4} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
-            <Plus className="h-3.5 w-3.5" />
-            {text.editPool}
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={startScan} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+              <ScanSearch className="h-3.5 w-3.5" />
+              {text.scanSegment}
+            </button>
+            <button onClick={startEditIPv4} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50">
+              <Plus className="h-3.5 w-3.5" />
+              {text.editPool}
+            </button>
+          </div>
         }
       >
         {publicIPv4s.length === 0 ? (
@@ -453,6 +500,101 @@ export default function Routing() {
                 </button>
               </div>
             </div>
+          </div>
+        </RouteModal>
+      )}
+
+      {scanOpen && (
+        <RouteModal title={text.scanSegmentTitle} onClose={() => setScanOpen(false)} wide>
+          <div className="space-y-4">
+            <p className="text-xs text-gray-500">{text.scanSegmentHint}</p>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-gray-500">{text.scanCIDR}</span>
+                <input
+                  type="text"
+                  value={scanCIDR}
+                  onChange={(e) => setScanCIDR(e.target.value)}
+                  placeholder="192.168.1.0/24"
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-gray-500">{text.interface}</span>
+                <input
+                  type="text"
+                  value={scanIface}
+                  onChange={(e) => setScanIface(e.target.value)}
+                  placeholder={defaultIPv4Interface}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+                />
+              </label>
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-gray-500">{text.gateway}</span>
+                <input
+                  type="text"
+                  value={scanGateway}
+                  onChange={(e) => setScanGateway(e.target.value)}
+                  placeholder={defaultIPv4Gateway || text.gateway}
+                  className="w-full rounded-md border border-gray-300 px-3 py-2 font-mono text-sm text-gray-800 focus:outline-none focus:ring-1 focus:ring-black"
+                />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={scanVerify}
+                onChange={(e) => setScanVerify(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300 accent-black"
+              />
+              {text.scanVerify}
+            </label>
+            <div className="flex items-center justify-end gap-2">
+              <button onClick={() => setScanOpen(false)} disabled={scanning} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50">
+                {text.cancel}
+              </button>
+              <button onClick={() => { void runScan() }} disabled={scanning} className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs text-white hover:bg-gray-800 disabled:opacity-50">
+                <ScanSearch className="h-3.5 w-3.5" />
+                {scanning ? text.scanning : text.scanAction}
+              </button>
+            </div>
+            {scanResults && (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-sm font-medium text-black">{text.scanResults}</div>
+                  <div className="text-xs text-gray-500">{formatScanSummary(scanResults, language)}</div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-sm">
+                    <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+                      <tr>
+                        <th className="px-3 py-2 text-left font-medium">{text.ipAddress}</th>
+                        <th className="px-3 py-2 text-left font-medium">{text.status}</th>
+                        <th className="px-3 py-2 text-left font-medium">{text.interface}</th>
+                        <th className="px-3 py-2 text-left font-medium">{text.gateway}</th>
+                        <th className="px-3 py-2 text-left font-medium">{text.reason}</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {scanResults.map((item) => (
+                        <tr key={item.address} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 font-mono text-xs text-gray-700">{item.address}</td>
+                          <td className="px-3 py-2">
+                            <span className={`rounded px-2 py-1 text-xs ${item.usable ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                              {scanStatusLabels[language][item.status] || item.status}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2 font-mono text-xs text-gray-600">{item.interface || '-'}</td>
+                          <td className="px-3 py-2 font-mono text-xs text-gray-600">{item.gateway || '-'}</td>
+                          <td className="px-3 py-2 text-xs text-gray-500">{item.reason || '-'}</td>
+                        </tr>
+                      ))}
+                      {scanResults.length === 0 && <EmptyRow colSpan={5} text={text.scanResultsEmpty} />}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         </RouteModal>
       )}
@@ -927,6 +1069,19 @@ const routingText = {
     auto: '自动',
     noIPv4InPool: 'IPv4 池内暂无地址',
     addIPv4: '添加 IPv4',
+    scanSegment: '扫描网段',
+    scanSegmentTitle: '扫描 IPv4 网段',
+    scanSegmentHint: '扫描 /24 或更小的网段，发现可加入公网 IPv4 池的地址（最多 256 个主机）',
+    scanCIDR: '网段 (CIDR)',
+    scanCIDRRequired: '请输入要扫描的网段，例如 192.168.1.0/24',
+    scanVerify: '深度校验地址可用性（ARP 探测，耗时较长）',
+    scanAction: '开始扫描',
+    scanning: '扫描中...',
+    scanFailed: '扫描网段失败',
+    scanResults: '扫描结果',
+    scanResultsEmpty: '未发现任何地址',
+    ipAddress: 'IP 地址',
+    reason: '原因',
     cancel: '取消',
     save: '保存',
     saving: '保存中...',
@@ -1002,6 +1157,19 @@ const routingText = {
     auto: 'Auto',
     noIPv4InPool: 'No IPv4 addresses in the pool',
     addIPv4: 'Add IPv4',
+    scanSegment: 'Scan segment',
+    scanSegmentTitle: 'Scan IPv4 segment',
+    scanSegmentHint: 'Scan a /24 or smaller segment to discover addresses for the public IPv4 pool (max 256 hosts)',
+    scanCIDR: 'Segment (CIDR)',
+    scanCIDRRequired: 'Enter a segment to scan, e.g. 192.168.1.0/24',
+    scanVerify: 'Verify address usability (ARP probing, slower)',
+    scanAction: 'Start scan',
+    scanning: 'Scanning...',
+    scanFailed: 'Segment scan failed',
+    scanResults: 'Scan results',
+    scanResultsEmpty: 'No addresses found',
+    ipAddress: 'IP address',
+    reason: 'Reason',
     cancel: 'Cancel',
     save: 'Save',
     saving: 'Saving...',
@@ -1042,6 +1210,37 @@ const routingText = {
 
 function formatPoolCount(count: number, language: Language) {
   return language === 'en' ? `${count} in pool` : `池内 ${count} 个`
+}
+
+// 网段扫描结果的状态标签（对应后端 PublicIPv4ScanResult.Status）
+const scanStatusLabels: Record<Language, Record<string, string>> = {
+  zh: {
+    host: '宿主地址',
+    gateway: '网关',
+    assigned: '已分配',
+    pool: '已在池中',
+    configured: '已配置',
+    in_use: '占用中',
+    available: '可用',
+    unknown: '未知',
+  },
+  en: {
+    host: 'Host',
+    gateway: 'Gateway',
+    assigned: 'Assigned',
+    pool: 'In pool',
+    configured: 'Configured',
+    in_use: 'In use',
+    available: 'Available',
+    unknown: 'Unknown',
+  },
+}
+
+function formatScanSummary(results: PublicIPv4ScanResult[], language: Language) {
+  const usable = results.filter((item) => item.usable).length
+  return language === 'en'
+    ? `${usable} usable of ${results.length} ${results.length === 1 ? 'address' : 'addresses'}`
+    : `共 ${results.length} 个地址，${usable} 个可用`
 }
 
 function formatIPv4PoolSubtitle(total: number, assigned: number, language: Language) {

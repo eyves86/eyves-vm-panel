@@ -179,6 +179,8 @@ export default function ContainerDetail() {
   const [savingMapping, setSavingMapping] = useState(false)
   const [subUsers, setSubUsers] = useState<SubUser[]>([])
   const [changingOwner, setChangingOwner] = useState(false)
+  const [showOwnerEdit, setShowOwnerEdit] = useState(false)
+  const [ownerDraft, setOwnerDraft] = useState('')
   const [showReinstall, setShowReinstall] = useState(false)
   const [templates, setTemplates] = useState<Template[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState('')
@@ -701,35 +703,28 @@ export default function ContainerDetail() {
     }
   }
 
+  // 打开属主变更弹窗：下拉选择目标子用户（空 = 解绑）
+  const openOwnerEdit = () => {
+    if (!container) return
+    setOwnerDraft(container.owner_sub_user_id || '')
+    setShowOwnerEdit(true)
+  }
+
   const handleChangeOwner = async () => {
     if (!containerIdentifier || !container) return
-    // 构建选项：空=解绑，列表里的每个 SubUser
-    const currentOwner = container.owner_sub_user_id || ''
-    const options = [
-      { id: '', label: '— 解绑（无属主）—' },
-      ...subUsers.map((u) => ({ id: u.id, label: `${u.username}${u.tenant ? ` (${u.tenant})` : ''}` })),
-    ]
-    const current = options.findIndex((o) => o.id === currentOwner)
-    const promptLines = options.map((o, i) => `${i + 1}) ${o.label}`).join('\n')
-    const input = window.prompt(
-      `变更容器属主（当前第 ${current + 1} 项）：\n${promptLines}\n\n输入编号（1-${options.length}）：`,
-      String(current + 1)
-    )
-    if (input === null) return
-    const idx = parseInt(input.trim(), 10) - 1
-    if (idx < 0 || idx >= options.length) {
-      dialog.alert('无效输入', `请输入 1 - ${options.length} 之间的编号`)
+    const nextOwnerId = ownerDraft
+    if (nextOwnerId === (container.owner_sub_user_id || '')) {
+      setShowOwnerEdit(false)
       return
     }
-    const nextOwnerId = options[idx].id
-    if (nextOwnerId === currentOwner) return
     setChangingOwner(true)
     try {
       const res = await changeContainerOwner(containerIdentifier, nextOwnerId)
       if (res.data.success) {
         setContainer((prev) => prev ? { ...prev, owner_sub_user_id: nextOwnerId } : prev)
-        const label = nextOwnerId ? `已绑定给子用户「${options[idx].label.replace(/^.*\s/, '')}」` : '已解绑属主'
-        dialog.alert('完成', label)
+        setShowOwnerEdit(false)
+        const owner = subUsers.find((u) => u.id === nextOwnerId)
+        dialog.alert('完成', owner ? `已绑定给子用户「${owner.username}」` : '已解绑属主')
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
@@ -1664,7 +1659,7 @@ export default function ContainerDetail() {
           })()}>
             {!isSubUser && (
               <button
-                onClick={handleChangeOwner}
+                onClick={openOwnerEdit}
                 disabled={changingOwner}
                 className="ml-1 p-0.5 text-gray-400 hover:text-black rounded disabled:opacity-50"
                 title="变更属主"
@@ -2807,6 +2802,44 @@ export default function ContainerDetail() {
                 </div>
               </div>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {/* 变更属主弹窗：下拉选择目标子用户，空 = 解绑 */}
+      {showOwnerEdit && (
+        <Modal title="变更属主" onClose={() => setShowOwnerEdit(false)}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-500">
+              容器「{container?.name}」当前属主：
+              {container?.owner_sub_user_id
+                ? (subUsers.find((u) => u.id === container?.owner_sub_user_id)?.username || '已删除的子用户')
+                : '未绑定'}
+            </p>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">新属主子用户</label>
+              <select
+                value={ownerDraft}
+                onChange={(e) => setOwnerDraft(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white"
+              >
+                <option value="">— 解绑（无属主）—</option>
+                {subUsers.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.username}{u.tenant ? `（租户：${u.tenant}）` : ''}
+                  </option>
+                ))}
+              </select>
+              {subUsers.length === 0 && (
+                <p className="mt-1 text-xs text-amber-600">暂无子用户，请先到「用户与租户 → 子用户管理」创建</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <button onClick={() => setShowOwnerEdit(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>
+              <button onClick={() => { void handleChangeOwner() }} disabled={changingOwner} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+                {changingOwner ? '变更中...' : '确认变更'}
+              </button>
+            </div>
           </div>
         </Modal>
       )}

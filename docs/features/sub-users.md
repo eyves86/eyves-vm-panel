@@ -17,11 +17,25 @@ POST /api/v1/sub-user/create
 ```http
 GET /api/v1/sub-users
 POST /api/v1/sub-users/{id}/rotate-password
+PUT /api/v1/sub-users/{id}/edit          # 编辑用户名 / 邮箱 / 角色 / 密码
+PUT /api/v1/sub-users/{id}/bind-containers  # 整体替换容器绑定集
+DELETE /api/v1/sub-users/{id}            # 删除子用户（名下容器自动解绑归属）
 GET /api/v1/sub-users/{id}/audit-logs
 GET /api/v1/sub-users/{id}/login-logs
 ```
 
 轮换密码会让旧凭证失效。审计日志和登录日志可用于排查误操作或异常访问。
+
+创建时也可以不绑定任何容器（空账号），后续通过 `bind-containers` 追加绑定：
+
+```http
+POST /api/v1/sub-user/create
+Content-Type: application/json
+
+{ "username": "user01", "email": "user@example.com", "container_names": [] }
+```
+
+`bind-containers` 的请求体为 `{ "containers": ["<容器 ID / UUID / 名称>", ...] }`，语义是**整体替换**该子用户的容器集合；已属于其他子用户的容器会返回 409，请先在容器上变更属主（`PUT /api/v1/containers/{id}/owner`）。删除子用户只解除归属关系，容器本身保留。
 
 ## 权限范围
 

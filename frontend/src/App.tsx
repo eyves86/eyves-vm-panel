@@ -32,6 +32,10 @@ import ISOs from './pages/ISOs'
 import MetricRetention from './pages/MetricRetention'
 import Monitoring from './pages/Monitoring'
 import TaskCenter from './pages/TaskCenter'
+import SecurityGroups from './pages/SecurityGroups'
+import SSHKeys from './pages/SSHKeys'
+import Webhooks from './pages/Webhooks'
+import Recipes from './pages/Recipes'
 
 function LoadingScreen() {
   return (
@@ -87,7 +91,11 @@ function App() {
           <Route path="migration" element={<NodeMigration />} />
           <Route path="nodes" element={<NodeManagement />} />
           <Route path="policies" element={<PolicyManagement />} />
+          <Route path="recipes" element={<Recipes />} />
           <Route path="storage" element={<Storage />} />
+          <Route path="security-groups" element={<SecurityGroups />} />
+          <Route path="ssh-keys" element={<SSHKeys />} />
+          <Route path="webhooks" element={<Webhooks />} />
           <Route path="audit-logs" element={<AuditLogs />} />
           <Route path="api-integration" element={<ApiIntegration />} />
           <Route path="host-report" element={<HostReport />} />

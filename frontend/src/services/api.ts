@@ -1481,11 +1481,33 @@ export interface NATNetworkInfo {
 export const createSubUser = (containerId: ContainerIdentifier) =>
   api.post<APIResponse<SubUser>>('/sub-user/create', { container_name: String(containerId) })
 
+// 新模式创建：可建空账号，也可同时绑定多个容器（id/uuid/name 均可）
+export const createSubUserAdvanced = (payload: {
+  container_names?: string[]
+  username?: string
+  email?: string
+  tenant?: string
+  role?: string
+  password?: string
+}) => api.post<APIResponse<SubUser>>('/sub-user/create', payload)
+
 export const listSubUsers = () =>
   api.get<APIResponse<SubUser[]>>('/sub-users')
 
 export const updateSubUserImages = (id: string, allowedImageIds: string[]) =>
   api.put<APIResponse<SubUser>>(`/sub-users/${id}/images`, { allowed_image_ids: allowedImageIds })
+
+// 编辑子用户基本信息（均可选填，只传需要修改的字段）
+export const updateSubUser = (id: string, payload: { username?: string; email?: string; role?: string; password?: string }) =>
+  api.put<APIResponse<SubUser>>(`/sub-users/${id}/edit`, payload)
+
+// 删除子用户：其名下容器的归属会被自动解绑（容器本身保留）
+export const deleteSubUser = (id: string) =>
+  api.delete<APIResponse<{ id: string; username: string; freed_containers: string[] }>>(`/sub-users/${id}`)
+
+// 整体替换子用户的容器绑定集（containers 支持 id/uuid/name）
+export const bindSubUserContainers = (id: string, containers: string[]) =>
+  api.put<APIResponse<SubUser>>(`/sub-users/${id}/bind-containers`, { containers })
 
 export const changeContainerOwner = (id: number | string, ownerSubUserId: string) =>
   api.put<APIResponse<{ owner_sub_user_id: string; owner_username?: string }>>(`/containers/${id}/owner`, { owner_sub_user_id: ownerSubUserId })
@@ -1892,5 +1914,185 @@ export const deleteCluster = (id: string) =>
 // ---- 容器迁移 ----
 export const migrateContainer = (id: number, targetNodeID: string, force = false) =>
   api.put<APIResponse<{ node_id: string }>>(`/containers/${id}/migrate`, { target_node_id: targetNodeID, force })
+
+// ===================== 安全组（Security Groups） =====================
+// 对应后端 /api/security-groups 与 /api/containers/{id}/security-groups
+export interface SecGroup {
+  id: string
+  tenant_id: string
+  name: string
+  default_action: string // accept | drop
+}
+
+export interface SecGroupRule {
+  id: string
+  group_id: string
+  direction: string // ingress | egress
+  protocol: string // any | tcp | udp | icmp
+  src_mask?: string
+  dst_mask?: string
+  src_port?: number // 0 = 任意
+  dst_port?: number
+  action: string // accept | drop | reject
+  priority: number // 数值小 = 优先
+  description?: string
+}
+
+export interface SecGroupDetail {
+  group: SecGroup
+  rules: SecGroupRule[]
+}
+
+export const listSecGroups = () =>
+  api.get<APIResponse<SecGroup[]>>('/security-groups')
+
+export const createSecGroup = (payload: { name: string; tenant_id?: string; default_action?: string }) =>
+  api.post<APIResponse<SecGroup>>('/security-groups', payload)
+
+export const getSecGroup = (id: string) =>
+  api.get<APIResponse<SecGroupDetail>>(`/security-groups/${id}`)
+
+export const updateSecGroup = (id: string, payload: { name?: string; default_action?: string }) =>
+  api.put<APIResponse<null>>(`/security-groups/${id}`, payload)
+
+export const deleteSecGroup = (id: string) =>
+  api.delete<APIResponse<null>>(`/security-groups/${id}`)
+
+export const listSecGroupRules = (groupId: string) =>
+  api.get<APIResponse<SecGroupRule[]>>(`/security-groups/${groupId}/rules`)
+
+export const createSecGroupRule = (groupId: string, payload: Omit<SecGroupRule, 'id' | 'group_id'>) =>
+  api.post<APIResponse<SecGroupRule>>(`/security-groups/${groupId}/rules`, payload)
+
+export const updateSecGroupRule = (groupId: string, ruleId: string, payload: Partial<Omit<SecGroupRule, 'id' | 'group_id'>>) =>
+  api.put<APIResponse<null>>(`/security-groups/${groupId}/rules/${ruleId}`, payload)
+
+export const deleteSecGroupRule = (groupId: string, ruleId: string) =>
+  api.delete<APIResponse<null>>(`/security-groups/${groupId}/rules/${ruleId}`)
+
+// 容器 ↔ 安全组绑定
+export interface ContainerSecGroupBinding {
+  container_id: number
+  container: string
+  sec_group_ids: string[]
+}
+
+export const getContainerSecGroups = (containerId: number | string) =>
+  api.get<APIResponse<ContainerSecGroupBinding>>(`/containers/${containerId}/security-groups`)
+
+export const setContainerSecGroups = (containerId: number | string, groupIds: string[]) =>
+  api.put<APIResponse<null>>(`/containers/${containerId}/security-groups`, { group_ids: groupIds })
+
+export const bindContainerSecGroup = (containerId: number | string, groupId: string) =>
+  api.post<APIResponse<null>>(`/containers/${containerId}/security-groups/${groupId}`)
+
+export const unbindContainerSecGroup = (containerId: number | string, groupId: string) =>
+  api.delete<APIResponse<null>>(`/containers/${containerId}/security-groups/${groupId}`)
+
+// ===================== SSH 公钥托管 =====================
+// 对应后端 /api/ssh-keys（列表不返回公钥正文，详情才返回）
+export interface SSHKeySummary {
+  id: string
+  name: string
+  fingerprint: string
+  type: string // admin | subuser
+  owner_id?: string
+  created_at: string
+  last_used_at?: string
+}
+
+export interface SSHKey extends SSHKeySummary {
+  public_key: string
+}
+
+export const listSSHKeys = () =>
+  api.get<APIResponse<SSHKeySummary[]>>('/ssh-keys')
+
+export const createSSHKey = (payload: { name: string; public_key: string }) =>
+  api.post<APIResponse<SSHKey>>('/ssh-keys', payload)
+
+export const getSSHKey = (id: string) =>
+  api.get<APIResponse<SSHKey>>(`/ssh-keys/${id}`)
+
+export const updateSSHKey = (id: string, payload: { name: string }) =>
+  api.put<APIResponse<null>>(`/ssh-keys/${id}`, payload)
+
+export const deleteSSHKey = (id: string) =>
+  api.delete<APIResponse<null>>(`/ssh-keys/${id}`)
+
+// ===================== Webhook 事件订阅 =====================
+// 对应后端 /api/webhooks（secret 仅创建响应明文返回一次）
+export interface WebhookSubscription {
+  id: string
+  name: string
+  url: string
+  secret?: string
+  event_types?: string[]
+  enabled: boolean
+  consecutive_failures?: number
+  last_delivery_at?: string
+  last_delivery_status?: string
+  auto_disabled_reason?: string
+  created_at: string
+}
+
+export const listWebhooks = () =>
+  api.get<APIResponse<WebhookSubscription[]>>('/webhooks')
+
+export const createWebhook = (payload: { name: string; url: string; event_types?: string[]; enabled?: boolean }) =>
+  api.post<APIResponse<WebhookSubscription>>('/webhooks', payload)
+
+export const getWebhook = (id: string) =>
+  api.get<APIResponse<WebhookSubscription>>(`/webhooks/${id}`)
+
+export const updateWebhook = (id: string, payload: { name?: string; url?: string; event_types?: string[]; enabled?: boolean }) =>
+  api.put<APIResponse<null>>(`/webhooks/${id}`, payload)
+
+export const deleteWebhook = (id: string) =>
+  api.delete<APIResponse<null>>(`/webhooks/${id}`)
+
+export const testWebhook = (id: string) =>
+  api.post<APIResponse<null>>(`/webhooks/${id}/test`)
+
+// ===================== Recipes（脚本模板 / 一键应用） =====================
+// 对应后端 /api/recipes（admin 可见全部；scope=shared 对子用户可见）
+export interface Recipe {
+  id: string
+  name: string
+  description: string
+  script: string
+  owner_id: string
+  owner_type: string // admin | subuser
+  scope: string // private | shared
+  created_at: string
+  updated_at: string
+}
+
+export const listRecipes = () =>
+  api.get<APIResponse<Recipe[]>>('/recipes')
+
+export const createRecipe = (payload: { name: string; description?: string; script: string; scope?: string }) =>
+  api.post<APIResponse<Recipe>>('/recipes', payload)
+
+export const getRecipe = (id: string) =>
+  api.get<APIResponse<Recipe>>(`/recipes/${id}`)
+
+export const updateRecipe = (id: string, payload: { name?: string; description?: string; script?: string; scope?: string }) =>
+  api.put<APIResponse<null>>(`/recipes/${id}`, payload)
+
+export const deleteRecipe = (id: string) =>
+  api.delete<APIResponse<null>>(`/recipes/${id}`)
+
+// 在指定容器上执行脚本（容器须为 running；默认超时 300s）
+export const executeRecipe = (id: string, containerId: number, timeout?: number) =>
+  api.post<APIResponse<{ recipe_name: string; container: string; output: string; exit_code: number; virtualization?: string }>>(`/recipes/${id}/execute`, { container_id: containerId, timeout })
+
+// ===================== 审计日志导出 =====================
+// GET /audit-logs/export?format=csv|json（另有 cef/syslog SIEM 格式与 chain=verify 校验）
+export const exportAuditLogs = (format: 'csv' | 'json' | 'cef' | 'syslog') =>
+  api.get<Blob>('/audit-logs/export', { params: { format }, responseType: 'blob' })
+
+export const verifyAuditChain = () =>
+  api.get<APIResponse<{ valid: boolean; checked?: number; reason?: string }>>('/audit-logs/export', { params: { chain: 'verify' } })
 
 export default api

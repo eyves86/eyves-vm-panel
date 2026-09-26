@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Disc3, Plus, RefreshCw, Trash2, Upload, ArrowDownToLine } from 'lucide-react'
+import { Disc3, LifeBuoy, Plus, RefreshCw, Trash2, Upload, ArrowDownToLine } from 'lucide-react'
 import {
+  containerRescue,
   createISO,
   deleteISO,
+  getContainers,
   getISOs,
   uploadISO,
+  type Container,
   type ISOFile,
 } from '../services/api'
 
@@ -19,6 +22,15 @@ export default function ISOs() {
   const [file, setFile] = useState<File | null>(null)
   const [error, setError] = useState('')
 
+  // 挂载到容器（救援模式）
+  const [containers, setContainers] = useState<Container[]>([])
+  const [mountIsoId, setMountIsoId] = useState('')
+  const [mountContainerId, setMountContainerId] = useState('')
+  const [mounting, setMounting] = useState(false)
+  const [unmounting, setUnmounting] = useState(false)
+  const [mountError, setMountError] = useState('')
+  const [mountNotice, setMountNotice] = useState('')
+
   const fetchData = useCallback(async () => {
     try {
       const res = await getISOs()
@@ -32,6 +44,18 @@ export default function ISOs() {
   }, [])
 
   useEffect(() => { fetchData() }, [fetchData])
+
+  // 救援模式仅支持 KVM 虚拟机
+  const fetchContainers = useCallback(async () => {
+    try {
+      const res = await getContainers()
+      setContainers((res.data.data || []).filter((c) => c.virtualization === 'kvm'))
+    } catch (err: unknown) {
+      setMountError((err as { response?: { data?: { message?: string } } }).response?.data?.message || '获取容器列表失败')
+    }
+  }, [])
+
+  useEffect(() => { void fetchContainers() }, [fetchContainers])
 
   const openCreate = () => {
     setCreating(true)
@@ -110,6 +134,51 @@ export default function ISOs() {
       return
     }
     await fetchData()
+  }
+
+  // 挂载 ISO 到容器并进入救援模式（仅 KVM）
+  const mountISO = async () => {
+    const iso = isos.find((i) => i.id === mountIsoId)
+    const container = containers.find((c) => String(c.id) === mountContainerId)
+    if (!iso || !container) {
+      setMountError('请选择 ISO 和要挂载的容器')
+      setMountNotice('')
+      return
+    }
+    setMounting(true)
+    setMountError('')
+    setMountNotice('')
+    try {
+      const res = await containerRescue(container.id, true, iso.id)
+      setMountNotice(res.data.message || `已将「${iso.name}」挂载到「${container.name}」并进入救援模式`)
+      await fetchContainers()
+    } catch (err: unknown) {
+      setMountError((err as { response?: { data?: { message?: string } } }).response?.data?.message || '挂载失败，请稍后重试')
+    } finally {
+      setMounting(false)
+    }
+  }
+
+  // 卸载救援 ISO，退出救援模式
+  const unmountISO = async () => {
+    const container = containers.find((c) => String(c.id) === mountContainerId)
+    if (!container) {
+      setMountError('请选择要卸载的容器')
+      setMountNotice('')
+      return
+    }
+    setUnmounting(true)
+    setMountError('')
+    setMountNotice('')
+    try {
+      const res = await containerRescue(container.id, false)
+      setMountNotice(res.data.message || `「${container.name}」已退出救援模式，恢复系统盘引导`)
+      await fetchContainers()
+    } catch (err: unknown) {
+      setMountError((err as { response?: { data?: { message?: string } } }).response?.data?.message || '卸载失败，请稍后重试')
+    } finally {
+      setUnmounting(false)
+    }
   }
 
   if (loading) {
@@ -233,6 +302,73 @@ export default function ISOs() {
               </tbody>
             </table>
           </div>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+        <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
+          <LifeBuoy className="h-4 w-4" />
+          挂载到容器（救援模式）
+        </h2>
+        <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+          将 ISO 挂载到 KVM 虚拟机并从 ISO 引导进入救援模式；卸载后恢复系统盘引导。仅支持 KVM 虚拟机。
+        </p>
+        {mountError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-400">{mountError}</div>}
+        {mountNotice && <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/30 dark:text-green-400">{mountNotice}</div>}
+        <div className="grid gap-4 md:grid-cols-4">
+          <div>
+            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">ISO</label>
+            <select
+              value={mountIsoId}
+              onChange={(e) => setMountIsoId(e.target.value)}
+              disabled={mounting || unmounting}
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+            >
+              <option value="">选择 ISO</option>
+              {isos.map((iso) => (
+                <option key={iso.id} value={iso.id}>{iso.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">容器（仅 KVM）</label>
+            <select
+              value={mountContainerId}
+              onChange={(e) => setMountContainerId(e.target.value)}
+              disabled={mounting || unmounting}
+              className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+            >
+              <option value="">选择容器</option>
+              {containers.map((c) => (
+                <option key={c.id} value={String(c.id)}>
+                  {c.name}{c.rescue_enabled ? '（救援模式中）' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={() => { void mountISO() }}
+              disabled={mounting || unmounting || !mountIsoId || !mountContainerId}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+            >
+              {mounting && <RefreshCw className="h-4 w-4 animate-spin" />}
+              {mounting ? '挂载中…' : '挂载并进入救援'}
+            </button>
+          </div>
+          <div className="flex items-end">
+            <button
+              onClick={() => { void unmountISO() }}
+              disabled={mounting || unmounting || !mountContainerId}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              {unmounting && <RefreshCw className="h-4 w-4 animate-spin" />}
+              {unmounting ? '卸载中…' : '卸载救援 ISO'}
+            </button>
+          </div>
+        </div>
+        {containers.length === 0 && (
+          <div className="mt-3 text-xs text-gray-400">暂无 KVM 虚拟机可挂载</div>
         )}
       </div>
     </div>
