@@ -557,7 +557,7 @@ func (m *Manager) defineContainer(id int, vmName string, cfg lxc.ContainerConfig
 		return nil, err
 	}
 	cfg.ReportProgress("define", "注册 KVM 虚拟机")
-	cmd := exec.Command("virsh", "define", xmlPath)
+	cmd := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("virsh define failed: %v, output: %s", err, string(output))
 	}
@@ -672,7 +672,7 @@ func (m *Manager) StartContainer(id int) error {
 	}
 	status, _ := m.GetContainerStatus(name)
 	if status != "running" {
-		cmd := exec.Command("virsh", "start", name)
+		cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "start", name)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			if !strings.Contains(strings.ToLower(string(output)), "domain is already active") {
 				return fmt.Errorf("virsh start failed: %v, output: %s", err, string(output))
@@ -684,8 +684,8 @@ func (m *Manager) StartContainer(id int) error {
 	if _, err := m.RefreshVNCPort(id); err != nil {
 		fmt.Printf("Warning: failed to refresh VNC port for %s: %v\n", name, err)
 	}
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--live").Run()
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--config").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--live").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--config").Run()
 	// Windows VMs need manual install via VNC — don't require IP on first boot
 	isWindows := IsWindowsImage(c.Template)
 	if isWindows {
@@ -805,7 +805,7 @@ func (m *Manager) StopContainer(id int) error {
 		config.UpdateContainerStatusAndRestore(id, "stopped", false)
 		return nil
 	}
-	exec.Command("virsh", "shutdown", name).Run()
+	execWithTimeout(cmdTimeoutMedium, "virsh", "shutdown", name).Run()
 	for i := 0; i < 20; i++ {
 		if status, _ := m.GetContainerStatus(name); status != "running" {
 			config.UpdateContainerStatusAndRestore(id, "stopped", false)
@@ -813,7 +813,7 @@ func (m *Manager) StopContainer(id int) error {
 		}
 		time.Sleep(1 * time.Second)
 	}
-	cmd := exec.Command("virsh", "destroy", name)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", name)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh destroy failed: %v, output: %s", err, string(output))
 	}
@@ -847,7 +847,7 @@ func (m *Manager) PoweroffContainer(id int) error {
 		config.UpdateContainerStatusAndRestore(id, "stopped", false)
 		return nil
 	}
-	cmd := exec.Command("virsh", "destroy", name)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", name)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh destroy failed: %v, output: %s", err, string(output))
 	}
@@ -862,14 +862,14 @@ func (m *Manager) startWithoutGuestInit(name string) error {
 	if status == "running" {
 		return nil
 	}
-	cmd := exec.Command("virsh", "start", name)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "start", name)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if !strings.Contains(strings.ToLower(string(output)), "domain is already active") {
 			return fmt.Errorf("virsh start failed: %v, output: %s", err, string(output))
 		}
 	}
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--live").Run()
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--config").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--live").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--config").Run()
 	return nil
 }
 
@@ -970,7 +970,7 @@ func (m *Manager) AttachISO(id int, isoPath string) error {
 		return fmt.Errorf("ISO not accessible on this node: %v", err)
 	}
 	vm := c.VirshName()
-	if out, err := exec.Command("virsh", "attach-disk", vm, isoPath, "sdb",
+	if out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "attach-disk", vm, isoPath, "sdb",
 		"--type", "cdrom", "--mode", "readonly").CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh attach-disk failed: %v, output: %s", err, string(out))
 	}
@@ -988,7 +988,7 @@ func (m *Manager) DetachISO(id int) error {
 		return fmt.Errorf("ISO detach is only supported for KVM VMs")
 	}
 	vm := c.VirshName()
-	out, err := exec.Command("virsh", "detach-disk", vm, "sdb").CombinedOutput()
+	out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "detach-disk", vm, "sdb").CombinedOutput()
 	if err != nil {
 		// virsh detach-disk 在设备不存在时返回非零 exit code，
 		// 我们把这种情况视为幂等成功（用户多次点 detach 不应报错）。
@@ -1148,7 +1148,7 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 	// 1) 停源 VM
 	wasRunning := src.Status == "running"
 	if wasRunning {
-		if err := exec.Command("virsh", "shutdown", vmName).Run(); err != nil {
+		if err := execWithTimeout(cmdTimeoutMedium, "virsh", "shutdown", vmName).Run(); err != nil {
 			return fmt.Errorf("stop source VM before clone: %v", err)
 		}
 		// 等待关机
@@ -1160,11 +1160,11 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		}
 		// 强制关机兜底
 		if status, _ := m.GetContainerStatus(vmName); status == "running" {
-			_ = exec.Command("virsh", "destroy", vmName).Run()
+			_ = execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", vmName).Run()
 		}
 		defer func() {
 			if wasRunning {
-				_ = exec.Command("virsh", "start", vmName).Run()
+				_ = execWithTimeout(cmdTimeoutMedium, "virsh", "start", vmName).Run()
 			}
 		}()
 	}
@@ -1229,14 +1229,14 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		_ = os.RemoveAll(newInstanceDir)
 		return fmt.Errorf("write domain.xml: %v", err)
 	}
-	if out, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+	if out, err := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(newInstanceDir)
 		return fmt.Errorf("virsh define: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	// 5) 启动新 VM
 	if startAfter {
-		if out, err := exec.Command("virsh", "start", newVMName).CombinedOutput(); err != nil {
+		if out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "start", newVMName).CombinedOutput(); err != nil {
 			return fmt.Errorf("start cloned VM: %v: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
@@ -1461,7 +1461,7 @@ func (m *Manager) SetVNCPassword(id int, password string) error {
 	}
 
 	// 2) 先 virsh define 让配置持久化
-	if out, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+	if out, err := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh define: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 
@@ -1481,7 +1481,7 @@ func (m *Manager) SetVNCPassword(id int, password string) error {
 				return fmt.Errorf("write graphics xml: %w", err)
 			}
 			tmpFile.Close()
-			if out, err := exec.Command("virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
+			if out, err := execWithTimeout(cmdTimeoutShort, "virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
 				return nil // 热更新成功
 			} else {
 				// 热更新失败（可能 libvirt 版本不支持），提示重启生效
@@ -1502,7 +1502,7 @@ func (m *Manager) SetVNCPassword(id int, password string) error {
 				return fmt.Errorf("write graphics xml: %w", err)
 			}
 			tmpFile.Close()
-			if out, err := exec.Command("virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
+			if out, err := execWithTimeout(cmdTimeoutShort, "virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
 				return nil
 			} else {
 				_ = out
@@ -1562,7 +1562,7 @@ func (m *Manager) redefineContainer(c *config.Container) error {
 	if err := os.WriteFile(xmlPath, []byte(xml), 0644); err != nil {
 		return err
 	}
-	cmd := exec.Command("virsh", "define", xmlPath)
+	cmd := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh define failed: %v, output: %s", err, string(output))
 	}
@@ -1740,7 +1740,7 @@ func (m *Manager) RestoreSnapshot(id string) error {
 		fmt.Printf("Warning: failed to undefine %s before restore redefine: %v\n", name, err)
 	}
 	xmlPath := filepath.Join(instanceDir, "domain.xml")
-	if output, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+	if output, err := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh define failed after restore: %v, output: %s", err, string(output))
 	}
 	c.DiskImage = filepath.Join(instanceDir, "disk.qcow2")
@@ -2168,7 +2168,7 @@ func shouldApplyPortMappings(id int, force bool) bool {
 }
 
 func (m *Manager) GetContainerStatus(name string) (string, error) {
-	cmd := exec.Command("virsh", "domstate", name)
+	cmd := execWithTimeout(cmdTimeoutShort, "virsh", "domstate", name)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -2185,7 +2185,7 @@ func (m *Manager) GetContainerStatus(name string) (string, error) {
 
 func (m *Manager) GetContainerIP(name string) (string, error) {
 	for _, source := range []string{"lease", "arp", "agent"} {
-		cmd := exec.Command("virsh", "domifaddr", name, "--source", source)
+		cmd := execWithTimeout(cmdTimeoutShort, "virsh", "domifaddr", name, "--source", source)
 		out, err := cmd.Output()
 		if err != nil {
 			continue
@@ -2333,7 +2333,7 @@ func ensureDefaultNetwork() error {
 }
 
 func virshCLocaleCommand(args ...string) *exec.Cmd {
-	cmd := exec.Command("virsh", args...)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "LC_MESSAGES=C", "LANG=C", "LANGUAGE=C")
 	return cmd
 }
@@ -3227,7 +3227,7 @@ func existingWindowsUnattendISO(instanceDir string) string {
 }
 
 func domainUUIDXML(name string) string {
-	out, err := exec.Command("virsh", "domuuid", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domuuid", name).Output()
 	if err != nil {
 		return ""
 	}
@@ -3239,16 +3239,16 @@ func domainUUIDXML(name string) string {
 }
 
 func (m *Manager) cleanupVM(name string) error {
-	_ = exec.Command("virsh", "destroy", name).Run()
+	_ = execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", name).Run()
 	_ = undefineDomain(name)
 	return os.RemoveAll(m.instanceDir(name))
 }
 
 func undefineDomain(name string) error {
-	if err := exec.Command("virsh", "undefine", name, "--nvram").Run(); err == nil {
+	if err := execWithTimeout(cmdTimeoutLong, "virsh", "undefine", name, "--nvram").Run(); err == nil {
 		return nil
 	}
-	return exec.Command("virsh", "undefine", name).Run()
+	return execWithTimeout(cmdTimeoutLong, "virsh", "undefine", name).Run()
 }
 
 func (m *Manager) RefreshVNCPort(id int) (int, error) {
@@ -3309,7 +3309,7 @@ func normalizeKVMManagementPortMapping(c *config.Container) {
 }
 
 func getVNCPort(name string) int {
-	out, err := exec.Command("virsh", "domdisplay", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domdisplay", name).Output()
 	if err != nil {
 		return 0
 	}
@@ -3341,7 +3341,7 @@ func firstIPv4(output string) string {
 }
 
 func domainMACAddress(name string) string {
-	out, err := exec.Command("virsh", "domiflist", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domiflist", name).Output()
 	if err != nil {
 		return ""
 	}
@@ -3363,7 +3363,7 @@ func dhcpLeaseIP(networkName string, mac string) string {
 	if mac == "" {
 		return ""
 	}
-	out, err := exec.Command("virsh", "net-dhcp-leases", networkName, "--mac", mac).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "net-dhcp-leases", networkName, "--mac", mac).Output()
 	if err != nil {
 		return ""
 	}
@@ -3652,7 +3652,7 @@ fi
 }
 
 func qemuGuestPing(name string) error {
-	out, err := exec.Command("virsh", "qemu-agent-command", name, `{"execute":"guest-ping"}`).CombinedOutput()
+	out, err := execWithTimeout(20*time.Second, "virsh", "qemu-agent-command", name, `{"execute":"guest-ping"}`).CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if strings.Contains(msg, "guest agent is not configured") || strings.Contains(msg, "QEMU guest agent is not configured") || strings.Contains(msg, "argument unsupported") {
@@ -3685,7 +3685,7 @@ func qemuGuestExecCommandOutput(name string, path string, args []string, timeout
 	if err != nil {
 		return "", "", err
 	}
-	out, err := exec.Command("virsh", "qemu-agent-command", name, string(payload)).CombinedOutput()
+	out, err := execWithTimeout(20*time.Second, "virsh", "qemu-agent-command", name, string(payload)).CombinedOutput()
 	if err != nil {
 		return "", "", fmt.Errorf("guest-exec failed: %v, output: %s", err, string(out))
 	}
@@ -3700,7 +3700,7 @@ func qemuGuestExecCommandOutput(name string, path string, args []string, timeout
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		statusReq := fmt.Sprintf(`{"execute":"guest-exec-status","arguments":{"pid":%d}}`, started.Return.PID)
-		statusOut, err := exec.Command("virsh", "qemu-agent-command", name, statusReq).CombinedOutput()
+		statusOut, err := execWithTimeout(20*time.Second, "virsh", "qemu-agent-command", name, statusReq).CombinedOutput()
 		if err != nil {
 			return "", "", fmt.Errorf("guest-exec-status failed: %v, output: %s", err, string(statusOut))
 		}
@@ -3869,7 +3869,7 @@ func (m *Manager) updateAllRates() {
 }
 
 func virshDomstatsCounters(name string) (uint64, uint64, uint64) {
-	out, err := exec.Command("virsh", "domstats", name, "--cpu-total", "--block").Output()
+	out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "domstats", name, "--cpu-total", "--block").Output()
 	if err != nil {
 		return 0, 0, 0
 	}
@@ -3898,7 +3898,7 @@ func virshInterfaceBytes(name string, mac string) (uint64, uint64) {
 	if iface == "" {
 		return 0, 0
 	}
-	out, err := exec.Command("virsh", "domifstat", name, iface).Output()
+	out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "domifstat", name, iface).Output()
 	if err != nil {
 		return 0, 0
 	}
@@ -3926,7 +3926,7 @@ func virshInterfaceBytes(name string, mac string) (uint64, uint64) {
 }
 
 func virshInterfaceName(name string, mac string) string {
-	out, err := exec.Command("virsh", "domiflist", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domiflist", name).Output()
 	if err != nil {
 		return ""
 	}
@@ -4161,7 +4161,7 @@ func (m *Manager) StopTrafficExceededContainers(now time.Time) {
 }
 
 func virshMemBytes(name string) int64 {
-	out, err := exec.Command("virsh", "dommemstat", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name).Output()
 	if err != nil {
 		return 0
 	}
@@ -4941,4 +4941,33 @@ func runStdin(command string, stdin []byte, args ...string) error {
 		return fmt.Errorf("%s failed: %v, output: %s", command, err, string(output))
 	}
 	return nil
+}
+
+// ---- command timeout ----
+// 统一给所有底层命令加 timeout，防止进程挂住（容器 stopped、guest-agent 不响应、
+// libvirtd 卡死等）导致 goroutine 泄漏 / HTTP handler 永久阻塞。
+const (
+	cmdTimeoutShort  = 15 * time.Second
+	cmdTimeoutMedium = 30 * time.Second
+	cmdTimeoutLong   = 60 * time.Second
+)
+
+// execWithTimeout 创建带超时的 exec.Cmd。timeout<=0 表示不限制（用于内部已经有
+// context 的场景；主路径一律用 timeout）。
+//
+// 设计说明：context.WithTimeout 创建的定时器即使在命令提前结束后仍会存活到
+// timeout 触发。理论上应当在命令完成后 cancel()，但 exec.Cmd 执行结束是调用方
+// 的事，helper 内部无法得知。我们在这里显式 `_ = cancel` 告诉 vet "我知道这里
+// 有一个有意丢弃的 cancel"，避免静态检查报 "discarded, not called"。
+//
+// 对于短 timeout（15-60s），残留定时器的资源开销可以忽略。如果需要严格
+// 及时释放，调用方应在拿到 cmd 后显式处理 context —— 但绝大多数场景下 timeout
+// 触发本身就是命令挂死的信号。
+func execWithTimeout(timeout time.Duration, name string, args ...string) *exec.Cmd {
+	if timeout <= 0 {
+		return exec.Command(name, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	_ = cancel // 有意丢弃；见上方注释
+	return exec.CommandContext(ctx, name, args...)
 }

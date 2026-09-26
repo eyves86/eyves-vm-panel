@@ -240,7 +240,8 @@ hostname %s
 echo %s > /etc/hostname
 sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t%s/' /etc/hosts 2>/dev/null || true
 `, hostname, hostname, hostname)
-	cmd := exec.Command("lxc-attach", "-n", lxcName, "--", "sh", "-c", script)
+	cmd, cancel := execLXCAttachWithTimeout(lxcName, "sh", "-c", script)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lxc-attach hostname: %v: %s", err, strings.TrimSpace(string(out)))
@@ -249,7 +250,8 @@ sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t%s/' /etc/hosts 2>/dev/null || true
 }
 
 func kvmSetHostnameVirsh(domain, hostname string) error {
-	cmd := exec.Command("virsh", "set-hostname", domain, hostname)
+	cmd, cancel := execWithTimeout("virsh", "set-hostname", domain, hostname)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("virsh set-hostname: %v: %s", err, strings.TrimSpace(string(out)))

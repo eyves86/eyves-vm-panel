@@ -609,6 +609,22 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		handleContainerISOActionPost(w, r, c)
+	case action == "vnc-ticket" && r.Method == http.MethodPost:
+		// KVM VNC 控制台票据（Virtualizor VNC Console）。
+		// 请求体：{}（不需要参数，票据绑定当前容器）
+		// 权限：terminal:vnc（和顶层 /api/vnc-ticket 一致）。
+		if !requireScope(w, r, "terminal:vnc") {
+			return
+		}
+		handleContainerVNCTicketPost(w, r, c)
+	case action == "recipes/execute" && r.Method == http.MethodPost:
+		// 在当前容器上执行 Recipe（Virtualizor Startup Script）。
+		// 请求体：{"recipe_id": "recipe-xxx", "timeout": 120}
+		// 权限：container:power（执行脚本会改容器内文件）。
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		handleContainerRecipeExecutePost(w, r, c)
 	case r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return

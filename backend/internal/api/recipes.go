@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -452,7 +453,8 @@ func executeRecipeOnLXC(c *config.Container, script string, timeoutSec int) (str
 	if lxcName == "" {
 		return "", fmt.Errorf("LXC container name not configured")
 	}
-	cmd := exec.Command("lxc-attach", "-n", lxcName, "--", "bash", "-c", script)
+	cmd, cancel := execLXCAttachWithTimeout(lxcName, "bash", "-c", script)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -506,4 +508,76 @@ func agentExecuteRecipe(c *config.Container, script string, timeoutSec int) (str
 		return executeRecipeOnKVM(c, script, timeoutSec)
 	}
 	return executeRecipeOnLXC(c, script, timeoutSec)
+}
+
+// handleContainerRecipeExecutePost 容器级路径 handler（POST /api/containers/{id}/recipes/execute）。
+// 请求体：{"recipe_id": "recipe-xxx", "timeout": 120}（timeout 可选，默认 300s，上限 3600s）。
+//
+// 与顶层 /api/recipes/{id}/execute 的区别：
+//   - 容器由路径确定（handlers.go 已做 scope + container allowed 检查）
+//   - 多节点：routeToAgent 已经在 handlers.go 被调过，这里直接执行
+//
+// LXC 走 lxc-attach bash；KVM 走 qemu-agent-command guest-exec。
+func handleContainerRecipeExecutePost(w http.ResponseWriter, r *http.Request, c *config.Container) {
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	if c.Status != "running" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Container must be running to execute recipe"})
+		return
+	}
+	if c.NodeID != "" && routeToAgent(w, r, c, "recipes/execute") {
+		return
+	}
+	var req struct {
+		RecipeID string `json:"recipe_id"`
+		Timeout  int    `json:"timeout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	recipe, ok := findRecipe(req.RecipeID)
+	if !ok {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Recipe not found"})
+		return
+	}
+	if !canAccessRecipe(r, recipe) {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this recipe"})
+		return
+	}
+	timeout := req.Timeout
+	if timeout <= 0 {
+		timeout = 300
+	}
+	if timeout > 3600 {
+		timeout = 3600
+	}
+
+	var (
+		output string
+		execErr error
+	)
+	if c.IsKVM() {
+		output, execErr = executeRecipeOnKVM(c, recipe.Script, timeout)
+	} else {
+		output, execErr = executeRecipeOnLXC(c, recipe.Script, timeout)
+	}
+	if execErr != nil {
+		auditRequest(r, "recipe.execute", recipe.Name,
+			"container="+c.Name+" virt="+c.Virtualization+" err="+execErr.Error(), false, execErr.Error())
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: execErr.Error()})
+		return
+	}
+	auditRequest(r, "recipe.execute", recipe.Name,
+		"container="+c.Name+" virt="+c.Virtualization+" output_len="+strconv.Itoa(len(output)), true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"recipe_id": recipe.ID,
+			"container": c.Name,
+			"output":    output,
+		},
+	})
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -308,4 +309,81 @@ func streamWebSocketToVNC(ws *websocket.Conn, dst net.Conn, done chan<- string) 
 			return
 		}
 	}
+}
+
+// handleContainerVNCTicketPost 容器级路径 handler（POST /api/containers/{id}/vnc-ticket）。
+// 和顶层 HandleVNCTicket 的区别：
+//   - 容器由路径确定（handlers.go 已做 scope + container allowed 检查）
+//   - 票据里的 ContainerName/ContainerUUID 用路径里的 c
+//   - LXC 容器直接返回错误（VNC 是 KVM 专属）
+//
+// 票据 60s 过期，用户拿到后连 /api/vnc?token=xxx&port=xxx 即可建立 WebSocket 代理。
+func handleContainerVNCTicketPost(w http.ResponseWriter, r *http.Request, c *config.Container) {
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	if c.Suspended {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起，VNC 控制台访问被暂停"})
+		return
+	}
+	if !c.IsKVM() {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "VNC console is only available for KVM VMs"})
+		return
+	}
+	if c.NodeID != "" {
+		// VNC ticket 的 webVNCTickets map 只在当前节点内存里。
+		// 如果容器在远端 agent 上，ticket 得在 agent 端生成（因为 VNC socket 也在 agent 上）。
+		// 但 WebSocket proxy（HandleVNCProxy）默认连本地 libvirt —— 多节点 VNC 需要
+		// agent 暴露自己的 proxy 端点，然后主控 redirect 用户过去。这个架构改动较大，
+		// 暂时回退：如果有 NodeID 直接报错提示用户用 agent 端 API，或者我们可以
+		// 让主控 proxy 也能连远端 VNC socket（通过 agent 转发），暂不实现。
+		node, ok := config.FindNode(c.NodeID)
+		if ok && node.Address != "" {
+			// 转发到 agent 端的 /api/agent/containers/{id}/vnc-ticket
+			data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+				fmt.Sprintf("/api/agent/containers/%d/vnc-ticket", c.ID),
+				strings.NewReader("{}"))
+			if err == nil && status < 500 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write(data)
+				return
+			}
+		}
+		// agent 不可达 fallback 到本地 —— 本地主控的 libvirt 肯定没有这个 VM
+		jsonResponse(w, http.StatusBadGateway, APIResponse{
+			Success: false,
+			Message: "VNC console 需要在容器所属节点上请求；该容器当前在 " + c.NodeID,
+		})
+		return
+	}
+
+	username, isSubUser := vncRequesterIdentity(r)
+	ticket := randomHex(32)
+	webVNCTickets.Lock()
+	cleanupExpiredWebVNCTicketsLocked(time.Now())
+	if len(webVNCTickets.items) >= webVNCTicketLimit {
+		webVNCTickets.Unlock()
+		jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "控制台票据请求过于频繁，请稍后重试"})
+		return
+	}
+	webVNCTickets.items[ticket] = webVNCTicket{
+		ContainerName: c.Name,
+		ContainerUUID: c.UUID,
+		Username:      username,
+		SubUser:       isSubUser,
+		ClientIP:      clientIP(r),
+		UserAgent:     r.UserAgent(),
+		ExpiresAt:     time.Now().Add(60 * time.Second),
+	}
+	webVNCTickets.Unlock()
+
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data: map[string]string{
+			"ticket": ticket,
+			"vnc":    fmt.Sprintf("/api/vnc?container=%s&ticket=%s", c.Name, ticket),
+		},
+	})
 }

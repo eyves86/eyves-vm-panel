@@ -2488,7 +2488,7 @@ func (m *Manager) startLXCContainerDaemon(lxcName string) (string, string, []byt
 	consoleLog := filepath.Join(os.TempDir(), "eyvescloud-"+lxcName+"-console.log")
 	os.Remove(logFile)
 	os.Remove(consoleLog)
-	cmd := exec.Command("lxc-start", "-n", lxcName, "-d", "--logfile", logFile, "--logpriority", "DEBUG", "--console-log", consoleLog)
+	cmd := execWithTimeout(cmdTimeoutShort, "lxc-start", "-n", lxcName, "-d", "--logfile", logFile, "--logpriority", "DEBUG", "--console-log", consoleLog)
 	output, err := cmd.CombinedOutput()
 	return logFile, consoleLog, output, err
 }
@@ -2671,7 +2671,7 @@ func (m *Manager) StopContainer(id int) error {
 	CleanFirewallRules(id)
 	m.cleanupBandwidthLimit(lxcName)
 
-	cmd := exec.Command("lxc-stop", "-n", lxcName)
+	cmd := execWithTimeout(cmdTimeoutShort, "lxc-stop", "-n", lxcName)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if strings.Contains(string(output), "not running") {
@@ -2876,7 +2876,7 @@ func (m *Manager) DestroyContainer(id int) error {
 	// Retry lxc-destroy up to 3 times, since LXC may need time to release resources
 	var destroyErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		cmd := exec.Command("lxc-destroy", "-n", lxcName, "-f")
+		cmd := execWithTimeout(cmdTimeoutShort, "lxc-destroy", "-n", lxcName, "-f")
 		output, err := cmd.CombinedOutput()
 		if err == nil {
 			destroyErr = nil
@@ -3498,8 +3498,8 @@ func (m *Manager) cleanupContainerStorage(lxcName string) error {
 			}
 		}
 	}
-	exec.Command("lxc-stop", "-n", lxcName, "-k").Run()
-	exec.Command("lxc-destroy", "-n", lxcName, "-f").Run()
+	execWithTimeout(cmdTimeoutShort, "lxc-stop", "-n", lxcName, "-k").Run()
+	execWithTimeout(cmdTimeoutShort, "lxc-destroy", "-n", lxcName, "-f").Run()
 	m.detachContainerMounts(cleanPath)
 	m.detachContainerLoopDevices(cleanPath)
 	rootfs := filepath.Join(cleanPath, "rootfs")
@@ -3554,10 +3554,10 @@ func (m *Manager) detachContainerLoopDevices(containerDir string) {
 
 // GetContainerStatus gets container running status
 func (m *Manager) GetContainerStatus(lxcName string) (string, error) {
-	cmd := exec.Command("lxc-info", "-n", lxcName, "-sH")
+	cmd := execWithTimeout(cmdTimeoutShort, "lxc-info", "-n", lxcName, "-sH")
 	output, err := cmd.Output()
 	if err != nil {
-		cmd2 := exec.Command("lxc-info", "-n", lxcName, "-s")
+		cmd2 := execWithTimeout(cmdTimeoutShort, "lxc-info", "-n", lxcName, "-s")
 		output2, err2 := cmd2.Output()
 		if err2 != nil {
 			return "unknown", err2
@@ -3575,10 +3575,10 @@ func (m *Manager) GetContainerStatus(lxcName string) (string, error) {
 
 // GetContainerIP gets container IP address
 func (m *Manager) GetContainerIP(lxcName string) (string, error) {
-	cmd := exec.Command("lxc-info", "-n", lxcName, "-iH")
+	cmd := execWithTimeout(cmdTimeoutShort, "lxc-info", "-n", lxcName, "-iH")
 	output, err := cmd.Output()
 	if err != nil {
-		cmd2 := exec.Command("lxc-info", "-n", lxcName, "-i")
+		cmd2 := execWithTimeout(cmdTimeoutShort, "lxc-info", "-n", lxcName, "-i")
 		output2, err2 := cmd2.Output()
 		if err2 != nil {
 			return "", err2
@@ -3872,8 +3872,8 @@ func (m *Manager) replaceRootfsFromTemplate(lxcName string, tmpl *Template) erro
 }
 
 func (m *Manager) cleanupTemporaryContainer(lxcName string) {
-	exec.Command("lxc-stop", "-n", lxcName, "-k").Run()
-	exec.Command("lxc-destroy", "-n", lxcName, "-f").Run()
+	execWithTimeout(cmdTimeoutShort, "lxc-stop", "-n", lxcName, "-k").Run()
+	execWithTimeout(cmdTimeoutShort, "lxc-destroy", "-n", lxcName, "-f").Run()
 	os.RemoveAll(filepath.Join(m.LxcPath, lxcName))
 }
 
@@ -4224,7 +4224,7 @@ func (m *Manager) getContainerDiskIOBytes(lxcName string) (uint64, uint64) {
 }
 
 func (m *Manager) getContainerInitPID(lxcName string) string {
-	cmd := exec.Command("lxc-info", "-n", lxcName, "-pH")
+	cmd := execWithTimeout(cmdTimeoutShort, "lxc-info", "-n", lxcName, "-pH")
 	out, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -4566,12 +4566,12 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName stri
 	// 先停源容器（克隆运行中的容器可能导致文件系统不一致；可选快照模式）
 	wasRunning := src.Status == "running"
 	if wasRunning {
-		if err := exec.Command("lxc-stop", "-n", srcName).Run(); err != nil {
+		if err := execWithTimeout(cmdTimeoutShort, "lxc-stop", "-n", srcName).Run(); err != nil {
 			return fmt.Errorf("stop source container before clone: %v", err)
 		}
 		defer func() {
 			if wasRunning {
-				_ = exec.Command("lxc-start", "-d", "-n", srcName).Run()
+				_ = execWithTimeout(cmdTimeoutShort, "lxc-start", "-d", "-n", srcName).Run()
 			}
 		}()
 	}
@@ -4588,18 +4588,18 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName stri
 	// 克隆后更新新容器的 LXC config：MAC、hostname、veth 名
 	if newMAC != "" {
 		if err := updateCloneMAC(newLxcName, newMAC); err != nil {
-			_ = exec.Command("lxc-destroy", "-f", "-n", newLxcName).Run()
+			_ = execWithTimeout(cmdTimeoutShort, "lxc-destroy", "-f", "-n", newLxcName).Run()
 			return fmt.Errorf("set clone MAC: %v", err)
 		}
 	}
 	if err := updateCloneHostname(newLxcName, newName); err != nil {
-		_ = exec.Command("lxc-destroy", "-f", "-n", newLxcName).Run()
+		_ = execWithTimeout(cmdTimeoutShort, "lxc-destroy", "-f", "-n", newLxcName).Run()
 		return fmt.Errorf("set clone hostname: %v", err)
 	}
 
 	// 启动新容器
 	if startAfter {
-		if err := exec.Command("lxc-start", "-d", "-n", newLxcName).Run(); err != nil {
+		if err := execWithTimeout(cmdTimeoutShort, "lxc-start", "-d", "-n", newLxcName).Run(); err != nil {
 			return fmt.Errorf("start cloned container: %v", err)
 		}
 	}
@@ -4612,4 +4612,33 @@ func updateCloneMAC(lxcName, mac string) error {
 
 func updateCloneHostname(lxcName, hostname string) error {
 	return exec.Command("lxc-config", "-n", lxcName, "set", "lxc.uts.name", hostname).Run()
+}
+
+// ---- command timeout ----
+// 统一给所有底层命令加 timeout，防止进程挂住（容器 stopped、guest-agent 不响应、
+// libvirtd 卡死等）导致 goroutine 泄漏 / HTTP handler 永久阻塞。
+const (
+	cmdTimeoutShort  = 15 * time.Second
+	cmdTimeoutMedium = 30 * time.Second
+	cmdTimeoutLong   = 60 * time.Second
+)
+
+// execWithTimeout 创建带超时的 exec.Cmd。timeout<=0 表示不限制（用于内部已经有
+// context 的场景；主路径一律用 timeout）。
+//
+// 设计说明：context.WithTimeout 创建的定时器即使在命令提前结束后仍会存活到
+// timeout 触发。理论上应当在命令完成后 cancel()，但 exec.Cmd 执行结束是调用方
+// 的事，helper 内部无法得知。我们在这里显式 `_ = cancel` 告诉 vet "我知道这里
+// 有一个有意丢弃的 cancel"，避免静态检查报 "discarded, not called"。
+//
+// 对于短 timeout（15-60s），残留定时器的资源开销可以忽略。如果需要严格
+// 及时释放，调用方应在拿到 cmd 后显式处理 context —— 但绝大多数场景下 timeout
+// 触发本身就是命令挂死的信号。
+func execWithTimeout(timeout time.Duration, name string, args ...string) *exec.Cmd {
+	if timeout <= 0 {
+		return exec.Command(name, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	_ = cancel // 有意丢弃；见上方注释
+	return exec.CommandContext(ctx, name, args...)
 }

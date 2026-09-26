@@ -471,6 +471,11 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		// 主控转发过来的 ISO 挂载请求。
 		handleContainerISOActionPost(w, r, c)
 		return
+	case "vnc-ticket":
+		// VNC ticket 必须在 agent 端生成（因为 libvirt VNC socket 就在 agent 上）。
+		// 主控转发过来时已经 routeToAgent 过一次，这里不再二次转发。
+		handleContainerVNCTicketPost(w, r, c)
+		return
 	default:
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Unknown action: " + action})
 		return
