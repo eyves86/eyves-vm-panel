@@ -1,13 +1,29 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, HardDrive, KeyRound, LogIn, RefreshCw, Save, ScrollText, UserCog, X } from 'lucide-react'
+import { Copy, HardDrive, KeyRound, Link2, LogIn, Pencil, Plus, RefreshCw, Save, ScrollText, Trash2, UserCog, X } from 'lucide-react'
 import { useDialog } from '../components/Dialog'
 import { useLanguage } from '../contexts/LanguageContext'
-import api, { AuditLog, ImageInfo, LoginLog, getImages, updateSubUserImages } from '../services/api'
+import api, {
+  AuditLog,
+  Container,
+  ImageInfo,
+  LoginLog,
+  Tenant,
+  bindSubUserContainers,
+  createSubUserAdvanced,
+  deleteSubUser,
+  getContainers,
+  getImages,
+  getTenants,
+  updateSubUser,
+  updateSubUserImages,
+  updateSubUserTenant,
+} from '../services/api'
 import { copyToClipboard } from '../utils/clipboard'
 
 interface SubUserItem {
   id: string
   username: string
+  email?: string
   role?: string
   tenant?: string
   container_names: string[]
@@ -32,6 +48,16 @@ interface AuditLogExt extends AuditLog {
   error?: string
 }
 
+interface SubUserForm {
+  username: string
+  email: string
+  password: string
+  role: 'operator' | 'viewer'
+  tenant: string
+}
+
+const EMPTY_FORM: SubUserForm = { username: '', email: '', password: '', role: 'operator', tenant: '' }
+
 export default function SubUserManagement() {
   const dialog = useDialog()
   const { t } = useLanguage()
@@ -49,6 +75,26 @@ export default function SubUserManagement() {
   const [rotatingPassword, setRotatingPassword] = useState(false)
   const [logPage, setLogPage] = useState(1)
   const [logPageSize, setLogPageSize] = useState(10)
+
+  // 新建子用户
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createForm, setCreateForm] = useState<SubUserForm>(EMPTY_FORM)
+  const [createContainers, setCreateContainers] = useState<Container[]>([])
+  const [createSelected, setCreateSelected] = useState<string[]>([])
+  const [creating, setCreating] = useState(false)
+
+  // 编辑子用户
+  const [editUser, setEditUser] = useState<SubUserItem | null>(null)
+  const [editForm, setEditForm] = useState<SubUserForm>(EMPTY_FORM)
+  const [savingEdit, setSavingEdit] = useState(false)
+  const [tenantOptions, setTenantOptions] = useState<Tenant[]>([])
+
+  // 管理容器绑定
+  const [bindUser, setBindUser] = useState<SubUserItem | null>(null)
+  const [bindContainers, setBindContainers] = useState<Container[]>([])
+  const [bindSelected, setBindSelected] = useState<string[]>([])
+  const [bindLoading, setBindLoading] = useState(false)
+  const [bindSaving, setBindSaving] = useState(false)
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -69,6 +115,156 @@ export default function SubUserManagement() {
     await copyToClipboard(text)
   }
 
+  // ---- 新建子用户 ------------------------------------------------------------
+  const openCreate = async () => {
+    setCreateForm(EMPTY_FORM)
+    setCreateSelected([])
+    setCreateOpen(true)
+    try {
+      const res = await getContainers()
+      setCreateContainers((res.data.data || []).filter((c) => !c.owner_sub_user_id))
+    } catch {
+      setCreateContainers([])
+    }
+  }
+
+  const submitCreate = async () => {
+    if (creating) return
+    if (createForm.username.trim() && createForm.password && createForm.password.length < 8) {
+      dialog.alert('创建失败', '密码至少 8 位')
+      return
+    }
+    setCreating(true)
+    try {
+      const res = await createSubUserAdvanced({
+        container_names: createSelected,
+        username: createForm.username.trim() || undefined,
+        email: createForm.email.trim() || undefined,
+        password: createForm.password || undefined,
+        role: createForm.role,
+        tenant: createForm.tenant.trim() || undefined,
+      })
+      setCreateOpen(false)
+      await fetchUsers()
+      const created = res.data.data
+      if (created?.password) {
+        setUsers((prev) => prev.map((u) => (u.id === created.id ? { ...u, password: created.password } : u)))
+        setPasswordUser({ ...created, last_login: '', last_login_ip: '', last_login_ua: '' } as SubUserItem)
+      } else {
+        dialog.alert('完成', '子用户已创建')
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('创建失败', error.response?.data?.message || '请稍后重试')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  // ---- 编辑子用户 ------------------------------------------------------------
+  const openEdit = async (user: SubUserItem) => {
+    setEditUser(user)
+    setEditForm({
+      username: user.username,
+      email: user.email || '',
+      password: '',
+      role: (user.role === 'viewer' ? 'viewer' : 'operator'),
+      tenant: user.tenant || '',
+    })
+    // 变更租户：下拉选择已有租户
+    try {
+      const res = await getTenants()
+      setTenantOptions(res.data.data || [])
+    } catch {
+      setTenantOptions([])
+    }
+  }
+
+  const submitEdit = async () => {
+    if (!editUser || savingEdit) return
+    if (editForm.password && editForm.password.length < 8) {
+      dialog.alert('保存失败', '密码至少 8 位')
+      return
+    }
+    setSavingEdit(true)
+    try {
+      await updateSubUser(editUser.id, {
+        username: editForm.username.trim() || undefined,
+        email: editForm.email.trim() || undefined,
+        role: editForm.role,
+        password: editForm.password || undefined,
+      })
+      // 租户走独立端点（变更租户）
+      if ((editForm.tenant || '') !== (editUser.tenant || '')) {
+        await updateSubUserTenant(editUser.id, editForm.tenant.trim())
+      }
+      setEditUser(null)
+      await fetchUsers()
+      dialog.alert('完成', '子用户信息已保存')
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('保存失败', error.response?.data?.message || '请稍后重试')
+    } finally {
+      setSavingEdit(false)
+    }
+  }
+
+  // ---- 删除子用户 ------------------------------------------------------------
+  const removeUser = async (user: SubUserItem) => {
+    const ok = await dialog.confirm('删除子用户', `确定删除「${user.username}」？其名下 ${user.container_names.length} 个容器将被解绑归属（容器本身保留）`)
+    if (!ok) return
+    try {
+      const res = await deleteSubUser(user.id)
+      await fetchUsers()
+      const freed = res.data.data?.freed_containers || []
+      dialog.alert('完成', `已删除「${user.username}」${freed.length > 0 ? `，解绑容器：${freed.join('、')}` : ''}`)
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('删除失败', error.response?.data?.message || '请稍后重试')
+    }
+  }
+
+  // ---- 管理容器绑定 ----------------------------------------------------------
+  const openBind = async (user: SubUserItem) => {
+    setBindUser(user)
+    setBindSelected(user.container_uuids || [])
+    setBindLoading(true)
+    try {
+      const res = await getContainers()
+      setBindContainers(res.data.data || [])
+    } catch {
+      setBindContainers([])
+    } finally {
+      setBindLoading(false)
+    }
+  }
+
+  const toggleCreateSelect = (uuid: string) => {
+    setCreateSelected((prev) => prev.includes(uuid) ? prev.filter((item) => item !== uuid) : [...prev, uuid])
+  }
+
+  const toggleBind = (uuid: string, disabled: boolean) => {
+    if (disabled || bindSaving) return
+    setBindSelected((prev) => prev.includes(uuid) ? prev.filter((item) => item !== uuid) : [...prev, uuid])
+  }
+
+  const submitBind = async () => {
+    if (!bindUser || bindSaving) return
+    setBindSaving(true)
+    try {
+      await bindSubUserContainers(bindUser.id, bindSelected)
+      setBindUser(null)
+      await fetchUsers()
+      dialog.alert('完成', '容器绑定已更新')
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('保存失败', error.response?.data?.message || '请稍后重试')
+    } finally {
+      setBindSaving(false)
+    }
+  }
+
+  // ---- 既有功能 --------------------------------------------------------------
   const rotatePassword = async (user: SubUserItem) => {
     setRotatingPassword(true)
     try {
@@ -100,21 +296,6 @@ export default function SubUserManagement() {
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
       dialog.alert('切换失败', error.response?.data?.message || '请稍后重试')
-    }
-  }
-
-  const editTenant = async (user: SubUserItem) => {
-    const next = window.prompt('输入租户名称（留空表示按容器单独授权）：\n绑定租户后，该子用户可访问该租户下全部容器', user.tenant || '')
-    if (next === null) return
-    const tenant = next.trim()
-    try {
-      const res = await api.put(`/sub-users/${user.id}/tenant`, { tenant })
-      const saved = res.data.data?.tenant ?? tenant
-      setUsers((prev) => prev.map((item) => (item.id === user.id ? { ...item, tenant: saved } : item)))
-      dialog.alert('完成', tenant ? `已绑定租户「${tenant}」，重新登录后生效` : '已清除租户绑定')
-    } catch (err: unknown) {
-      const error = err as { response?: { data?: { message?: string } } }
-      dialog.alert('设置失败', error.response?.data?.message || '请稍后重试')
     }
   }
 
@@ -204,11 +385,20 @@ export default function SubUserManagement() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold text-black dark:text-white">{t('子用户管理')}</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          {t('容器分配的子用户列表，共')} {users.length} {t('个')}
-        </p>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-semibold text-black dark:text-white">{t('子用户管理')}</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            {t('容器分配的子用户列表，共')} {users.length} {t('个')}
+          </p>
+        </div>
+        <button
+          onClick={() => { void openCreate() }}
+          className="inline-flex items-center gap-1.5 rounded-md bg-black px-3 py-2 text-sm font-medium text-white hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+        >
+          <Plus className="h-4 w-4" />
+          {t('新建子用户')}
+        </button>
       </div>
 
       <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
@@ -218,14 +408,16 @@ export default function SubUserManagement() {
               <UserCog className="h-7 w-7 text-gray-400" />
             </div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-300">暂无子用户</div>
+            <div className="mt-1 text-xs text-gray-400">点击右上角「新建子用户」创建，可先建空账号再绑定容器</div>
           </div>
         ) : (
-          <table className="w-full min-w-[820px] text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-sm">
             <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 dark:text-gray-400">
               <tr>
                 <th className="px-4 py-3 text-left font-medium w-12">#</th>
-                <th className="px-4 py-3 text-left font-medium">容器名称</th>
-                <th className="px-4 py-3 text-left font-medium">UUID</th>
+                <th className="px-4 py-3 text-left font-medium">用户名</th>
+                <th className="px-4 py-3 text-left font-medium">绑定容器</th>
                 <th className="px-4 py-3 text-left font-medium">角色</th>
                 <th className="px-4 py-3 text-left font-medium">租户</th>
                 <th className="px-4 py-3 text-left font-medium">最后登录</th>
@@ -236,8 +428,21 @@ export default function SubUserManagement() {
               {users.map((user, index) => (
                 <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                   <td className="px-4 py-3 text-gray-400 dark:text-gray-500">{index + 1}</td>
-                  <td className="px-4 py-3 font-medium text-black dark:text-white">{user.container_name || '-'}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-gray-600 dark:text-gray-400">{user.container_uuid || '-'}</td>
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-black dark:text-white">{user.username}</div>
+                    {user.email && <div className="text-xs text-gray-400">{user.email}</div>}
+                  </td>
+                  <td className="px-4 py-3 max-w-[260px]">
+                    {user.container_names.length > 0 ? (
+                      <div className="flex flex-wrap gap-1">
+                        {user.container_names.map((name) => (
+                          <span key={name} className="inline-flex items-center rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-medium text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">{name}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-gray-400">未绑定（空账号）</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3">
                     <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs font-medium ${user.role === 'viewer' ? 'bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'}`}>
                       {user.role === 'viewer' ? '只读' : '操作'}
@@ -261,14 +466,30 @@ export default function SubUserManagement() {
                     )}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center justify-center gap-1">
+                    <div className="flex flex-wrap items-center justify-center gap-1">
                       <button
                         onClick={() => setPasswordUser(user)}
                         className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-900/30 transition-colors"
                         title="查看密码"
                       >
                         <KeyRound className="w-3.5 h-3.5" />
-                        查看密码
+                        密码
+                      </button>
+                      <button
+                        onClick={() => { void openEdit(user) }}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 transition-colors"
+                        title="编辑用户名 / 邮箱 / 密码 / 角色 / 变更租户"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                        编辑
+                      </button>
+                      <button
+                        onClick={() => { void openBind(user) }}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 transition-colors"
+                        title="管理容器绑定"
+                      >
+                        <Link2 className="w-3.5 h-3.5" />
+                        容器
                       </button>
                       <button
                         onClick={() => showAuditLogs(user)}
@@ -303,12 +524,12 @@ export default function SubUserManagement() {
                         {user.role === 'viewer' ? '设为操作' : '设为只读'}
                       </button>
                       <button
-                        onClick={() => editTenant(user)}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors"
-                        title="设置租户"
+                        onClick={() => { void removeUser(user) }}
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors"
+                        title="删除子用户（容器将被解绑归属）"
                       >
-                        <HardDrive className="w-3.5 h-3.5" />
-                        租户
+                        <Trash2 className="w-3.5 h-3.5" />
+                        删除
                       </button>
                     </div>
                   </td>
@@ -316,8 +537,268 @@ export default function SubUserManagement() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
+
+      {/* 新建子用户弹窗 */}
+      {createOpen && (
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-black dark:text-white">新建子用户</h3>
+              <button onClick={() => setCreateOpen(false)} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">用户名（留空自动生成）</label>
+                  <input
+                    type="text"
+                    value={createForm.username}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))}
+                    placeholder="user01"
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">邮箱（可选）</label>
+                  <input
+                    type="text"
+                    value={createForm.email}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))}
+                    placeholder="user@example.com"
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">密码（留空自动生成 16 位）</label>
+                  <input
+                    type="text"
+                    value={createForm.password}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))}
+                    placeholder="至少 8 位"
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">角色</label>
+                  <select
+                    value={createForm.role}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, role: e.target.value as 'operator' | 'viewer' }))}
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  >
+                    <option value="operator">操作（可开关机等全部操作）</option>
+                    <option value="viewer">只读（仅查看）</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">租户（可选）</label>
+                  <input
+                    type="text"
+                    value={createForm.tenant}
+                    onChange={(e) => setCreateForm((f) => ({ ...f, tenant: e.target.value }))}
+                    placeholder="留空按容器单独授权"
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">绑定容器（可选，可创建后再绑定）</label>
+                <div className="max-h-48 overflow-y-auto rounded-md border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800">
+                  {createContainers.length === 0 ? (
+                    <div className="px-3 py-6 text-center text-xs text-gray-400">暂无可绑定的未归属容器</div>
+                  ) : createContainers.map((c) => (
+                    <label key={c.uuid || c.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
+                      <input
+                        type="checkbox"
+                        checked={createSelected.includes(c.uuid)}
+                        onChange={() => toggleCreateSelect(c.uuid)}
+                        className="h-4 w-4 rounded border-gray-300 accent-black"
+                      />
+                      <span className="font-medium text-black dark:text-white">{c.name}</span>
+                      <span className="text-xs text-gray-400">#{c.id}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-700 px-5 py-3">
+              <button onClick={() => setCreateOpen(false)} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">取消</button>
+              <button
+                onClick={() => { void submitCreate() }}
+                disabled={creating}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              >
+                <Plus className="h-4 w-4" />
+                {creating ? '创建中...' : '创建'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 编辑子用户弹窗 */}
+      {editUser && (
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-md overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-black dark:text-white">编辑子用户</h3>
+              <button onClick={() => setEditUser(null)} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">用户名</label>
+                <input
+                  type="text"
+                  value={editForm.username}
+                  onChange={(e) => setEditForm((f) => ({ ...f, username: e.target.value }))}
+                  className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">邮箱</label>
+                <input
+                  type="text"
+                  value={editForm.email}
+                  onChange={(e) => setEditForm((f) => ({ ...f, email: e.target.value }))}
+                  placeholder="可选"
+                  className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">新密码（留空不修改）</label>
+                <input
+                  type="text"
+                  value={editForm.password}
+                  onChange={(e) => setEditForm((f) => ({ ...f, password: e.target.value }))}
+                  placeholder="至少 8 位"
+                  className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">角色</label>
+                  <select
+                    value={editForm.role}
+                    onChange={(e) => setEditForm((f) => ({ ...f, role: e.target.value as 'operator' | 'viewer' }))}
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  >
+                    <option value="operator">操作</option>
+                    <option value="viewer">只读</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">租户（变更租户）</label>
+                  <select
+                    value={editForm.tenant}
+                    onChange={(e) => setEditForm((f) => ({ ...f, tenant: e.target.value }))}
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  >
+                    <option value="">留空按容器授权</option>
+                    {tenantOptions.map((t) => (
+                      <option key={t.id} value={t.name}>{t.name}</option>
+                    ))}
+                    {editForm.tenant && !tenantOptions.some((t) => t.name === editForm.tenant) && (
+                      <option value={editForm.tenant}>{editForm.tenant}</option>
+                    )}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-700 px-5 py-3">
+              <button onClick={() => setEditUser(null)} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">取消</button>
+              <button
+                onClick={() => { void submitEdit() }}
+                disabled={savingEdit}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              >
+                <Save className="h-4 w-4" />
+                {savingEdit ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 管理容器绑定弹窗 */}
+      {bindUser && (
+        <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
+              <div>
+                <h3 className="text-sm font-semibold text-black dark:text-white">管理容器绑定</h3>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{bindUser.username} · 勾选该子用户可访问的容器</p>
+              </div>
+              <button onClick={() => setBindUser(null)} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-5">
+              {bindLoading ? (
+                <div className="flex items-center justify-center py-12">
+                  <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-black" />
+                </div>
+              ) : bindContainers.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">暂无容器</div>
+              ) : (
+                <div className="space-y-1">
+                  {bindContainers.map((c) => {
+                    const ownedByOther = !!c.owner_sub_user_id && c.owner_sub_user_id !== bindUser.id
+                    const checked = bindSelected.includes(c.uuid)
+                    return (
+                      <label
+                        key={c.uuid || c.id}
+                        className={`flex items-center gap-2.5 rounded-md border px-3 py-2 text-sm transition-colors ${
+                          ownedByOther
+                            ? 'cursor-not-allowed border-gray-100 dark:border-gray-800 opacity-50'
+                            : checked
+                              ? 'cursor-pointer border-black bg-gray-50 dark:border-white dark:bg-gray-800'
+                              : 'cursor-pointer border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'
+                        }`}
+                        title={ownedByOther ? '已绑定给其他子用户，请先在容器上变更属主' : undefined}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={ownedByOther}
+                          onChange={() => toggleBind(c.uuid, ownedByOther)}
+                          className="h-4 w-4 rounded border-gray-300 accent-black"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="font-medium text-black dark:text-white">{c.name}</span>
+                          <span className="ml-1.5 text-xs text-gray-400">#{c.id}</span>
+                        </span>
+                        {ownedByOther && (
+                          <span className="shrink-0 text-[10px] text-gray-400">其他属主</span>
+                        )}
+                      </label>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-gray-200 dark:border-gray-700 px-5 py-3">
+              <span className="text-xs text-gray-500 dark:text-gray-400">已绑定 {bindSelected.length} 个容器</span>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setBindUser(null)} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">取消</button>
+                <button
+                  onClick={() => { void submitBind() }}
+                  disabled={bindSaving || bindLoading}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+                >
+                  <Save className="h-4 w-4" />
+                  {bindSaving ? '保存中...' : '保存'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {passwordUser && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">

@@ -2907,19 +2907,20 @@ func FindNodeGroup(id string) (NodeGroup, bool) {
 	return NodeGroup{}, false
 }
 
-func AddNodeGroup(ng NodeGroup) error {
+func AddNodeGroup(ng NodeGroup) (NodeGroup, error) {
 	if ng.ID == "" {
 		ng.ID = "ng-" + randomShortID()
 	}
 	if ng.CreatedAt == "" {
 		ng.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
 	}
-	return MutateGlobal(func(cfg *EyvescloudConfig) {
+	err := MutateGlobal(func(cfg *EyvescloudConfig) {
 		if cfg.NodeGroups == nil {
 			cfg.NodeGroups = make([]NodeGroup, 0)
 		}
 		cfg.NodeGroups = append(cfg.NodeGroups, ng)
 	})
+	return ng, err
 }
 
 func UpdateNodeGroup(id string, fn func(*NodeGroup)) (NodeGroup, bool) {
@@ -2973,19 +2974,20 @@ func FindCluster(id string) (Cluster, bool) {
 	return Cluster{}, false
 }
 
-func AddCluster(cl Cluster) error {
+func AddCluster(cl Cluster) (Cluster, error) {
 	if cl.ID == "" {
 		cl.ID = "cl-" + randomShortID()
 	}
 	if cl.CreatedAt == "" {
 		cl.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
 	}
-	return MutateGlobal(func(cfg *EyvescloudConfig) {
+	err := MutateGlobal(func(cfg *EyvescloudConfig) {
 		if cfg.Clusters == nil {
 			cfg.Clusters = make([]Cluster, 0)
 		}
 		cfg.Clusters = append(cfg.Clusters, cl)
 	})
+	return cl, err
 }
 
 func UpdateCluster(id string, fn func(*Cluster)) (Cluster, bool) {

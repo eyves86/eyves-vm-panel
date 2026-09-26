@@ -1583,6 +1583,184 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		resp.Email = updated.Email
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: resp})
 
+	case action == "delete" && r.Method == http.MethodDelete:
+		// 删除子用户：清空其名下容器的 OwnerSubUserID（容器保留，仅解绑归属）。
+		if !requireScope(w, r, "subuser:update") {
+			return
+		}
+		var removed config.SubUser
+		var freedContainers []string
+		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			for i := range cfg.SubUsers {
+				if cfg.SubUsers[i].ID != subUserID {
+					continue
+				}
+				removed = cfg.SubUsers[i]
+				cfg.SubUsers = append(cfg.SubUsers[:i], cfg.SubUsers[i+1:]...)
+				break
+			}
+			if removed.ID == "" {
+				return
+			}
+			for i := range cfg.Containers {
+				if cfg.Containers[i].OwnerSubUserID == subUserID {
+					cfg.Containers[i].OwnerSubUserID = ""
+					freedContainers = append(freedContainers, cfg.Containers[i].Name)
+				}
+			}
+		})
+		if removed.ID == "" {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
+			return
+		}
+		if err := config.SaveConfig(); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
+			return
+		}
+		auditRequest(r, "subuser.delete", removed.Username, "freed="+strings.Join(freedContainers, ","), true, "")
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+			"id":              removed.ID,
+			"username":        removed.Username,
+			"freed_containers": freedContainers,
+		}})
+
+	case action == "bind-containers" && r.Method == http.MethodPut:
+		// 整体替换该子用户的容器绑定集：{containers: [id/uuid/name 列表]}。
+		// 已绑定给其他子用户的容器返回 409（属主转移请走 PUT /containers/{id}/owner）。
+		if !requireScope(w, r, "subuser:update") {
+			return
+		}
+		var req struct {
+			Containers []string `json:"containers"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+			return
+		}
+
+		// 解析并校验容器标识（支持数字 ID / UUID / 名称）
+		type bindRef struct {
+			UUID string
+			Name string
+		}
+		seen := map[string]struct{}{}
+		binds := make([]bindRef, 0, len(req.Containers))
+		conflict := ""
+		missing := ""
+		{
+			config.AppConfigMu.RLock()
+			for _, ident := range req.Containers {
+				ident = strings.TrimSpace(ident)
+				if ident == "" {
+					continue
+				}
+				var match *config.Container
+				if id, err := strconv.Atoi(ident); err == nil {
+					for i := range config.AppConfig.Containers {
+						if config.AppConfig.Containers[i].ID == id {
+							match = &config.AppConfig.Containers[i]
+							break
+						}
+					}
+				}
+				if match == nil {
+					for i := range config.AppConfig.Containers {
+						if config.AppConfig.Containers[i].UUID == ident {
+							match = &config.AppConfig.Containers[i]
+							break
+						}
+					}
+				}
+				if match == nil {
+					for i := range config.AppConfig.Containers {
+						if config.AppConfig.Containers[i].Name == ident {
+							match = &config.AppConfig.Containers[i]
+							break
+						}
+					}
+				}
+				if match == nil {
+					missing = ident
+					break
+				}
+				if _, dup := seen[match.UUID]; dup {
+					continue
+				}
+				seen[match.UUID] = struct{}{}
+				if match.OwnerSubUserID != "" && match.OwnerSubUserID != subUserID {
+					conflict = match.Name
+					break
+				}
+				binds = append(binds, bindRef{UUID: match.UUID, Name: match.Name})
+			}
+			config.AppConfigMu.RUnlock()
+			if missing != "" {
+				jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found: " + missing})
+				return
+			}
+			if conflict != "" {
+				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Container already owned by another sub-user: " + conflict})
+				return
+			}
+		}
+
+		uuids := make([]string, 0, len(binds))
+		names := make([]string, 0, len(binds))
+		for _, b := range binds {
+			uuids = append(uuids, b.UUID)
+			names = append(names, b.Name)
+		}
+		newUUIDSet := make(map[string]struct{}, len(uuids))
+		for _, u := range uuids {
+			newUUIDSet[u] = struct{}{}
+		}
+
+		var updated config.SubUser
+		var unboundNames []string
+		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			for i := range cfg.SubUsers {
+				if cfg.SubUsers[i].ID != subUserID {
+					continue
+				}
+				updated = cfg.SubUsers[i]
+				// 先解绑：旧集合中不再出现在新集合的容器清空归属
+				for _, u := range cfg.SubUsers[i].ContainerUUIDs {
+					if _, keep := newUUIDSet[u]; keep {
+						continue
+					}
+					for j := range cfg.Containers {
+						if cfg.Containers[j].UUID == u && cfg.Containers[j].OwnerSubUserID == subUserID {
+							cfg.Containers[j].OwnerSubUserID = ""
+							unboundNames = append(unboundNames, cfg.Containers[j].Name)
+						}
+					}
+				}
+				cfg.SubUsers[i].ContainerUUIDs = uuids
+				cfg.SubUsers[i].ContainerNames = names
+				// 再绑定：新集合中尚未归属的容器写入 OwnerSubUserID
+				for _, b := range binds {
+					for j := range cfg.Containers {
+						if cfg.Containers[j].UUID == b.UUID && cfg.Containers[j].OwnerSubUserID == "" {
+							cfg.Containers[j].OwnerSubUserID = subUserID
+						}
+					}
+				}
+				cfg.SubUsers[i].TokenVersion++ // 强制刷新可见容器列表
+				updated = cfg.SubUsers[i]
+				return
+			}
+		})
+		if updated.ID == "" {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
+			return
+		}
+		if err := config.SaveConfig(); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
+			return
+		}
+		auditRequest(r, "subuser.bind-containers", updated.Username, "bound="+strings.Join(names, ",")+" unbound="+strings.Join(unboundNames, ","), true, "")
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: newSubUserResponse(updated, "")})
+
 	default:
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Action not found"})
 	}

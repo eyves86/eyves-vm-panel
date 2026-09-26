@@ -71,6 +71,7 @@ export default function Containers() {
   const [subUsers, setSubUsers] = useState<SubUser[]>([])
   const [ownerMenuId, setOwnerMenuId] = useState<number | null>(null)
   const [changingOwner, setChangingOwner] = useState(false)
+  const [ownerFilter, setOwnerFilter] = useState('all')
 
   // 加载子用户列表（仅管理员视图需要）
   useEffect(() => {
@@ -103,6 +104,22 @@ export default function Containers() {
       .catch(() => { /* 静默失败 */ })
     return () => { cancelled = true }
   }, [isSubUser])
+
+  // 行内变更属主：成功后本地更新，失败依赖 5s 轮询回滚显示
+  const applyOwnerChange = async (container: DisplayContainer, ownerId: string) => {
+    setOwnerMenuId(null)
+    if (changingOwner || container.isPlaceholder) return
+    if ((container.owner_sub_user_id || '') === ownerId) return
+    setChangingOwner(true)
+    try {
+      await changeContainerOwner(container.uuid || container.id, ownerId)
+      setContainers((prev) => prev.map((c) => (c.id === container.id ? { ...c, owner_sub_user_id: ownerId } : c)))
+    } catch {
+      /* 静默失败：下次轮询恢复原值 */
+    } finally {
+      setChangingOwner(false)
+    }
+  }
 
   const handleSort = (field: 'id' | 'cpu' | 'ram' | 'disk' | 'net') => {
     if (sortField === field) {
@@ -236,7 +253,7 @@ export default function Containers() {
     return Array.from(tenants.entries()).map(([value, label]) => ({ value, label }))
   }, [displayContainers])
   const filteredContainers = useMemo(() => {
-    return filterContainers(displayContainers, {
+    const base = filterContainers(displayContainers, {
       search: searchText,
       type: typeFilter,
       system: systemFilter,
@@ -245,7 +262,11 @@ export default function Containers() {
       taskStatusMap,
       taskNameMap,
     })
-  }, [displayContainers, searchText, typeFilter, systemFilter, statusFilter, tenantFilter, tasks])
+    // 属主筛选（仅管理员）：__none__ = 未绑定
+    if (isSubUser || ownerFilter === 'all') return base
+    if (ownerFilter === '__none__') return base.filter((c) => !c.owner_sub_user_id)
+    return base.filter((c) => c.owner_sub_user_id === ownerFilter)
+  }, [displayContainers, searchText, typeFilter, systemFilter, statusFilter, tenantFilter, ownerFilter, isSubUser, tasks])
   const sortedContainers = useMemo(() => {
     if (!sortField) return filteredContainers
 
@@ -448,6 +469,20 @@ export default function Containers() {
                 ))}
               </select>
             )}
+            {!isSubUser && subUsers.length > 0 && (
+              <select
+                value={ownerFilter}
+                onChange={(event) => setOwnerFilter(event.target.value)}
+                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-black focus:ring-2 focus:ring-black"
+                title="属主筛选"
+              >
+                <option value="all">全部属主</option>
+                <option value="__none__">未绑定</option>
+                {subUsers.map((u) => (
+                  <option key={u.id} value={u.id}>{u.username}</option>
+                ))}
+              </select>
+            )}
             <select
               value={pageSize}
               onChange={(event) => setPageSize(Number(event.target.value))}
@@ -611,20 +646,58 @@ export default function Containers() {
                       </td>
                       {!isSubUser && (
                         <td className="px-2.5 py-2 align-top">
-                          {(() => {
-                            const owner = subUsers.find((u) => u.id === container.owner_sub_user_id)
-                            if (container.owner_sub_user_id && owner) {
-                              return (
-                                <span className="inline-flex items-center gap-1 text-xs">
-                                  <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                    <UserCog className="w-3 h-3" />
-                                    {owner.username}
-                                  </span>
-                                </span>
-                              )
-                            }
-                            return <span className="text-gray-400 text-xs">未绑定</span>
-                          })()}
+                          <div className="relative">
+                            <button
+                              onClick={() => setOwnerMenuId(ownerMenuId === container.id ? null : container.id)}
+                              disabled={isPlaceholder || changingOwner}
+                              className="inline-flex items-center gap-1 text-xs rounded transition-colors hover:ring-1 hover:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-60"
+                              title="点击变更属主"
+                            >
+                              {(() => {
+                                const owner = subUsers.find((u) => u.id === container.owner_sub_user_id)
+                                if (container.owner_sub_user_id && owner) {
+                                  return (
+                                    <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                      <UserCog className="w-3 h-3" />
+                                      {owner.username}
+                                    </span>
+                                  )
+                                }
+                                return <span className="text-gray-400">未绑定</span>
+                              })()}
+                            </button>
+                            {ownerMenuId === container.id && (
+                              <>
+                                <div className="fixed inset-0 z-40" onClick={() => setOwnerMenuId(null)} />
+                                <div className="absolute left-0 top-full z-50 mt-1 w-48 max-h-60 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
+                                  <button
+                                    onClick={() => { void applyOwnerChange(container, '') }}
+                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800"
+                                  >
+                                    <UserCog className="h-3 w-3" />
+                                    解绑（无属主）
+                                  </button>
+                                  <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
+                                  {subUsers.map((u) => (
+                                    <button
+                                      key={u.id}
+                                      onClick={() => { void applyOwnerChange(container, u.id) }}
+                                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-800 ${
+                                        u.id === container.owner_sub_user_id ? 'font-medium text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300'
+                                      }`}
+                                    >
+                                      <UserCog className="h-3 w-3 shrink-0" />
+                                      <span className="truncate">{u.username}</span>
+                                      {u.tenant && <span className="ml-auto shrink-0 text-[10px] text-gray-400">{u.tenant}</span>}
+                                    </button>
+                                  ))}
+                                  {subUsers.length === 0 && (
+                                    <div className="px-3 py-2 text-xs text-gray-400">暂无子用户</div>
+                                  )}
+                                </div>
+                              </>
+                            )}
+                          </div>
                         </td>
                       )}
                       <td className="px-2.5 py-2 align-top">

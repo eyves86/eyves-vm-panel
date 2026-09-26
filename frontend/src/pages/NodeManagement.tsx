@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  Boxes,
   Copy,
   Cpu,
   Eye,
@@ -8,6 +9,8 @@ import {
   Loader2,
   MemoryStick,
   Monitor,
+  Network,
+  Pencil,
   Plus,
   Power,
   RefreshCw,
@@ -18,21 +21,33 @@ import {
   X,
 } from 'lucide-react'
 import {
+  createCluster,
   createNode,
   createNodeContainer,
+  createNodeGroup,
+  deleteCluster,
   deleteNode,
+  deleteNodeGroup,
   getEnabledImages,
   getNodeContainers,
   getNodeImages,
   getNodeInstallScript,
   getNodes,
+  getRegions,
+  listClusters,
+  listNodeGroups,
   nodeColdBackup,
   nodeContainerAction,
   syncNodeImages,
+  updateCluster,
+  updateNodeGroup,
+  type Cluster,
   type Container,
   type CreateContainerRequest,
   type ManagedNode,
   type NodeCatalogImage,
+  type NodeGroup,
+  type Region,
   type Template,
 } from '../services/api'
 import { useDialog } from '../components/Dialog'
@@ -63,6 +78,14 @@ function formatGBBytes(bytes?: number) {
   return `${v.toFixed(1)} ${units[i]}`
 }
 
+// 后端 Node 结构带有 node_group_id / cluster_id / region_id（omitempty），
+// ManagedNode 类型未声明这些字段，这里用扩展类型读取分组归属。
+type GroupedNode = ManagedNode & {
+  node_group_id?: string
+  cluster_id?: string
+  region_id?: string
+}
+
 export default function NodeManagement() {
   const { t } = useLanguage()
   const { confirm, alert } = useDialog()
@@ -91,6 +114,30 @@ export default function NodeManagement() {
   const [createForm, setCreateForm] = useState<CreateContainerRequest | null>(null)
   const [creatingContainer, setCreatingContainer] = useState(false)
 
+  // 节点分组与集群（迁移池 / 策略池）
+  const [nodeGroups, setNodeGroups] = useState<NodeGroup[]>([])
+  const [clusters, setClusters] = useState<Cluster[]>([])
+  const [regions, setRegions] = useState<Region[]>([])
+
+  // 节点分组弹窗（groupEditTarget 为 null 表示新建，否则编辑该分组）
+  const [groupFormOpen, setGroupFormOpen] = useState(false)
+  const [groupEditTarget, setGroupEditTarget] = useState<NodeGroup | null>(null)
+  const [groupName, setGroupName] = useState('')
+  const [groupDesc, setGroupDesc] = useState('')
+  const [groupRegionId, setGroupRegionId] = useState('')
+  // 勾选的成员节点（整体替换语义：保存时提交 node_ids）
+  const [groupNodeIds, setGroupNodeIds] = useState<string[]>([])
+  const [groupSaving, setGroupSaving] = useState(false)
+
+  // 集群弹窗（clusterEditTarget 为 null 表示新建，否则编辑该集群）
+  const [clusterFormOpen, setClusterFormOpen] = useState(false)
+  const [clusterEditTarget, setClusterEditTarget] = useState<Cluster | null>(null)
+  const [clusterName, setClusterName] = useState('')
+  const [clusterDesc, setClusterDesc] = useState('')
+  const [clusterRegionIds, setClusterRegionIds] = useState<string[]>([])
+  const [clusterNodeIds, setClusterNodeIds] = useState<string[]>([])
+  const [clusterSaving, setClusterSaving] = useState(false)
+
   const refresh = useCallback(async () => {
     try {
       const res = await getNodes()
@@ -102,11 +149,24 @@ export default function NodeManagement() {
     }
   }, [])
 
+  // 拉取节点分组 / 集群 / 区域（供分组与集群管理使用）
+  const refreshGroups = useCallback(async () => {
+    try {
+      const [groupsRes, clustersRes, regionsRes] = await Promise.all([listNodeGroups(), listClusters(), getRegions()])
+      setNodeGroups(groupsRes.data.data || [])
+      setClusters(clustersRes.data.data || [])
+      setRegions(regionsRes.data.data || [])
+    } catch {
+      // 保留上次数据
+    }
+  }, [])
+
   useEffect(() => {
     refresh()
+    refreshGroups()
     const timer = window.setInterval(refresh, 8000)
     return () => window.clearInterval(timer)
-  }, [refresh])
+  }, [refresh, refreshGroups])
 
   const handleCreate = async () => {
     const name = newName.trim()
@@ -354,6 +414,147 @@ export default function NodeManagement() {
     }
   }
 
+  // ---- 节点分组 ----
+
+  // 分组成员 = 分组归属（node_group_id）指向该分组的节点，随节点列表自动刷新。
+  const groupMembers = (groupId: string) => nodes.filter((n) => (n as GroupedNode).node_group_id === groupId)
+
+  const openGroupCreate = () => {
+    setGroupEditTarget(null)
+    setGroupName('')
+    setGroupDesc('')
+    setGroupRegionId('')
+    setGroupNodeIds([])
+    setGroupFormOpen(true)
+  }
+
+  const openGroupEdit = (group: NodeGroup) => {
+    setGroupEditTarget(group)
+    setGroupName(group.name)
+    setGroupDesc(group.description || '')
+    setGroupRegionId(group.region_id || '')
+    setGroupNodeIds(groupMembers(group.id).map((n) => n.id))
+    setGroupFormOpen(true)
+  }
+
+  const toggleGroupNode = (nodeId: string) => {
+    setGroupNodeIds((prev) =>
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]
+    )
+  }
+
+  const saveNodeGroup = async () => {
+    const name = groupName.trim()
+    if (!name) {
+      await alert(t('提示'), t('请填写分组名称'))
+      return
+    }
+    setGroupSaving(true)
+    try {
+      // node_ids 整体替换成员集合（后端 PUT：非 nil 即生效）
+      const payload = { name, description: groupDesc.trim(), region_id: groupRegionId, node_ids: groupNodeIds }
+      if (groupEditTarget) {
+        await updateNodeGroup(groupEditTarget.id, payload)
+        await alert(t('完成'), t('节点分组已更新'))
+      } else {
+        await createNodeGroup(payload)
+        await alert(t('完成'), t('节点分组已创建'))
+      }
+      setGroupFormOpen(false)
+      refreshGroups()
+      refresh()
+    } catch (e: any) {
+      await alert(t('保存失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setGroupSaving(false)
+    }
+  }
+
+  const removeNodeGroup = async (group: NodeGroup) => {
+    const ok = await confirm(t('删除节点分组'), `${t('确定删除节点分组')} ${group.name}？`)
+    if (!ok) return
+    try {
+      await deleteNodeGroup(group.id)
+      await alert(t('完成'), t('节点分组已删除'))
+      refreshGroups()
+    } catch (e: any) {
+      await alert(t('删除失败'), e?.response?.data?.message || String(e))
+    }
+  }
+
+  // ---- 集群 ----
+
+  // 集群成员 = 归属（cluster_id）指向该集群的节点，随节点列表自动刷新。
+  const clusterMembers = (clusterId: string) => nodes.filter((n) => (n as GroupedNode).cluster_id === clusterId)
+
+  const openClusterCreate = () => {
+    setClusterEditTarget(null)
+    setClusterName('')
+    setClusterDesc('')
+    setClusterRegionIds([])
+    setClusterNodeIds([])
+    setClusterFormOpen(true)
+  }
+
+  const openClusterEdit = (cluster: Cluster) => {
+    setClusterEditTarget(cluster)
+    setClusterName(cluster.name)
+    setClusterDesc(cluster.description || '')
+    setClusterRegionIds(cluster.region_ids || [])
+    setClusterNodeIds(clusterMembers(cluster.id).map((n) => n.id))
+    setClusterFormOpen(true)
+  }
+
+  const toggleClusterRegion = (regionId: string) => {
+    setClusterRegionIds((prev) =>
+      prev.includes(regionId) ? prev.filter((id) => id !== regionId) : [...prev, regionId]
+    )
+  }
+
+  const toggleClusterNode = (nodeId: string) => {
+    setClusterNodeIds((prev) =>
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]
+    )
+  }
+
+  const saveCluster = async () => {
+    const name = clusterName.trim()
+    if (!name) {
+      await alert(t('提示'), t('请填写集群名称'))
+      return
+    }
+    setClusterSaving(true)
+    try {
+      const payload = { name, description: clusterDesc.trim(), region_ids: clusterRegionIds, node_ids: clusterNodeIds }
+      if (clusterEditTarget) {
+        await updateCluster(clusterEditTarget.id, payload)
+        await alert(t('完成'), t('集群已更新'))
+      } else {
+        await createCluster(payload)
+        await alert(t('完成'), t('集群已创建'))
+      }
+      setClusterFormOpen(false)
+      refreshGroups()
+      refresh()
+    } catch (e: any) {
+      await alert(t('保存失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setClusterSaving(false)
+    }
+  }
+
+  const removeCluster = async (cluster: Cluster) => {
+    const ok = await confirm(t('删除集群'), `${t('确定删除集群')} ${cluster.name}？`)
+    if (!ok) return
+    try {
+      await deleteCluster(cluster.id)
+      await alert(t('完成'), t('集群已删除'))
+      refreshGroups()
+    } catch (e: any) {
+      await alert(t('删除失败'), e?.response?.data?.message || String(e))
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -365,7 +566,7 @@ export default function NodeManagement() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={refresh}
+            onClick={() => { refresh(); refreshGroups() }}
             className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
           >
             <RefreshCw className="h-3.5 w-3.5" />
@@ -480,6 +681,143 @@ export default function NodeManagement() {
           </table>
         </div>
       )}
+
+      {/* 节点分组 */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <Boxes className="h-4 w-4 shrink-0 text-gray-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-black dark:text-white">{t('节点分组')}</h2>
+              <p className="text-xs text-gray-400">{t('迁移池 / 策略池：同组节点共享迁移范围与资源策略')}</p>
+            </div>
+          </div>
+          <button
+            onClick={openGroupCreate}
+            className="flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('新建分组')}
+          </button>
+        </div>
+        {nodeGroups.length === 0 ? (
+          <p className="px-4 py-10 text-center text-sm text-gray-400">{t('暂无节点分组，点击「新建分组」创建')}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  <th className="px-4 py-3 font-medium">{t('名称')}</th>
+                  <th className="px-4 py-3 font-medium">{t('说明')}</th>
+                  <th className="px-4 py-3 font-medium">{t('成员节点数')}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t('操作')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nodeGroups.map((group) => {
+                  const members = groupMembers(group.id)
+                  return (
+                    <tr key={group.id} className="border-b border-gray-100 last:border-0 dark:border-gray-800">
+                      <td className="px-4 py-3 font-medium text-black dark:text-white">{group.name}</td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{group.description || '-'}</td>
+                      <td className="px-4 py-3 text-gray-600 dark:text-gray-300" title={members.map((n) => n.name).join('、')}>
+                        {members.length}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          <button
+                            onClick={() => openGroupEdit(group)}
+                            className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                          >
+                            <Pencil className="h-3 w-3" />
+                            {t('编辑')}
+                          </button>
+                          <button
+                            onClick={() => removeNodeGroup(group)}
+                            className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-gray-700 dark:hover:bg-red-950"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            {t('删除')}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 集群 */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <Network className="h-4 w-4 shrink-0 text-gray-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-black dark:text-white">{t('集群')}</h2>
+              <p className="text-xs text-gray-400">{t('跨分组的高可用 / 迁移域：容器默认只允许在同集群内迁移')}</p>
+            </div>
+          </div>
+          <button
+            onClick={openClusterCreate}
+            className="flex items-center gap-1.5 rounded-md bg-black px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-gray-800 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('新建集群')}
+          </button>
+        </div>
+        {clusters.length === 0 ? (
+          <p className="px-4 py-10 text-center text-sm text-gray-400">{t('暂无集群，点击「新建集群」创建')}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  <th className="px-4 py-3 font-medium">{t('名称')}</th>
+                  <th className="px-4 py-3 font-medium">{t('说明')}</th>
+                  <th className="px-4 py-3 font-medium">{t('区域')}</th>
+                  <th className="px-4 py-3 font-medium">{t('成员节点')}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t('操作')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clusters.map((cluster) => (
+                  <tr key={cluster.id} className="border-b border-gray-100 last:border-0 dark:border-gray-800">
+                    <td className="px-4 py-3 font-medium text-black dark:text-white">{cluster.name}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{cluster.description || '-'}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
+                      {(cluster.region_ids || []).map((id) => regions.find((r) => r.id === id)?.name || id).join('、') || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300" title={clusterMembers(cluster.id).map((n) => n.name).join('、')}>
+                      {clusterMembers(cluster.id).length}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => openClusterEdit(cluster)}
+                          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          {t('编辑')}
+                        </button>
+                        <button
+                          onClick={() => removeCluster(cluster)}
+                          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-gray-700 dark:hover:bg-red-950"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          {t('删除')}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
       {/* 添加节点 */}
       {showCreate && (
@@ -841,6 +1179,208 @@ export default function NodeManagement() {
               >
                 {creatingContainer && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('开通')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 节点分组弹窗 */}
+      {groupFormOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
+          <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-black dark:text-white">
+                {groupEditTarget ? t('编辑节点分组') : t('新建节点分组')}
+              </h3>
+              <button onClick={() => setGroupFormOpen(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('名称')}</label>
+                <input
+                  value={groupName}
+                  onChange={(e) => setGroupName(e.target.value)}
+                  placeholder="group-1"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('说明')}</label>
+                <input
+                  value={groupDesc}
+                  onChange={(e) => setGroupDesc(e.target.value)}
+                  placeholder={t('可选')}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('区域（可选）')}</label>
+                <select
+                  value={groupRegionId}
+                  onChange={(e) => setGroupRegionId(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                >
+                  <option value="">{t('不关联区域')}</option>
+                  {regions.map((region) => (
+                    <option key={region.id} value={region.id}>
+                      {region.name}{region.location ? ` · ${region.location}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('成员节点')}</label>
+                {nodes.length === 0 ? (
+                  <p className="text-xs text-gray-400">{t('暂无节点，可先在上方创建')}</p>
+                ) : (
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                    {nodes.map((node) => {
+                      const gn = node as GroupedNode
+                      const otherGroup = groupEditTarget && gn.node_group_id && gn.node_group_id !== groupEditTarget.id
+                      const otherName = otherGroup ? nodeGroups.find((g) => g.id === gn.node_group_id)?.name : ''
+                      return (
+                        <label key={node.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={groupNodeIds.includes(node.id)}
+                            onChange={() => toggleGroupNode(node.id)}
+                            className="h-4 w-4"
+                          />
+                          <span>{node.name}</span>
+                          {otherGroup && (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400" title={t('勾选保存后将从原分组移出')}>
+                              {t('当前属')} {otherName || gn.node_group_id}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-400">{t('保存时整体替换成员集合；一个节点只能属于一个分组，勾选已属其他分组的节点会在保存时移出原分组')}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <button
+                onClick={() => setGroupFormOpen(false)}
+                className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {t('取消')}
+              </button>
+              <button
+                onClick={saveNodeGroup}
+                disabled={groupSaving}
+                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              >
+                {groupSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t('保存')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 集群弹窗 */}
+      {clusterFormOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
+          <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-black dark:text-white">
+                {clusterEditTarget ? t('编辑集群') : t('新建集群')}
+              </h3>
+              <button onClick={() => setClusterFormOpen(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('名称')}</label>
+                <input
+                  value={clusterName}
+                  onChange={(e) => setClusterName(e.target.value)}
+                  placeholder="cluster-1"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('说明')}</label>
+                <input
+                  value={clusterDesc}
+                  onChange={(e) => setClusterDesc(e.target.value)}
+                  placeholder={t('可选')}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('覆盖区域（可选）')}</label>
+                {regions.length === 0 ? (
+                  <p className="text-xs text-gray-400">{t('暂无区域，可先在「区域管理」中创建')}</p>
+                ) : (
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                    {regions.map((region) => (
+                      <label key={region.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                        <input
+                          type="checkbox"
+                          checked={clusterRegionIds.includes(region.id)}
+                          onChange={() => toggleClusterRegion(region.id)}
+                          className="h-4 w-4"
+                        />
+                        <span>{region.name}{region.location ? ` · ${region.location}` : ''}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-400">{t('集群内容器默认只允许在本集群范围内迁移')}</p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('成员节点')}</label>
+                {nodes.length === 0 ? (
+                  <p className="text-xs text-gray-400">{t('暂无节点，可先在上方创建')}</p>
+                ) : (
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                    {nodes.map((node) => {
+                      const cn = node as GroupedNode
+                      const otherCluster = clusterEditTarget && cn.cluster_id && cn.cluster_id !== clusterEditTarget.id
+                      const otherName = otherCluster ? clusters.find((c) => c.id === cn.cluster_id)?.name : ''
+                      return (
+                        <label key={node.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={clusterNodeIds.includes(node.id)}
+                            onChange={() => toggleClusterNode(node.id)}
+                            className="h-4 w-4"
+                          />
+                          <span>{node.name}</span>
+                          {otherCluster && (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400" title={t('勾选保存后将从原集群移出')}>
+                              {t('当前属')} {otherName || cn.cluster_id}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-400">{t('保存时整体替换成员集合；一个节点只能属于一个集群，勾选已属其他集群的节点会在保存时移出原集群')}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <button
+                onClick={() => setClusterFormOpen(false)}
+                className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {t('取消')}
+              </button>
+              <button
+                onClick={saveCluster}
+                disabled={clusterSaving}
+                className="inline-flex items-center gap-2 rounded-md bg-black px-4 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50 dark:bg-white dark:text-black dark:hover:bg-gray-200"
+              >
+                {clusterSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t('保存')}
               </button>
             </div>
           </div>
