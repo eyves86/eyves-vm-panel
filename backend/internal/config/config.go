@@ -1894,7 +1894,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 func normalizeConfigDefaults(dataDir string) bool {
 	changed := false
 	// 存量部署升级：admin_path 为空或为旧默认值 "/"（挂在根路径）时自动随机化，
-	// 并把新入口写入凭据文件 + 启动日志，避免管理员被锁在门外。
+	// 并把新入口写入凭据文件 + 醒目启动日志，避免管理员被锁在门外。
 	// 管理员如需自定义入口，登录后在「设置」里改为其它路径即可。
 	if p := strings.TrimSpace(AppConfig.AdminPath); p == "" || p == "/" {
 		AppConfig.AdminPath = GenerateRandomAdminPath()
@@ -1902,14 +1902,28 @@ func normalizeConfigDefaults(dataDir string) bool {
 		noticePath := filepath.Join(dataDir, FirstBootCredsFile)
 		if dataDir != "" {
 			if err := os.WriteFile(noticePath, []byte(fmt.Sprintf(
-				"# EyvesCloud admin login path (upgraded) - DELETE after reading\nAdmin login path: %s\nUser portal: /user/login\n",
-				AppConfig.AdminPath)), 0600); err == nil {
+				"# EyvesCloud admin login path (upgraded) - DELETE after reading\n"+
+					"Admin login path: %s\n"+
+					"Admin username:   %s\n"+
+					"(password unchanged from your old install)\n"+
+					"User portal:      /user/login\n"+
+					"Quick view: run `vm` or `eyvescloud account show`\n",
+				AppConfig.AdminPath, AppConfig.AdminUser)), 0600); err == nil {
 				_ = os.Chmod(noticePath, 0600)
-				fmt.Printf("[security] admin login path randomized on upgrade: %s (saved to %s)\n", AppConfig.AdminPath, noticePath)
-			} else {
-				fmt.Printf("[security] admin login path randomized on upgrade: %s (could not write notice file)\n", AppConfig.AdminPath)
 			}
 		}
+		// 无论凭据文件写成功与否，都在启动日志里显眼打印——老用户升级后
+		// 访问原根路径会被导到用户入口，必须能在 stdout 一眼找到新入口。
+		fmt.Fprintln(os.Stderr, "========================================")
+		fmt.Fprintln(os.Stderr, "  [UPGRADE] Admin login path randomized")
+		if AppConfig.PanelDomain != "" {
+			fmt.Fprintf(os.Stderr, "  New admin URL:   %s%s\n", AppConfig.PanelDomain, AppConfig.AdminPath)
+		} else {
+			fmt.Fprintf(os.Stderr, "  New admin path:  %s  (visit http(s)://<server-ip>:%d%s)\n", AppConfig.AdminPath, AppConfig.Port, AppConfig.AdminPath)
+		}
+		fmt.Fprintf(os.Stderr, "  Admin username:  %s\n", AppConfig.AdminUser)
+		fmt.Fprintln(os.Stderr, "  Run `vm` or `eyvescloud account show` anytime to re-view")
+		fmt.Fprintln(os.Stderr, "========================================")
 	}
 	if AppConfig.Port == 0 {
 		AppConfig.Port = 8999
