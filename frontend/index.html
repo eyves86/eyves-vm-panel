@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EyvesCloud - Cloud Container Manager</title>
+    <!-- 管理员入口路径由服务端按请求路径注入：命中管理路径才注入真实值，
+         其它路径注入空串（页面里不含任何管理端路由，入口不可被枚举）。
+         开发模式下保留占位符，前端按默认根路径处理。 -->
+    <script>window.__EYVES_ADMIN_PATH__ = "__EYVES_ADMIN_PATH_VALUE__";</script>
+    <script type="module" src="/src/theme-init.ts"></script>
+  </head>
+  <body class="bg-white text-black dark:bg-gray-950 dark:text-white">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

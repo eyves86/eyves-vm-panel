@@ -1,0 +1,101 @@
+# Container Management
+
+Container Management is the core EyvesCloud module. It covers creation, lifecycle operations, resource limits, network mappings, traffic statistics, password resets, and console access.
+
+## Container List
+
+The list page scans container status. Administrators can view all containers. Sub-users only see containers within their authorization scope.
+
+Common fields include:
+
+- ID, UUID, and name.
+- Virtualization type.
+- Runtime status.
+- IP and IPv6.
+- CPU, memory, and disk limits.
+- Traffic usage and traffic limits.
+- Expiration time.
+
+## Create Containers
+
+Creation requires a template and resource quotas. Batch creation is available from the panel or API and is useful for issuing multiple containers at once.
+
+```http
+POST /api/v1/containers
+POST /api/v1/batch-create
+```
+
+Linux containers and Linux KVM virtual machines support SSH login configuration during creation:
+
+- `auto_password`: generate a root SSH password automatically.
+- `password`: use a custom `ssh_password`.
+- `key`: write a one-line `ssh_public_key`; a password is still kept for WebSSH.
+
+Network allocation can combine NAT, public IPv4, and IPv6 as needed. API fields such as `assign_nat`, `assign_ipv4`, `public_ipv4s`, `assign_ipv6`, and `ipv6_addresses` are optional. If they are omitted, default behavior is preserved.
+
+## Lifecycle Operations
+
+```http
+POST /api/v1/containers/{id}/start
+POST /api/v1/containers/{id}/stop
+POST /api/v1/containers/{id}/restart
+POST /api/v1/containers/{id}/reinstall
+DELETE /api/v1/containers/{id}/delete
+```
+
+Start, stop, reinstall, and delete actions enter the task queue. Call `GET /api/v1/tasks` afterwards to check execution status.
+
+When reinstalling a Linux system, you may pass `ssh_auth_mode`, `ssh_password`, and `ssh_public_key`. `ssh_auth_mode=keep` keeps the current SSH password. If these fields are omitted, the old behavior is preserved.
+
+## Resources and Traffic
+
+The container details page supports resource usage, traffic limit changes, resource limit changes, and expiration changes.
+
+```http
+GET /api/v1/containers/{id}/usage
+GET /api/v1/containers/{id}/traffic
+POST /api/v1/containers/{id}/traffic-reset
+PUT /api/v1/containers/{id}/traffic-limit
+PUT /api/v1/containers/{id}/resource-limit
+PUT /api/v1/containers/{id}/expiry
+```
+
+## NAT Port Management
+
+The NAT port management section supports adding, editing, and deleting mappings. Add and edit actions use a dialog so name, protocol, external port, and internal port can be filled in together.
+
+```http
+GET /api/v1/containers/{id}/random-port
+POST /api/v1/containers/{id}/port-mappings
+PUT /api/v1/containers/{id}/port-mappings/{index}
+DELETE /api/v1/containers/{id}/port-mappings/{index}
+```
+
+In sub-user mode, administrators can limit sub-users to changing only the internal port, preventing changes to the host-facing port and protocol.
+
+## Remote Console
+
+```http
+POST /api/v1/ssh-ticket
+POST /api/v1/vnc-ticket
+```
+
+Tickets are short-lived. Use them immediately for WebSSH or WebVNC and do not persist them.
+
+## KVM Rescue Mode
+
+KVM Rescue Mode boots a VM from a rescue ISO instead of the system disk when the OS fails to start, which is useful for repairing boot issues, resetting passwords, or recovering data. Before entering rescue mode, prepare a rescue image (usually SystemRescue or another live system) in the ISO catalog.
+
+```http
+POST /api/containers/rescue
+```
+
+Request body:
+
+| Field | Description |
+| --- | --- |
+| `container_id` | Container ID (required) |
+| `enabled` | `true` to enter rescue mode; `false` to exit and restore normal system-disk boot |
+| `iso_id` | The ISO catalog entry ID to use when entering rescue mode (required when `enabled=true`) |
+
+Only Linux KVM VMs are supported; calling it on an LXC container returns an error. For Windows VMs, use ISO mounting instead. This endpoint is administrator-only.

@@ -1,0 +1,311 @@
+package api
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"sync"
+	"time"
+
+	"eyvescloud/internal/config"
+
+	"github.com/gorilla/websocket"
+)
+
+type webVNCTicket struct {
+	ContainerName string
+	ContainerUUID string
+	Username      string
+	SubUser       bool
+	ClientIP      string
+	UserAgent     string
+	ExpiresAt     time.Time
+}
+
+var webVNCTickets = struct {
+	sync.Mutex
+	items map[string]webVNCTicket
+}{items: map[string]webVNCTicket{}}
+
+func HandleVNCTicket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+
+	if !requireScope(w, r, "terminal:vnc") {
+		return
+	}
+	var req struct {
+		ContainerName string `json:"container_name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ContainerName == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Container name required"})
+		return
+	}
+	if !isContainerAllowedForRequest(r, req.ContainerName) {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
+		return
+	}
+	if !requireSubUserWrite(w, r) {
+		return
+	}
+	c := config.FindContainerByName(req.ContainerName)
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	if isSubUserRequest(r) && c.PolicyBlocked {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: policyBlockedMessage(c)})
+		return
+	}
+	if c.Suspended {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "容器已挂起，VNC 控制台访问被暂停"})
+		return
+	}
+	if !c.IsKVM() {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "VNC console is only available for KVM VMs"})
+		return
+	}
+
+	username, isSubUser := vncRequesterIdentity(r)
+	ticket := randomHex(32)
+	webVNCTickets.Lock()
+	cleanupExpiredWebVNCTicketsLocked(time.Now())
+	if len(webVNCTickets.items) >= webVNCTicketLimit {
+		webVNCTickets.Unlock()
+		jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "控制台票据请求过于频繁，请稍后重试"})
+		return
+	}
+	webVNCTickets.items[ticket] = webVNCTicket{
+		ContainerName: c.Name,
+		ContainerUUID: c.UUID,
+		Username:      username,
+		SubUser:       isSubUser,
+		ClientIP:      clientIP(r),
+		UserAgent:     r.UserAgent(),
+		ExpiresAt:     time.Now().Add(60 * time.Second),
+	}
+	webVNCTickets.Unlock()
+
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data:    map[string]string{"ticket": ticket},
+	})
+}
+
+// HandleVNCProxy proxies a KVM VM's local libvirt VNC socket to the browser.
+func HandleVNCProxy(w http.ResponseWriter, r *http.Request) {
+	ticket := webVNCTicketFromRequest(r)
+	if ticket == "" {
+		http.Error(w, "ticket required", http.StatusUnauthorized)
+		return
+	}
+
+	containerName := r.URL.Query().Get("container")
+	if containerName == "" {
+		http.Error(w, "container name required", http.StatusBadRequest)
+		return
+	}
+
+	item, ok := consumeWebVNCTicket(ticket, containerName, r)
+	if !ok {
+		http.Error(w, "invalid or expired ticket", http.StatusUnauthorized)
+		return
+	}
+
+	c := config.FindContainerByName(containerName)
+	if c == nil || c.UUID != item.ContainerUUID {
+		http.Error(w, "container not found", http.StatusNotFound)
+		return
+	}
+	if item.SubUser && c.PolicyBlocked {
+		http.Error(w, "虚拟机被策略临时封禁", http.StatusForbidden)
+		return
+	}
+	if !c.IsKVM() {
+		http.Error(w, "VNC console is only available for KVM VMs", http.StatusBadRequest)
+		return
+	}
+	if c.Status != "running" {
+		http.Error(w, "container is not running", http.StatusBadRequest)
+		return
+	}
+	// 限制单容器并发控制台会话，避免同一虚拟机被大量控制台连接拖垮。
+	if !acquireConsoleSession(containerName) {
+		http.Error(w, "该容器的并发控制台会话已达上限，请稍后重试", http.StatusTooManyRequests)
+		return
+	}
+	defer releaseConsoleSession(containerName)
+
+	// 跨节点容器：级联到所属 agent，主控做透明 WS 中继。
+	if node, ok := nodeForContainer(c); ok {
+		relayTerminalToNode(w, r, *c, node, "vnc", containerName, webVNCResponseProtocol(r))
+		return
+	}
+	if c.NodeID != "" {
+		http.Error(w, "容器所属节点不存在或未配置地址: "+c.NodeID, http.StatusBadGateway)
+		return
+	}
+
+	vncPort, err := kvmManager.RefreshVNCPort(c.ID)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("VNC display is not available: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	vncConn, err := net.DialTimeout("tcp", net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", vncPort)), 5*time.Second)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("VNC connection failed: %v", err), http.StatusBadRequest)
+		return
+	}
+	defer vncConn.Close()
+
+	responseHeader := http.Header{}
+	if protocol := webVNCResponseProtocol(r); protocol != "" {
+		responseHeader.Set("Sec-WebSocket-Protocol", protocol)
+	}
+	ws, err := upgrader.Upgrade(w, r, responseHeader)
+	if err != nil {
+		log.Printf("WebVNC upgrade failed: %v", err)
+		return
+	}
+	defer ws.Close()
+	// 读超时 + ping/pong 保活：浏览器标签页被强杀或网络中断时，会话会被自动回收。
+	stopKeepalive := hardenWebSocket(ws)
+	defer stopKeepalive()
+
+	log.Printf("WebVNC connected for container %s as %s (sub_user=%t) -> 127.0.0.1:%d", containerName, item.Username, item.SubUser, vncPort)
+
+	done := make(chan string, 2)
+	var writeMu sync.Mutex
+	go streamVNCToWebSocket(ws, &writeMu, vncConn, done)
+	go streamWebSocketToVNC(ws, vncConn, done)
+
+	reason := <-done
+	_ = vncConn.Close()
+	_ = ws.Close()
+	log.Printf("WebVNC disconnected for container %s as %s: %s", containerName, item.Username, reason)
+}
+
+func vncRequesterIdentity(r *http.Request) (string, bool) {
+	if ctx, ok := authContextFromRequest(r); ok {
+		switch ctx.Type {
+		case authTypeSubUser:
+			return ctx.Username, true
+		case authTypeAPIKey:
+			return ctx.Actor, false
+		case authTypeAdmin:
+			return ctx.Username, false
+		}
+	}
+	claims, ok := claimsFromRequest(r)
+	if !ok {
+		return "api-key", false
+	}
+	if subUser, ok := claims["sub_user"].(string); ok && subUser != "" {
+		return subUser, true
+	}
+	if username, ok := claims["username"].(string); ok && username != "" {
+		return username, false
+	}
+	return "unknown", false
+}
+
+func webVNCTicketFromRequest(r *http.Request) string {
+	for _, protocol := range websocket.Subprotocols(r) {
+		const prefix = "eyvescloud-vnc-ticket."
+		if len(protocol) > len(prefix) && protocol[:len(prefix)] == prefix {
+			return protocol[len(prefix):]
+		}
+	}
+	return r.URL.Query().Get("ticket")
+}
+
+func webVNCResponseProtocol(r *http.Request) string {
+	for _, protocol := range websocket.Subprotocols(r) {
+		if protocol == "binary" {
+			return protocol
+		}
+	}
+	for _, protocol := range websocket.Subprotocols(r) {
+		const prefix = "eyvescloud-vnc-ticket."
+		if len(protocol) > len(prefix) && protocol[:len(prefix)] == prefix {
+			return protocol
+		}
+	}
+	return ""
+}
+
+func consumeWebVNCTicket(ticket, containerName string, r *http.Request) (webVNCTicket, bool) {
+	now := time.Now()
+	webVNCTickets.Lock()
+	defer webVNCTickets.Unlock()
+	cleanupExpiredWebVNCTicketsLocked(now)
+	item, ok := webVNCTickets.items[ticket]
+	if !ok {
+		return webVNCTicket{}, false
+	}
+	delete(webVNCTickets.items, ticket)
+	if item.ContainerName != containerName || !now.Before(item.ExpiresAt) {
+		return webVNCTicket{}, false
+	}
+	// 空绑定字段 = agent 级联票据（仅 /api/agent/vnc-ticket 可发行，node token 保护）
+	if item.ClientIP != "" && item.ClientIP != clientIP(r) {
+		return webVNCTicket{}, false
+	}
+	if item.UserAgent != "" && item.UserAgent != r.UserAgent() {
+		return webVNCTicket{}, false
+	}
+	return item, true
+}
+
+func cleanupExpiredWebVNCTicketsLocked(now time.Time) {
+	for ticket, item := range webVNCTickets.items {
+		if !now.Before(item.ExpiresAt) {
+			delete(webVNCTickets.items, ticket)
+		}
+	}
+}
+
+func streamVNCToWebSocket(ws *websocket.Conn, writeMu *sync.Mutex, src io.Reader, done chan<- string) {
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			// 带写超时，避免慢客户端把该 goroutine 永久阻塞在写入上。
+			if writeErr := writeConsoleMessage(ws, writeMu, websocket.BinaryMessage, buf[:n]); writeErr != nil {
+				done <- fmt.Sprintf("browser websocket write failed: %v", writeErr)
+				return
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				done <- "VNC server closed connection"
+			} else {
+				done <- fmt.Sprintf("VNC server read failed: %v", err)
+			}
+			return
+		}
+	}
+}
+
+func streamWebSocketToVNC(ws *websocket.Conn, dst net.Conn, done chan<- string) {
+	for {
+		messageType, msg, err := ws.ReadMessage()
+		if err != nil {
+			done <- fmt.Sprintf("browser websocket read failed: %v", err)
+			return
+		}
+		if messageType != websocket.BinaryMessage && messageType != websocket.TextMessage {
+			continue
+		}
+		if _, err := dst.Write(msg); err != nil {
+			done <- fmt.Sprintf("VNC server write failed: %v", err)
+			return
+		}
+	}
+}

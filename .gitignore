@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Frontend build output
+/frontend/dist/
+/web/
+
+# Go embedded frontend build output.
+# Keep only the placeholder so `go build` can compile before frontend assets exist.
+backend/internal/server/web/*
+!backend/internal/server/web/.gitkeep
+
+# Build artifacts
+/build/
+/dist/
+Mofang/*.zip
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+*.prof
+
+# Local deploy and debug scripts
+deploy.py
+check_*.py
+reset_pass.py
+
+# Runtime/config data
+.eyvescloud/
+config.json
+*.db
+*.sqlite
+*.sqlite3
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
+id_rsa*
+
+# Logs
+*.log
+logs/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Go
+backend/vendor/
+backend/tmp/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+linux.txt
+push-release.ps1
+deploy.ps1
+backend/eyvescloud
+/api.md
+deploy-arm.ps1
+deploy-dhcp.ps1
+deploy-pve-windows.ps1
