@@ -2405,6 +2405,22 @@ svc_restart() {
     fi
 }
 
+# svc_cli：面板运行中内存态会周期性回写配置库，直接跑 CLI 改账号/密码
+# 会被旧值覆盖。因此改账户类操作统一「停服 → CLI → 起服」。
+svc_cli() {
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop eyvescloud >/dev/null 2>&1
+        "$@"
+        systemctl start eyvescloud >/dev/null 2>&1 && echo "（面板服务已恢复运行）"
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service eyvescloud stop >/dev/null 2>&1
+        "$@"
+        rc-service eyvescloud start >/dev/null 2>&1 && echo "（面板服务已恢复运行）"
+    else
+        "$@"
+    fi
+}
+
 svc_status() {
     if command -v systemctl >/dev/null 2>&1; then
         systemctl status eyvescloud --no-pager
@@ -2449,15 +2465,15 @@ while true; do
         2)
             printf "请输入新的管理员账号："
             read -r newuser || continue
-            [ -n "$newuser" ] && "$BIN" account rename "$newuser"
+            [ -n "$newuser" ] && svc_cli "$BIN" account rename "$newuser"
             ;;
         3)
             printf "留空自动生成强密码，或输入新密码："
             read -r newpass || continue
             if [ -n "$newpass" ]; then
-                "$BIN" account reset --password "$newpass"
+                svc_cli "$BIN" account reset --password "$newpass"
             else
-                "$BIN" account reset
+                svc_cli "$BIN" account reset
             fi
             ;;
         4) svc_restart ;;
