@@ -8,6 +8,7 @@ This chapter documents authentication, request and response conventions, permiss
 
 - Versioned prefix: `/api/v1` (recommended; new endpoints land here first).
 - Legacy prefix: `/api` (kept available for compatibility).
+- Note: a few endpoints are **registered under `/api` only**, with no `/api/v1` variant: login and accounts (`/api/login`, `/api/check-auth`, `/api/change-password`, `/api/change-username`, `/api/2fa/*`), sub-user login (`/api/sub-user/login`, `/api/sub-user/access`), overcommit and metric retention (`/api/overcommit/settings`, `/api/metrics/retention`), node endpoints (`/api/nodes*`, `/api/node-groups*`, `/api/clusters*`), `/api/regions*`, `/api/ip-groups*`, `/api/isos` (except `/api/isos/upload`), and `/api/version`. Always use the `/api` prefix for these.
 - Version info: `GET /api/version`.
 - Health checks: `GET /api/v1/health`, `GET /api/v1/health/detail` (admin only).
 
@@ -26,7 +27,7 @@ Three identity types are supported, all resolved from request headers:
 ### Administrator login
 
 ```http
-POST /api/v1/login
+POST /api/login
 Content-Type: application/json
 
 { "username": "admin", "password": "your-password", "twofa_code": "" }
@@ -186,20 +187,22 @@ The following scopes can be granted to an API key (`*` means everything):
 
 ## Endpoint Reference
 
-All paths below omit the `/api/v1` prefix. Endpoints marked **admin** require an administrator session or an API key with `admin:access`.
+All paths below omit the `/api/v1` prefix; full paths starting with `/api/` in the tables mark endpoints **registered under `/api` only** (no `/api/v1` variant). Endpoints marked **admin** require an administrator session or an API key with `admin:access`.
 
 ### Login and Accounts
 
+These endpoints are registered under `/api` only.
+
 | Method | Path | Description |
 | --- | --- | --- |
-| POST | `/login` | Administrator login, returns a JWT |
-| GET | `/check-auth` | Validate the current identity and effective scopes |
-| POST | `/sub-user/login` | Sub-user login |
-| POST | `/sub-user/access` | Login with an access code |
-| POST | `/sub-user/change-password` | Sub-user password change |
-| POST | `/change-password` | Change the primary administrator password (own session only) |
-| POST | `/change-username` | Change the primary administrator username (own session only) |
-| GET | `/2fa/status` `/2fa/setup` `/2fa/enable` `/2fa/disable` `/2fa/regenerate-backup-codes` | Two-factor authentication (primary admin session only) |
+| POST | `/api/login` | Administrator login, returns a JWT |
+| GET | `/api/check-auth` | Validate the current identity and effective scopes |
+| POST | `/api/sub-user/login` | Sub-user login |
+| POST | `/api/sub-user/access` | Login with an access code |
+| POST | `/api/sub-user/change-password` | Sub-user password change |
+| POST | `/api/change-password` | Change the primary administrator password (own session only) |
+| POST | `/api/change-username` | Change the primary administrator username (own session only) |
+| GET | `/api/2fa/status` `/api/2fa/setup` `/api/2fa/enable` `/api/2fa/disable` `/api/2fa/regenerate-backup-codes` | Two-factor authentication (primary admin session only) |
 
 ### Overview and Host
 
@@ -215,8 +218,27 @@ All paths below omit the `/api/v1` prefix. Endpoints marked **admin** require an
 | POST | `/routing/ipv4-scan` | Scan a public IPv4 range (admin) |
 | GET | `/ipv6/status` | IPv6 status |
 | GET | `/task-queue/settings` / PUT | Task concurrency settings (admin) |
-| GET | `/overcommit/settings` | Overcommit settings (admin) |
-| GET | `/metrics/retention` | Metric retention policy (admin) |
+| GET | `/api/overcommit/settings` / PUT | Overcommit settings (admin, `/api` prefix only) |
+| GET | `/api/metrics/retention` / PUT | Metric retention policy (admin, `/api` prefix only) |
+
+### Nodes and Groups
+
+These endpoints are registered under `/api` only and serve the Controller-worker architecture and node orchestration.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| GET/POST | `/api/nodes` | List / create nodes (admin) |
+| DELETE | `/api/nodes/{id}` | Delete a node (admin) |
+| GET | `/api/nodes/{id}/install-script` | Get the worker one-line install script (admin) |
+| GET | `/api/nodes/binary` | Download the Controller binary (used by the install script) |
+| POST | `/api/nodes/register` | Worker registration (install key) |
+| POST | `/api/nodes/{id}/heartbeat` | Worker heartbeat (node token) |
+| GET/POST | `/api/node-groups` | Node group list / create (admin; optional `node_ids` to bind members) |
+| GET/PUT/DELETE | `/api/node-groups/{id}` | Group detail / update / delete (`node_ids` non-nil replaces all members) |
+| GET/POST | `/api/clusters` | Cluster list / create (admin; supports `node_ids`) |
+| GET/PUT/DELETE | `/api/clusters/{id}` | Cluster detail / update / delete (supports `node_ids` member replacement) |
+
+The `node_ids` field for node groups and clusters means **full replacement of the member set**: passing an array of node IDs (possibly empty) on create/update replaces all members; omitting the field on PUT keeps the current members. A node belongs to at most one group and one cluster at a time.
 
 ### Containers
 
@@ -428,6 +450,9 @@ Tickets are short-lived. Use them immediately to establish the connection and ne
 | GET/POST | `/ssh-keys` , `/ssh-keys/{id}` | Platform-managed SSH keys |
 | GET/POST | `/recipes` , `/recipes/{id}` | Custom script templates |
 | GET | `/swap` / POST | Swap info / adjust |
+| GET | `/check-update` | Panel version check (admin, cached 10 minutes) |
+| GET | `/update/releases` | Selectable upgrade releases (admin, supports `?repo=owner/name`, cached 2 minutes) |
+| POST | `/update` | In-panel upgrade (admin; download → backup → replace → restart in the background) |
 
 ### Webhooks (Event Subscriptions)
 

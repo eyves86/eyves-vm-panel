@@ -64,15 +64,21 @@ PUT /api/metrics/retention
 
 `PUT` request body (administrator only): `{"retention_days": N}` with range `0`–`3650`; `0` means keep forever. The response also includes `sample_interval_secs` and `raw_history_secs`.
 
-## Panel Version Check
+## Panel Version Check and Upgrade
 
-The "Version" page in settings checks whether an update is available.
+The version check and upgrade entry lives at the **bottom of the sidebar** (not in system settings): after login the panel checks for updates automatically and shows an "Update available" badge in the sidebar when one exists. Clicking the badge opens the "Panel Update" dialog, where you can pick the update repository (official by default; third-party `owner/name` repositories supported) and the target version, then confirm twice to upgrade.
 
 ```http
 GET /api/v1/check-update
+GET /api/v1/update/releases?repo=owner/name
+POST /api/v1/update
 ```
 
-Administrator only. Returns `current` (current version), `latest` (latest version), `has_update` (whether an update exists), and `err` (any check error). The result is cached for 10 minutes. It only checks and never downloads; upgrades are performed by install.sh / the CLI.
+- `GET /check-update` is administrator only and returns `current`, `latest`, `has_update`, and `err`. The result is cached for 10 minutes.
+- `GET /update/releases` returns the selectable upgrade releases (latest 20 by default) with a 2-minute cache; the `repo` parameter is strictly validated against SSRF.
+- `POST /update` triggers an **in-panel upgrade**: download → extract → backup → in-place binary replace → automatic service restart run in the background, and the request returns immediately with "started". The body optionally carries `{repo, tag}`; only one upgrade task may run at a time (concurrent attempts get a 409). The upgrade only replaces `/usr/local/bin/eyvescloud`; configuration, container data, and task records under `/root/.eyvescloud` are all preserved.
+
+Besides the in-panel upgrade, `install.sh` and the CLI (`eyvescloud cli` menu) remain available; all three paths are equivalent.
 
 ## Account / Password Recovery Commands
 
@@ -102,3 +108,5 @@ Passwords are stored as one-way bcrypt hashes and cannot be recovered. `reset` g
 | GET/PUT | `/api/overcommit/settings` | Memory overcommit and KSM tuning |
 | GET/PUT | `/api/metrics/retention` | Metric retention policy |
 | GET | `/api/v1/check-update` | Panel version check |
+| GET | `/api/v1/update/releases` | Selectable upgrade releases |
+| POST | `/api/v1/update` | In-panel upgrade |
