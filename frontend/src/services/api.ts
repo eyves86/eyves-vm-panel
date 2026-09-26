@@ -1881,10 +1881,11 @@ export interface NodeGroup {
 export const listNodeGroups = () =>
   api.get<APIResponse<NodeGroup[]>>('/node-groups')
 
-export const createNodeGroup = (payload: { name: string; description?: string; region_id?: string }) =>
-  api.post<APIResponse<null>>('/node-groups', payload)
+export const createNodeGroup = (payload: { name: string; description?: string; region_id?: string; node_ids?: string[] }) =>
+  api.post<APIResponse<NodeGroup>>('/node-groups', payload)
 
-export const updateNodeGroup = (id: string, payload: Partial<NodeGroup>) =>
+// node_ids 非 undefined 时整体替换成员集合（空数组 = 清空全部成员）
+export const updateNodeGroup = (id: string, payload: Partial<NodeGroup> & { node_ids?: string[] }) =>
   api.put<APIResponse<null>>(`/node-groups/${id}`, payload)
 
 export const deleteNodeGroup = (id: string) =>
@@ -1902,10 +1903,11 @@ export interface Cluster {
 export const listClusters = () =>
   api.get<APIResponse<Cluster[]>>('/clusters')
 
-export const createCluster = (payload: { name: string; description?: string; region_ids?: string[] }) =>
-  api.post<APIResponse<null>>('/clusters', payload)
+export const createCluster = (payload: { name: string; description?: string; region_ids?: string[]; node_ids?: string[] }) =>
+  api.post<APIResponse<Cluster>>('/clusters', payload)
 
-export const updateCluster = (id: string, payload: Partial<Cluster>) =>
+// node_ids 非 undefined 时整体替换成员集合（空数组 = 清空全部成员）
+export const updateCluster = (id: string, payload: Partial<Cluster> & { node_ids?: string[] }) =>
   api.put<APIResponse<null>>(`/clusters/${id}`, payload)
 
 export const deleteCluster = (id: string) =>

@@ -125,6 +125,8 @@ export default function NodeManagement() {
   const [groupName, setGroupName] = useState('')
   const [groupDesc, setGroupDesc] = useState('')
   const [groupRegionId, setGroupRegionId] = useState('')
+  // 勾选的成员节点（整体替换语义：保存时提交 node_ids）
+  const [groupNodeIds, setGroupNodeIds] = useState<string[]>([])
   const [groupSaving, setGroupSaving] = useState(false)
 
   // 集群弹窗（clusterEditTarget 为 null 表示新建，否则编辑该集群）
@@ -133,6 +135,7 @@ export default function NodeManagement() {
   const [clusterName, setClusterName] = useState('')
   const [clusterDesc, setClusterDesc] = useState('')
   const [clusterRegionIds, setClusterRegionIds] = useState<string[]>([])
+  const [clusterNodeIds, setClusterNodeIds] = useState<string[]>([])
   const [clusterSaving, setClusterSaving] = useState(false)
 
   const refresh = useCallback(async () => {
@@ -421,6 +424,7 @@ export default function NodeManagement() {
     setGroupName('')
     setGroupDesc('')
     setGroupRegionId('')
+    setGroupNodeIds([])
     setGroupFormOpen(true)
   }
 
@@ -429,7 +433,14 @@ export default function NodeManagement() {
     setGroupName(group.name)
     setGroupDesc(group.description || '')
     setGroupRegionId(group.region_id || '')
+    setGroupNodeIds(groupMembers(group.id).map((n) => n.id))
     setGroupFormOpen(true)
+  }
+
+  const toggleGroupNode = (nodeId: string) => {
+    setGroupNodeIds((prev) =>
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]
+    )
   }
 
   const saveNodeGroup = async () => {
@@ -440,7 +451,8 @@ export default function NodeManagement() {
     }
     setGroupSaving(true)
     try {
-      const payload = { name, description: groupDesc.trim(), region_id: groupRegionId }
+      // node_ids 整体替换成员集合（后端 PUT：非 nil 即生效）
+      const payload = { name, description: groupDesc.trim(), region_id: groupRegionId, node_ids: groupNodeIds }
       if (groupEditTarget) {
         await updateNodeGroup(groupEditTarget.id, payload)
         await alert(t('完成'), t('节点分组已更新'))
@@ -450,6 +462,7 @@ export default function NodeManagement() {
       }
       setGroupFormOpen(false)
       refreshGroups()
+      refresh()
     } catch (e: any) {
       await alert(t('保存失败'), e?.response?.data?.message || String(e))
     } finally {
@@ -471,11 +484,15 @@ export default function NodeManagement() {
 
   // ---- 集群 ----
 
+  // 集群成员 = 归属（cluster_id）指向该集群的节点，随节点列表自动刷新。
+  const clusterMembers = (clusterId: string) => nodes.filter((n) => (n as GroupedNode).cluster_id === clusterId)
+
   const openClusterCreate = () => {
     setClusterEditTarget(null)
     setClusterName('')
     setClusterDesc('')
     setClusterRegionIds([])
+    setClusterNodeIds([])
     setClusterFormOpen(true)
   }
 
@@ -484,12 +501,19 @@ export default function NodeManagement() {
     setClusterName(cluster.name)
     setClusterDesc(cluster.description || '')
     setClusterRegionIds(cluster.region_ids || [])
+    setClusterNodeIds(clusterMembers(cluster.id).map((n) => n.id))
     setClusterFormOpen(true)
   }
 
   const toggleClusterRegion = (regionId: string) => {
     setClusterRegionIds((prev) =>
       prev.includes(regionId) ? prev.filter((id) => id !== regionId) : [...prev, regionId]
+    )
+  }
+
+  const toggleClusterNode = (nodeId: string) => {
+    setClusterNodeIds((prev) =>
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]
     )
   }
 
@@ -501,7 +525,7 @@ export default function NodeManagement() {
     }
     setClusterSaving(true)
     try {
-      const payload = { name, description: clusterDesc.trim(), region_ids: clusterRegionIds }
+      const payload = { name, description: clusterDesc.trim(), region_ids: clusterRegionIds, node_ids: clusterNodeIds }
       if (clusterEditTarget) {
         await updateCluster(clusterEditTarget.id, payload)
         await alert(t('完成'), t('集群已更新'))
@@ -511,6 +535,7 @@ export default function NodeManagement() {
       }
       setClusterFormOpen(false)
       refreshGroups()
+      refresh()
     } catch (e: any) {
       await alert(t('保存失败'), e?.response?.data?.message || String(e))
     } finally {
@@ -753,6 +778,7 @@ export default function NodeManagement() {
                   <th className="px-4 py-3 font-medium">{t('名称')}</th>
                   <th className="px-4 py-3 font-medium">{t('说明')}</th>
                   <th className="px-4 py-3 font-medium">{t('区域')}</th>
+                  <th className="px-4 py-3 font-medium">{t('成员节点')}</th>
                   <th className="px-4 py-3 text-right font-medium">{t('操作')}</th>
                 </tr>
               </thead>
@@ -763,6 +789,9 @@ export default function NodeManagement() {
                     <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{cluster.description || '-'}</td>
                     <td className="px-4 py-3 text-gray-600 dark:text-gray-300">
                       {(cluster.region_ids || []).map((id) => regions.find((r) => r.id === id)?.name || id).join('、') || '-'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300" title={clusterMembers(cluster.id).map((n) => n.name).join('、')}>
+                      {clusterMembers(cluster.id).length}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
@@ -1204,18 +1233,34 @@ export default function NodeManagement() {
               </div>
               <div>
                 <label className="mb-1.5 block text-xs text-gray-500">{t('成员节点')}</label>
-                {groupEditTarget && groupMembers(groupEditTarget.id).length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {groupMembers(groupEditTarget.id).map((node) => (
-                      <span key={node.id} className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-800 dark:text-gray-300">
-                        {node.name}
-                      </span>
-                    ))}
-                  </div>
+                {nodes.length === 0 ? (
+                  <p className="text-xs text-gray-400">{t('暂无节点，可先在上方创建')}</p>
                 ) : (
-                  <p className="text-xs text-gray-400">{groupEditTarget ? t('暂无成员节点') : t('创建后按节点分组归属自动统计成员')}</p>
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                    {nodes.map((node) => {
+                      const gn = node as GroupedNode
+                      const otherGroup = groupEditTarget && gn.node_group_id && gn.node_group_id !== groupEditTarget.id
+                      const otherName = otherGroup ? nodeGroups.find((g) => g.id === gn.node_group_id)?.name : ''
+                      return (
+                        <label key={node.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={groupNodeIds.includes(node.id)}
+                            onChange={() => toggleGroupNode(node.id)}
+                            className="h-4 w-4"
+                          />
+                          <span>{node.name}</span>
+                          {otherGroup && (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400" title={t('勾选保存后将从原分组移出')}>
+                              {t('当前属')} {otherName || gn.node_group_id}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
                 )}
-                <p className="mt-1.5 text-[11px] text-gray-400">{t('成员节点根据各节点的分组归属自动统计，随节点列表实时刷新')}</p>
+                <p className="mt-1.5 text-[11px] text-gray-400">{t('保存时整体替换成员集合；一个节点只能属于一个分组，勾选已属其他分组的节点会在保存时移出原分组')}</p>
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
@@ -1289,6 +1334,37 @@ export default function NodeManagement() {
                   </div>
                 )}
                 <p className="mt-1.5 text-[11px] text-gray-400">{t('集群内容器默认只允许在本集群范围内迁移')}</p>
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('成员节点')}</label>
+                {nodes.length === 0 ? (
+                  <p className="text-xs text-gray-400">{t('暂无节点，可先在上方创建')}</p>
+                ) : (
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                    {nodes.map((node) => {
+                      const cn = node as GroupedNode
+                      const otherCluster = clusterEditTarget && cn.cluster_id && cn.cluster_id !== clusterEditTarget.id
+                      const otherName = otherCluster ? clusters.find((c) => c.id === cn.cluster_id)?.name : ''
+                      return (
+                        <label key={node.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={clusterNodeIds.includes(node.id)}
+                            onChange={() => toggleClusterNode(node.id)}
+                            className="h-4 w-4"
+                          />
+                          <span>{node.name}</span>
+                          {otherCluster && (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400" title={t('勾选保存后将从原集群移出')}>
+                              {t('当前属')} {otherName || cn.cluster_id}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-400">{t('保存时整体替换成员集合；一个节点只能属于一个集群，勾选已属其他集群的节点会在保存时移出原集群')}</p>
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
