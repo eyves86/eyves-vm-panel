@@ -286,6 +286,10 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent/node-backup", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentNodeBackup)))
 	mux.HandleFunc("/api/agent/ssh-ticket", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentSSHTicket)))
 	mux.HandleFunc("/api/agent/vnc-ticket", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentVNCTicket)))
+	// 被控面板上的主控接入管理（管理员）：查看本机注册信息 / 切换主控 / 重启 agent 服务。
+	mux.HandleFunc("/api/agent/status", corsMiddleware(api.AdminMiddleware(api.HandleAgentStatus)))
+	mux.HandleFunc("/api/agent/register", corsMiddleware(api.AdminMiddleware(api.HandleAgentRegister)))
+	mux.HandleFunc("/api/agent/restart", corsMiddleware(api.AdminMiddleware(api.HandleAgentRestart)))
 
 	// Versioned external API routes
 	mux.HandleFunc("/api/v1/dashboard", corsMiddleware(api.AuthMiddleware(api.HandleDashboard)))

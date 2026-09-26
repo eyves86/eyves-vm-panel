@@ -24,7 +24,7 @@ const (
 	// DisplayName 是展示给管理员的模块名称。
 	DisplayName = "EYVESCLOUD WHMCS Server Module"
 	// Version 是模块版本（与主程序大版本对齐）。
-	Version = "2.2.0"
+	Version = "2.2.1"
 	// InstallPath 是解压后模块在 WHMCS 中的相对路径。
 	InstallPath = "modules/servers/eyvescloud"
 )

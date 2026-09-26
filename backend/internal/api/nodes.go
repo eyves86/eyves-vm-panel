@@ -1098,7 +1098,9 @@ echo "==> [1/3] 校验二进制"
   || { echo "下载的二进制无法运行，架构或产物不匹配（本机 $ARCH）"; exit 1; }
 
 echo "==> [2/3] 注册被控节点"
-/usr/local/bin/eyvescloud agent --controller="$CONTROLLER" --install-key="$INSTALL_KEY" --name="$NODE_NAME" --addr="$NODE_ADDR" $insecure_arg || {
+# --register-only：仅注册并落盘后退出。完整 agent 最后会进入 server.Run()
+# 永久阻塞（心跳 + 本地面板），在前台执行会把安装脚本卡死在这一步。
+/usr/local/bin/eyvescloud agent --register-only --controller="$CONTROLLER" --install-key="$INSTALL_KEY" --name="$NODE_NAME" --addr="$NODE_ADDR" $insecure_arg || {
   echo "注册失败（已注册过的节点可忽略）";
 }
 

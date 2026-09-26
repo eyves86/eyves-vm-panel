@@ -74,6 +74,43 @@ func TestInstallScriptControllerEmptyFallsBackToDetection(t *testing.T) {
 	}
 }
 
+// TestInstallScriptRegisterStepNotBlocking 复现线上 bug：脚本 [2/3] 注册步骤
+// 在前台直接运行完整 agent —— agent 注册后进入 server.Run() 永久阻塞，
+// 安装脚本卡死在注册步骤，永远走不到 [3/3] 安装 systemd 服务。
+//
+// 修复：注册步骤使用 --register-only（注册落盘即退出）；systemd ExecStart
+// 保持完整 agent（心跳 + 本地面板是服务的职责）。
+func TestInstallScriptRegisterStepNotBlocking(t *testing.T) {
+	script := buildAgentInstallScript("http://154.16.173.136:8999", "somekey", "节点1", "")
+
+	// [2/3] 注册步骤必须带 --register-only（前台执行、要求退出）
+	regIdx := strings.Index(script, "[2/3] 注册被控节点")
+	if regIdx < 0 {
+		t.Fatalf("register step not found in script")
+	}
+	execIdx := strings.Index(script, "/usr/local/bin/eyvescloud agent ")
+	if execIdx < 0 {
+		t.Fatalf("agent invocation not found in script")
+	}
+	if execIdx < regIdx {
+		t.Fatalf("unexpected script order: agent invocation before register step")
+	}
+	// 注册步骤的命令行（从注册标记到 ExecStart heredoc 之间）必须包含 --register-only
+	registerCmd := script[execIdx:strings.Index(script[execIdx:], "UNITEOF")+execIdx]
+	if !strings.Contains(registerCmd, "--register-only") {
+		t.Fatalf("register step must run with --register-only, got: %.200s", registerCmd)
+	}
+
+	// systemd ExecStart 保持完整 agent（不带 --register-only）
+	execStart := script[strings.Index(script, "ExecStart="):]
+	if !strings.Contains(execStart, "ExecStart=/usr/local/bin/eyvescloud agent ") {
+		t.Fatalf("systemd ExecStart must run the full agent")
+	}
+	if strings.Contains(execStart, "--register-only") {
+		t.Fatalf("systemd service must NOT use --register-only (it must keep running)")
+	}
+}
+
 // TestInstallScriptHandlerBakesRequestHost 集成层：通过 X-Install-Key 认证请求
 // install-script，脚本必须烘焙本次请求推导出的主控地址（Host 头）。
 func TestInstallScriptHandlerBakesRequestHost(t *testing.T) {

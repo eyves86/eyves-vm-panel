@@ -1,6 +1,7 @@
 import { Dispatch, SetStateAction, useCallback, useEffect, useState } from 'react'
-import { Bell, Bot, Clock, Copy, Database, Download, Gauge, Globe, KeyRound, ListTodo, Lock, LogIn, Minus, Monitor, Plus, RefreshCw, Save, Shield, ShieldCheck, Smartphone, Terminal, Trash2, TrendingUp, Upload, UserCog } from 'lucide-react'
+import { Bell, Bot, Clock, Copy, Database, Download, Gauge, Globe, KeyRound, ListTodo, Lock, LogIn, Minus, Monitor, Network, Plus, RefreshCw, Save, Shield, ShieldCheck, Smartphone, Terminal, Trash2, TrendingUp, Upload, UserCog } from 'lucide-react'
 import {
+  AgentRegistration,
   BackupRecord,
   changePassword,
   changeUsername,
@@ -8,6 +9,7 @@ import {
   disable2FA,
   enable2FA,
   get2FAStatus,
+  getAgentRegistration,
   getAuditSettings,
   getBackupList,
   getBackupSettings,
@@ -51,6 +53,8 @@ import {
   updateLoginFooter,
   updatePanelAccessPolicy,
   updatePanelDomain,
+  registerAgentController,
+  restartAgentService,
   updateTurnstileSettings,
   updateWebSSHOriginSettings,
   WebSSHOriginSettings,
@@ -60,7 +64,7 @@ import TurnstileWidget from '../components/TurnstileWidget'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
-type SettingsSection = 'tasks' | 'account' | 'security' | 'audit' | 'backup' | 'ratelimit' | 'access' | 'webssh' | 'ssl' | 'turnstile' | 'logs' | 'notify' | 'overcommit'
+type SettingsSection = 'tasks' | 'account' | 'security' | 'audit' | 'backup' | 'ratelimit' | 'access' | 'webssh' | 'ssl' | 'turnstile' | 'logs' | 'notify' | 'overcommit' | 'agent'
 
 const settingsSections = [
   { id: 'tasks', label: '任务队列', icon: ListTodo },
@@ -76,6 +80,7 @@ const settingsSections = [
   { id: 'notify', label: '告警推送', icon: Bell },
   { id: 'overcommit', label: '资源超售', icon: TrendingUp },
   { id: 'logs', label: '登录日志', icon: LogIn },
+  { id: 'agent', label: '节点接入', icon: Network },
 ] as const
 
 export default function Settings() {
@@ -126,6 +131,18 @@ export default function Settings() {
   const [panelDomainInput, setPanelDomainInput] = useState('')
   const [savingPanelDomain, setSavingPanelDomain] = useState(false)
   const [panelDomainMsg, setPanelDomainMsg] = useState('')
+  // 节点接入（被控面板上的主控注册信息）
+  const [agentReg, setAgentReg] = useState<AgentRegistration | null>(null)
+  const [agentControllerInput, setAgentControllerInput] = useState('')
+  const [agentKeyInput, setAgentKeyInput] = useState('')
+  const [agentNameInput, setAgentNameInput] = useState('')
+  const [agentAddrInput, setAgentAddrInput] = useState('')
+  const [agentInsecure, setAgentInsecure] = useState(false)
+  const [agentShowToken, setAgentShowToken] = useState(false)
+  const [savingAgent, setSavingAgent] = useState(false)
+  const [agentRestarting, setAgentRestarting] = useState(false)
+  const [agentMsg, setAgentMsg] = useState('')
+  const [agentMsgOk, setAgentMsgOk] = useState(true)
   // Cloudflare Turnstile 人机验证
   const [tsSiteKey, setTsSiteKey] = useState('')
   const [tsSecretInput, setTsSecretInput] = useState('')
@@ -293,6 +310,42 @@ export default function Settings() {
     }
   }, [])
 
+  // 节点接入：读取本机 agent.json 的注册信息；未注册时 Registered=false。
+  const fetchAgentReg = useCallback(async () => {
+    try {
+      const res = await getAgentRegistration()
+      const data: AgentRegistration | undefined = res.data.data
+      if (!data) return
+      setAgentReg(data)
+      if (data.registered) {
+        setAgentControllerInput((prev) => prev || data.controller)
+        setAgentNameInput((prev) => prev || data.name)
+        setAgentAddrInput((prev) => prev || data.address)
+        setAgentInsecure(data.allow_insecure_http)
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }, [])
+
+  const waitAgentBack = useCallback(async () => {
+    // 重启 agent 服务后面板会短暂不可用，轮询直到恢复。
+    for (let i = 0; i < 15; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000))
+      try {
+        const res = await getAgentRegistration()
+        if (res.data.data) {
+          setAgentReg(res.data.data)
+          setAgentRestarting(false)
+          return
+        }
+      } catch {
+        /* 服务重启中，继续等待 */
+      }
+    }
+    setAgentRestarting(false)
+  }, [])
+
   const fetchTurnstile = useCallback(async () => {
     try {
       const res = await getTurnstileSettings()
@@ -424,6 +477,7 @@ export default function Settings() {
     fetchAdminPath()
     fetchLoginFooter()
     fetchPanelDomain()
+    fetchAgentReg()
     fetchTurnstile()
     fetchNotifications()
     fetch2FA()
@@ -438,7 +492,7 @@ export default function Settings() {
       clearInterval(logTimer)
       clearInterval(taskTimer)
     }
-  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAudit, fetchBackup, fetchHealth, fetchLoginFooter, fetchLogs, fetchNotifications, fetchOvercommit, fetchPanelDomain, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchTurnstile, fetchWebSSHOrigins])
+  }, [fetch2FA, fetchAccessPolicy, fetchAdminPath, fetchAgentReg, fetchAudit, fetchBackup, fetchHealth, fetchLoginFooter, fetchLogs, fetchNotifications, fetchOvercommit, fetchPanelDomain, fetchRateLimit, fetchSSL, fetchTaskQueue, fetchTurnstile, fetchWebSSHOrigins])
 
   const handleSaveAdminPath = async () => {
     setSavingAdminPath(true)
@@ -486,6 +540,74 @@ export default function Settings() {
       setPanelDomainMsg(e.response?.data?.message || t('保存失败'))
     } finally {
       setSavingPanelDomain(false)
+    }
+  }
+
+  // 节点接入：注册/切换主控，成功后自动重启 agent 服务并轮询恢复状态。
+  const handleAgentRegister = async () => {
+    setSavingAgent(true)
+    setAgentMsg('')
+    setAgentMsgOk(true)
+    const controller = agentControllerInput.trim()
+    const installKey = agentKeyInput.trim()
+    if (!/^https?:\/\//i.test(controller)) {
+      setAgentMsg(t('主控地址需以 http:// 或 https:// 开头'))
+      setAgentMsgOk(false)
+      setSavingAgent(false)
+      return
+    }
+    if (!installKey) {
+      setAgentMsg(t('请填写主控生成的 install key（节点管理 → 添加节点）'))
+      setAgentMsgOk(false)
+      setSavingAgent(false)
+      return
+    }
+    const isHTTP = controller.toLowerCase().startsWith('http://')
+    if (isHTTP && !agentInsecure) {
+      setAgentMsg(t('主控为明文 http，请先勾选「允许明文 http（不安全）」'))
+      setAgentMsgOk(false)
+      setSavingAgent(false)
+      return
+    }
+    try {
+      const res = await registerAgentController({
+        controller,
+        install_key: installKey,
+        name: agentNameInput.trim() || undefined,
+        address: agentAddrInput.trim() || undefined,
+        allow_insecure_http: agentInsecure,
+      })
+      setAgentMsg(res.data.message || t('已接入主控，正在重启 agent 服务...'))
+      setAgentMsgOk(true)
+      setAgentKeyInput('')
+      // 注册落盘后需重启 agent 服务（运行中的进程仍持有旧配置）。
+      setAgentRestarting(true)
+      try {
+        await restartAgentService()
+      } catch {
+        /* 面板随 agent 重启短暂不可用属预期，交由下方轮询 */
+      }
+      void waitAgentBack()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setAgentMsg(e.response?.data?.message || t('接入失败'))
+      setAgentMsgOk(false)
+    } finally {
+      setSavingAgent(false)
+    }
+  }
+
+  const handleAgentRestart = async () => {
+    setAgentRestarting(true)
+    setAgentMsg('')
+    try {
+      await restartAgentService()
+      void waitAgentBack()
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { message?: string } } }
+      setAgentMsg(e.response?.data?.message || t('重启失败，请手动执行 systemctl restart eyvescloud-agent'))
+      setAgentMsgOk(false)
+      setAgentRestarting(false)
     }
   }
 
@@ -1209,6 +1331,159 @@ export default function Settings() {
                 {t('隐藏登录页底部版权栏')}
               </label>
               {loginFooterMsg && <p className="mt-2 text-xs text-amber-600">{loginFooterMsg}</p>}
+            </div>
+          )}
+
+          {activeSection === 'agent' && (
+            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('节点接入（当前主控）')}</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                {t('本面板以被控（agent）方式安装时，这里显示当前接入的主控地址、节点身份与 token。要迁移到其它主控：在目标主控的「节点管理 → 添加节点」生成 install key，填到下方表单即可完成切换。')}
+              </p>
+              {agentReg?.registered ? (
+                <div className="mt-3 space-y-2 text-xs">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-500">{t('主控地址')}：</span>
+                    <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.controller}</code>
+                    {agentReg.allow_insecure_http && (
+                      <span className="text-amber-600 dark:text-amber-400">（{t('明文 http，不安全')}）</span>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-500">{t('节点名称')}：</span>
+                    <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.name || '-'}</code>
+                    <span className="text-gray-500">{t('节点 ID')}：</span>
+                    <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.node_id}</code>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-500">{t('面板地址')}：</span>
+                    <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.address || '-'}</code>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-gray-500">{t('节点 token')}：</span>
+                    <code className="max-w-full break-all rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+                      {agentShowToken ? agentReg.token : `${agentReg.token.slice(0, 6)}${'•'.repeat(18)}`}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => setAgentShowToken((v) => !v)}
+                      className="rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      {agentShowToken ? t('隐藏') : t('显示')}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (await copyText(agentReg.token)) {
+                          setAgentMsg(t('已复制节点 token'))
+                          setAgentMsgOk(true)
+                        }
+                      }}
+                      className="flex items-center gap-1 rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      <Copy className="h-3 w-3" />{t('复制')}
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      disabled={agentRestarting}
+                      onClick={() => { void handleAgentRestart() }}
+                      className="rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                    >
+                      <RefreshCw className={`mr-1 inline h-3 w-3 ${agentRestarting ? 'animate-spin' : ''}`} />
+                      {agentRestarting ? t('重启中...') : t('重启 agent 服务')}
+                    </button>
+                    <span className="text-gray-400">{t('注册信息变更（切换主控）后需重启生效，上方操作会自动完成。')}</span>
+                  </div>
+                </div>
+              ) : (
+                <p className="mt-3 rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                  {t('当前未接入任何主控（本机为主控/独立运行模式）。如需把本机作为被控接入其它主控，填写下方表单即可。')}
+                </p>
+              )}
+            </div>
+          )}
+
+          {activeSection === 'agent' && (
+            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+              <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('接入 / 切换主控')}</h3>
+              <p className="mt-1 text-xs text-gray-500">
+                {t('在目标主控面板的「节点管理 → 添加节点」中复制 install key 与主控地址，填入后点击「接入并切换」。切换只改变本机 agent 的上报目标，本机容器数据不受影响。')}
+              </p>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('主控地址')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={agentControllerInput}
+                    onChange={(e) => {
+                      setAgentControllerInput(e.target.value.trim())
+                      if (e.target.value.trim().toLowerCase().startsWith('http://')) setAgentInsecure(true)
+                    }}
+                    placeholder={t('例如：https://master.example.com:8999')}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('install key（目标主控生成，一次性）')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={agentKeyInput}
+                    onChange={(e) => setAgentKeyInput(e.target.value.trim())}
+                    placeholder="6a2f..."
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('节点名称（可选，默认沿用当前名称）')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={agentNameInput}
+                    onChange={(e) => setAgentNameInput(e.target.value)}
+                    placeholder={t('例如：节点1')}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('本机面板地址（可选，主控回连用）')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={agentAddrInput}
+                    onChange={(e) => setAgentAddrInput(e.target.value.trim())}
+                    placeholder={t('例如：http://本机IP:8999（留空沿用当前值）')}
+                  />
+                </div>
+              </div>
+              <label className="mt-3 flex items-center gap-2 text-xs text-gray-600 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={agentInsecure}
+                  onChange={(e) => setAgentInsecure(e.target.checked)}
+                  className="h-3.5 w-3.5"
+                />
+                {t('允许明文 http（不安全，仅适用于主控无 TLS 时）')}
+              </label>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  disabled={savingAgent || agentRestarting}
+                  onClick={() => { void handleAgentRegister() }}
+                  className="rounded-md bg-brand-600 px-3 py-2 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50"
+                >
+                  {savingAgent ? t('接入中...') : agentReg?.registered ? t('接入并切换主控') : t('接入主控')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { void fetchAgentReg() }}
+                  className="rounded-md border border-gray-200 px-3 py-2 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {t('刷新')}
+                </button>
+                {agentRestarting && <span className="text-xs text-amber-600 dark:text-amber-400">{t('agent 服务重启中，页面将在恢复后自动刷新状态...')}</span>}
+              </div>
+              {agentMsg && <p className={`mt-2 text-xs ${agentMsgOk ? 'text-emerald-600' : 'text-red-500'}`}>{agentMsg}</p>}
             </div>
           )}
 

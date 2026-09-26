@@ -905,6 +905,32 @@ export const getPanelDomain = () =>
 export const updatePanelDomain = (panelDomain: string) =>
   api.put<APIResponse<PanelDomainSettings>>('/panel-domain', { panel_domain: panelDomain })
 
+// 节点接入（被控面板上的主控注册信息：查看 / 切换主控 / 重启 agent 服务）
+export interface AgentRegistration {
+  registered: boolean
+  controller: string
+  node_id: string
+  token: string
+  name: string
+  address: string
+  allow_insecure_http: boolean
+}
+
+export const getAgentRegistration = () =>
+  api.get<APIResponse<AgentRegistration>>('/agent/status')
+
+export const registerAgentController = (data: {
+  controller: string
+  install_key: string
+  name?: string
+  address?: string
+  allow_insecure_http: boolean
+}) =>
+  api.post<APIResponse<{ restart_required: boolean }>>('/agent/register', data)
+
+export const restartAgentService = () =>
+  api.post<APIResponse<{ restart_initiated: boolean }>>('/agent/restart')
+
 // Cloudflare Turnstile 人机验证
 export interface TurnstilePublicConfig {
   site_key: string

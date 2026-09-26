@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -25,19 +24,11 @@ import (
 	"eyvescloud/internal/version"
 )
 
-// agentConfig 是被控节点保存的注册信息。
-type agentConfig struct {
-	Controller string `json:"controller"`
-	NodeID     string `json:"node_id"`
-	Token      string `json:"token"`
-	Name       string `json:"name"`
-	Address    string `json:"address"`
-	// AllowInsecureHTTP 允许与主控通过明文 http 通信（仅当主控不提供 TLS 时显式开启）。
-	AllowInsecureHTTP bool `json:"allow_insecure_http,omitempty"`
-}
+// agentConfig 是被控节点保存的注册信息（与 config 包共享，面板 UI 也会读写它）。
+type agentConfig = config.AgentConfig
 
 // Run 启动被控节点 agent 模式：注册到主控、上报心跳、运行本地面板。
-// 用法: eyvescloud agent --controller=https://master:18999 [--install-key=xxx] [--name=node1] [--addr=http://1.2.3.4:8999] [--allow-insecure-http]
+// 用法: eyvescloud agent --controller=https://master:18999 [--install-key=xxx] [--name=node1] [--addr=http://1.2.3.4:8999] [--allow-insecure-http] [--register-only]
 func Run(args []string) {
 	fs := flag.NewFlagSet("agent", flag.ExitOnError)
 	controller := fs.String("controller", "", "主控地址，如 https://1.2.3.4:18999")
@@ -45,6 +36,7 @@ func Run(args []string) {
 	name := fs.String("name", "", "节点名称（默认使用主机名）")
 	addr := fs.String("addr", "", "本节点面板地址，如 http://1.2.3.4:8999")
 	allowInsecureHTTP := fs.Bool("allow-insecure-http", false, "允许与主控用明文 http 通信（不安全，仅在主控不提供 TLS 时使用）")
+	registerOnly := fs.Bool("register-only", false, "仅完成注册并落盘后退出，不启动心跳/运维循环/本地面板（安装脚本的注册步骤使用）")
 	_ = fs.Parse(args)
 
 	if strings.TrimSpace(*controller) == "" {
@@ -57,8 +49,7 @@ func Run(args []string) {
 		os.Exit(1)
 	}
 
-	cfgPath := filepath.Join(config.AppConfig.DataDir, "agent.json")
-	ac := loadAgentConfig(cfgPath)
+	ac := config.LoadAgentConfig()
 
 	needRegister := ac == nil
 	if strings.TrimSpace(*installKey) != "" && (ac == nil || ac.Controller != strings.TrimSpace(*controller)) {
@@ -81,8 +72,21 @@ func Run(args []string) {
 			os.Exit(1)
 		}
 		ac = nc
-		saveAgentConfig(cfgPath, ac)
+		if err := config.SaveAgentConfig(ac); err != nil {
+			fmt.Fprintf(os.Stderr, "保存 agent.json 失败: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Printf("已注册到主控 %s（节点 %s）\n", ac.Controller, ac.Name)
+	}
+
+	// --register-only：安装脚本 [2/3] 注册步骤使用。注册（或确认既有配置）
+	// 落盘后立即退出 —— 完整 agent 会在最后进入 server.Run() 永久阻塞，
+	// 若在前台执行会导致安装脚本卡死在注册步骤、永远走不到安装服务。
+	if *registerOnly {
+		if !needRegister {
+			fmt.Printf("已存在注册配置（节点 %s），跳过注册\n", ac.Name)
+		}
+		return
 	}
 
 	config.SetAgentToken(ac.Token)
@@ -427,27 +431,6 @@ func osName() string {
 		}
 	}
 	return runtime.GOOS
-}
-
-func loadAgentConfig(path string) *agentConfig {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var ac agentConfig
-	if err := json.Unmarshal(data, &ac); err != nil || ac.NodeID == "" || ac.Token == "" {
-		return nil
-	}
-	return &ac
-}
-
-func saveAgentConfig(path string, ac *agentConfig) {
-	data, err := json.MarshalIndent(ac, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.MkdirAll(filepath.Dir(path), 0700)
-	_ = os.WriteFile(path, data, 0600)
 }
 
 // detectSelfAddress 推算本节点对主控可达的地址，优先使用面板监听端口。
