@@ -1830,6 +1830,12 @@ func HandleSubUserChangePassword(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Sub-user session required"})
 		return
 	}
+	// 旧密码在线校验同样计入登录限流：防止持有泄露 token 的攻击者
+	// 借此端点对旧密码做不限速的在线爆破。
+	rateKey := clientIP(r) + "|user:" + su.Username
+	if loginRateLimited(w, rateKey) {
+		return
+	}
 
 	var req struct {
 		OldPassword string `json:"old_password"`
@@ -1856,11 +1862,13 @@ func HandleSubUserChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	// 在线校验旧密码
 	if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte(req.OldPassword)); err != nil {
+		loginLimiter.recordFail(rateKey)
 		ip := clientIP(r)
 		config.AddLoginLog(su.Username, ip, r.Header.Get("User-Agent"), false)
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Current password is incorrect"})
 		return
 	}
+	loginLimiter.reset(rateKey)
 
 	// 生成新 hash 并落库
 	newHash, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
@@ -1882,4 +1890,94 @@ func HandleSubUserChangePassword(w http.ResponseWriter, r *http.Request) {
 
 	auditRequest(r, "subuser.self.change_password", su.Username, "self password change", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Password changed. Please sign in again with the new password."})
+}
+
+// HandleSubUserProfile 返回子用户会话的自助信息（用户门户「安全设置」页）：
+// 用户名、角色、访问码（用于拼接分享链接）与当前生效的绑定容器数。
+// 仅子用户会话可访问；管理员 token 在 subUserFromRequest 处被拒绝。
+func HandleSubUserProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	su := subUserFromRequest(r)
+	if su == nil {
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Sub-user session required"})
+		return
+	}
+
+	uuids := activeSubUserContainerUUIDs(su)
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+		"username":        su.Username,
+		"email":            su.Email,
+		"role":            subUserRole(su.Role),
+		"access_code":     su.AccessCode,
+		"container_count": len(uuids),
+	}})
+}
+
+// HandleSubUserSelfRotatePassword 子用户自助轮换密码（用户门户「安全设置」）。
+// 用户侧只允许随机安全密码：校验旧密码后由服务端 crypto/rand 生成 16 位新密码，
+// 明文仅在本次响应中一次性返回，不落库（Password 置空）；TokenVersion++ 使
+// 所有已签发 token（含当前会话）失效，前端轮换成功后引导重新登录。
+func HandleSubUserSelfRotatePassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	su := subUserFromRequest(r)
+	if su == nil {
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Sub-user session required"})
+		return
+	}
+	// 与登录端点一致的限流：旧密码校验失败计入同一登录限流器。
+	rateKey := clientIP(r) + "|user:" + su.Username
+	if loginRateLimited(w, rateKey) {
+		return
+	}
+
+	var req struct {
+		OldPassword string `json:"old_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	req.OldPassword = strings.TrimSpace(req.OldPassword)
+	if req.OldPassword == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Current password is required"})
+		return
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte(req.OldPassword)); err != nil {
+		loginLimiter.recordFail(rateKey)
+		ip := clientIP(r)
+		config.AddLoginLog(su.Username, ip, r.Header.Get("User-Agent"), false)
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Current password is incorrect"})
+		return
+	}
+	loginLimiter.reset(rateKey)
+
+	password := generateRandomStr(16)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to generate password"})
+		return
+	}
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.SubUsers {
+			if cfg.SubUsers[i].ID != su.ID {
+				continue
+			}
+			cfg.SubUsers[i].PassHash = string(hash)
+			cfg.SubUsers[i].Password = "" // 明文不落库，仅本次响应一次性返回
+			cfg.SubUsers[i].Token = ""
+			cfg.SubUsers[i].TokenVersion++
+			return
+		}
+	})
+
+	auditRequest(r, "subuser.self.rotate_password", su.Username, "self random password rotation", true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
+		"password": password,
+	}})
 }

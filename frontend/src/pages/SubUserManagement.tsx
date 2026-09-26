@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Copy, HardDrive, KeyRound, Link2, LogIn, Pencil, Plus, RefreshCw, Save, ScrollText, Trash2, UserCog, X } from 'lucide-react'
+import { Copy, HardDrive, KeyRound, Link2, LogIn, Pencil, Plus, RefreshCw, Save, ScrollText, Search, Trash2, UserCog, X } from 'lucide-react'
 import { useDialog } from '../components/Dialog'
 import { useLanguage } from '../contexts/LanguageContext'
 import api, {
@@ -82,6 +82,7 @@ export default function SubUserManagement() {
   const [createContainers, setCreateContainers] = useState<Container[]>([])
   const [createSelected, setCreateSelected] = useState<string[]>([])
   const [creating, setCreating] = useState(false)
+  const [createSearch, setCreateSearch] = useState('')
 
   // 编辑子用户
   const [editUser, setEditUser] = useState<SubUserItem | null>(null)
@@ -95,6 +96,17 @@ export default function SubUserManagement() {
   const [bindSelected, setBindSelected] = useState<string[]>([])
   const [bindLoading, setBindLoading] = useState(false)
   const [bindSaving, setBindSaving] = useState(false)
+  const [bindSearch, setBindSearch] = useState('')
+
+  // 容器多时的绑定检索：按 名称 / 数字 ID / UUID 过滤（大小写不敏感）。
+  const filterContainers = (list: Container[], query: string): Container[] => {
+    const q = query.trim().toLowerCase()
+    if (!q) return list
+    return list.filter((c) =>
+      (c.name || '').toLowerCase().includes(q) ||
+      String(c.id || '').includes(q) ||
+      (c.uuid || '').toLowerCase().includes(q))
+  }
 
   const fetchUsers = useCallback(async () => {
     try {
@@ -109,7 +121,7 @@ export default function SubUserManagement() {
 
   useEffect(() => { fetchUsers() }, [fetchUsers])
 
-  const managementUrl = (user: SubUserItem) => `${window.location.origin}/login?code=${user.access_code}`
+  const managementUrl = (user: SubUserItem) => `${window.location.origin}/user/login?code=${user.access_code}`
 
   const copyText = async (text: string) => {
     await copyToClipboard(text)
@@ -119,6 +131,7 @@ export default function SubUserManagement() {
   const openCreate = async () => {
     setCreateForm(EMPTY_FORM)
     setCreateSelected([])
+    setCreateSearch('')
     setCreateOpen(true)
     try {
       const res = await getContainers()
@@ -228,6 +241,7 @@ export default function SubUserManagement() {
   const openBind = async (user: SubUserItem) => {
     setBindUser(user)
     setBindSelected(user.container_uuids || [])
+    setBindSearch('')
     setBindLoading(true)
     try {
       const res = await getContainers()
@@ -606,11 +620,47 @@ export default function SubUserManagement() {
                 </div>
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">绑定容器（可选，可创建后再绑定）</label>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">
+                    绑定容器（可选，可创建后再绑定）
+                    <span className="ml-1 text-gray-400">已选 {createSelected.length} / 共 {createContainers.length}</span>
+                  </label>
+                  <div className="flex items-center gap-1.5 text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const visible = filterContainers(createContainers, createSearch)
+                        setCreateSelected(Array.from(new Set([...createSelected, ...visible.map((c) => c.uuid)])))
+                      }}
+                      className="rounded px-1.5 py-0.5 text-brand-600 hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-900/30"
+                    >
+                      全选筛选结果
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCreateSelected([])}
+                      className="rounded px-1.5 py-0.5 text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                    >
+                      清空
+                    </button>
+                  </div>
+                </div>
+                <div className="relative mb-2">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={createSearch}
+                    onChange={(e) => setCreateSearch(e.target.value)}
+                    placeholder="搜索容器名称 / ID / UUID"
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 pl-8 pr-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  />
+                </div>
                 <div className="max-h-48 overflow-y-auto rounded-md border border-gray-200 dark:border-gray-700 divide-y divide-gray-100 dark:divide-gray-800">
                   {createContainers.length === 0 ? (
                     <div className="px-3 py-6 text-center text-xs text-gray-400">暂无可绑定的未归属容器</div>
-                  ) : createContainers.map((c) => (
+                  ) : filterContainers(createContainers, createSearch).length === 0 ? (
+                    <div className="px-3 py-6 text-center text-xs text-gray-400">没有匹配「{createSearch.trim()}」的容器</div>
+                  ) : filterContainers(createContainers, createSearch).map((c) => (
                     <label key={c.uuid || c.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-800">
                       <input
                         type="checkbox"
@@ -738,6 +788,40 @@ export default function SubUserManagement() {
                 <X className="w-4 h-4" />
               </button>
             </div>
+            <div className="border-b border-gray-200 dark:border-gray-700 px-5 py-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <div className="relative flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={bindSearch}
+                    onChange={(e) => setBindSearch(e.target.value)}
+                    placeholder="搜索容器名称 / ID / UUID"
+                    className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 pl-8 pr-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const visible = filterContainers(bindContainers, bindSearch).filter((c) => !c.owner_sub_user_id || c.owner_sub_user_id === bindUser.id)
+                    setBindSelected(Array.from(new Set([...bindSelected, ...visible.map((c) => c.uuid)])))
+                  }}
+                  className="shrink-0 rounded-md border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs text-brand-600 hover:bg-brand-50 dark:text-brand-400 dark:hover:bg-brand-900/30"
+                >
+                  全选筛选结果
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBindSelected([])}
+                  className="shrink-0 rounded-md border border-gray-200 dark:border-gray-700 px-2.5 py-1.5 text-xs text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+                >
+                  清空
+                </button>
+              </div>
+              <p className="text-[11px] text-gray-400">
+                共 {bindContainers.length} 个容器{bindSearch.trim() ? ` · 筛选出 ${filterContainers(bindContainers, bindSearch).length} 个` : ''} · 已选 {bindSelected.length}
+              </p>
+            </div>
             <div className="flex-1 overflow-y-auto p-5">
               {bindLoading ? (
                 <div className="flex items-center justify-center py-12">
@@ -745,9 +829,11 @@ export default function SubUserManagement() {
                 </div>
               ) : bindContainers.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">暂无容器</div>
+              ) : filterContainers(bindContainers, bindSearch).length === 0 ? (
+                <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">没有匹配「{bindSearch.trim()}」的容器</div>
               ) : (
                 <div className="space-y-1">
-                  {bindContainers.map((c) => {
+                  {filterContainers(bindContainers, bindSearch).map((c) => {
                     const ownedByOther = !!c.owner_sub_user_id && c.owner_sub_user_id !== bindUser.id
                     const checked = bindSelected.includes(c.uuid)
                     return (
@@ -802,15 +888,18 @@ export default function SubUserManagement() {
 
       {passwordUser && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-lg overflow-hidden">
+          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">查看密码</h3>
+              <div>
+                <h3 className="text-sm font-semibold text-black dark:text-white">登录凭据</h3>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">账号登录管理绑定的全部容器；访问码用于分享登录</p>
+              </div>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => rotatePassword(passwordUser)}
                   disabled={rotatingPassword}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 disabled:opacity-50"
-                  title="轮换密码"
+                  title="生成新的随机密码（旧密码立即失效，所有已登录会话需重新登录）"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${rotatingPassword ? 'animate-spin' : ''}`} />
                   {rotatingPassword ? '轮换中...' : '轮换密码'}
@@ -820,35 +909,77 @@ export default function SubUserManagement() {
                 </button>
               </div>
             </div>
-            <div className="p-5">
-              <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm space-y-3">
-                <div className="flex items-start justify-between gap-3">
-                  <span className="shrink-0 text-gray-500 dark:text-gray-400">用户</span>
-                  <span className="min-w-0 text-right font-medium text-black dark:text-white break-all">{passwordUser.username}</span>
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {/* 区块 1：账号登录（子用户本人，用户名 + 密码） */}
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 px-3.5 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                  <LogIn className="h-3.5 w-3.5" />
+                  账号登录
+                  <span className="font-normal text-gray-400">（该子用户本人，可管理绑定的全部容器）</span>
                 </div>
-                <div className="flex items-start justify-between gap-3">
-                  <span className="shrink-0 text-gray-500 dark:text-gray-400">地址</span>
-                  <div className="flex min-w-0 items-center gap-1">
-                    <span className="font-mono text-xs text-black dark:text-white break-all">{managementUrl(passwordUser)}</span>
-                    <button onClick={() => copyText(managementUrl(passwordUser))} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
-                      <Copy className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-                <div className="flex items-start justify-between gap-3">
-                  <span className="shrink-0 text-gray-500 dark:text-gray-400">密码</span>
-                  <div className="flex min-w-0 items-center gap-1">
-                    <span className="font-mono text-xs text-black dark:text-white break-all">
-                      {passwordUser.password || '未保存，请轮换生成新密码'}
-                    </span>
-                    {passwordUser.password && (
-                      <button onClick={() => copyText(passwordUser.password || '')} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
+                <div className="px-3.5 py-3 text-sm space-y-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="shrink-0 text-gray-500 dark:text-gray-400">用户名</span>
+                    <div className="flex min-w-0 items-center gap-1">
+                      <span className="font-mono text-xs text-black dark:text-white break-all">{passwordUser.username}</span>
+                      <button onClick={() => copyText(passwordUser.username)} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
                         <Copy className="w-3 h-3" />
                       </button>
-                    )}
+                    </div>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="shrink-0 text-gray-500 dark:text-gray-400">密码</span>
+                    <div className="flex min-w-0 items-center gap-1">
+                      {passwordUser.password ? (
+                        <>
+                          <span className="font-mono text-xs text-black dark:text-white break-all">{passwordUser.password}</span>
+                          <button onClick={() => copyText(passwordUser.password || '')} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
+                            <Copy className="w-3 h-3" />
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-right text-xs text-gray-400">密码经加密存储无法查看，点击「轮换密码」生成新密码</span>
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
+
+              {/* 区块 2：访问码登录（分享给他人：访问码 + 同一密码） */}
+              <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 px-3.5 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
+                  <KeyRound className="h-3.5 w-3.5" />
+                  访问码登录（分享）
+                  <span className="font-normal text-gray-400">（访问码 + 上述密码，登录后仅能管理已绑定的容器）</span>
+                </div>
+                <div className="px-3.5 py-3 text-sm space-y-2.5">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="shrink-0 text-gray-500 dark:text-gray-400">访问码</span>
+                    <div className="flex min-w-0 items-center gap-1">
+                      <span className="font-mono text-xs text-black dark:text-white break-all">{passwordUser.access_code}</span>
+                      <button onClick={() => copyText(passwordUser.access_code)} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="shrink-0 text-gray-500 dark:text-gray-400">分享链接</span>
+                    <div className="flex min-w-0 items-center gap-1">
+                      <span className="font-mono text-xs text-black dark:text-white break-all">{managementUrl(passwordUser)}</span>
+                      <button onClick={() => copyText(managementUrl(passwordUser))} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                  <div className="text-xs text-gray-400">
+                    当前授权范围：{passwordUser.container_names?.length ? `${passwordUser.container_names.length} 个容器（${passwordUser.container_names.join('、')}）` : '未绑定容器'}
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-400">
+                如需把<strong>单个容器</strong>分享给他人，建议为该容器单独创建子用户并只绑定此容器，再分享其访问码。
+              </p>
             </div>
           </div>
         </div>

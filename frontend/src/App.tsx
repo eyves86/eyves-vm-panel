@@ -4,6 +4,7 @@ import { adminUrl } from './services/panelPath'
 import Login from './pages/Login'
 import UserLogin from './pages/UserLogin'
 import MyServers from './pages/MyServers'
+import UserSecurity from './pages/UserSecurity'
 import UserLayout from './components/UserLayout'
 import Dashboard from './pages/Dashboard'
 import Containers from './pages/Containers'
@@ -110,11 +111,16 @@ function App() {
         </Route>
       )}
 
-      {/* 用户入口（固定 /user） */}
+      {/* 用户入口（固定 /user）。
+          访问码分享链接统一使用 /user/login?code=xxx（UserLogin 读取 code 参数
+          自动切到访问码标签）。/login 保留为旧分享链接的兼容别名——同样直连
+          UserLogin，避免通配 fallback 重定向丢失 ?code= 参数。 */}
+      <Route path="/login" element={<UserLogin />} />
       <Route path="/user/login" element={<UserLogin />} />
       <Route path="/user" element={<UserPortalRoute><UserLayout /></UserPortalRoute>}>
         <Route index element={<MyServers />} />
         <Route path="container/:id" element={<ContainerDetail />} />
+        <Route path="security" element={<UserSecurity />} />
       </Route>
 
       <Route path="*" element={<Navigate to={fallback} replace />} />

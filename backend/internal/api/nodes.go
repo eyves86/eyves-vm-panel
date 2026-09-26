@@ -84,15 +84,17 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeDrain(w, r, nodeID) })(w, r)
 	case rest == "install-script":
 		// 注意：**不要**套 AdminMiddleware —— 外部服务器 curl 拉脚本时只有 X-Install-Key，
-		// 没有管理员 token。handler 内部已实现双重认证（X-Install-Key 或 admin scope）。
-		handleNodeInstallScript(w, r, nodeID)
+		// 没有管理员 token。但 handler 的 scope 回退路径（node:write）依赖认证上下文，
+		// 因此套 OptionalAuthMiddleware：有效凭据注入上下文，匿名放行由 handler 的
+		// X-Install-Key 分支自认证。
+		OptionalAuthMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScript(w, r, nodeID) })(w, r)
 	case rest == "install-command":
 		// 一行安装命令（curl | sudo bash）：面板只展示命令，不展示脚本正文。
 		// 仅管理员可见（在面板内），所以保持 AdminMiddleware。
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallCommand(w, r, nodeID) })(w, r)
 	case rest == "install-script/sha256":
 		// 同上，外部离线审计/Hash 校验用，handler 内部自己验 X-Install-Key。
-		handleNodeInstallScriptSHA256(w, r, nodeID)
+		OptionalAuthMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScriptSHA256(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodGet:
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeContainers(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodPost:
@@ -502,7 +504,7 @@ func handleNodeInstallCommand(w http.ResponseWriter, r *http.Request, nodeID str
 		node, _ = config.FindNode(nodeID)
 		auditRequest(r, "node.install_command", node.Name, "换发一次性 install_key（指纹 "+installKeyFingerprint(installKey)+"）", true, "")
 	}
-	script := buildAgentInstallScript("", installKey, node.Name, "")
+	script := buildAgentInstallScript(externalBaseURL(r), installKey, node.Name, "")
 	hashBytes := sha256.Sum256([]byte(script))
 	curlURL := fmt.Sprintf("%s/api/nodes/%s/install-script", externalBaseURL(r), nodeID)
 	command := fmt.Sprintf("curl -fsSL -H \"X-Install-Key: %s\" %s | sudo bash", installKey, curlURL)
@@ -799,13 +801,14 @@ func appendAgentMetricPoint(s heartbeatContainerSummary) {
 }
 
 // handleNodeInstallScript 生成被控一键安装脚本。
-// 脚本不再硬编码 CONTROLLER 地址，而是在运行时自动探测：
+// 主控地址烘焙进脚本：优先「面板绑定域名」（PanelDomain），否则按本次请求
+// Host 推导（curl 从哪台主控拉到脚本，脚本就回连哪台主控）。运行时探测
+// （--controller 覆盖 / SSH 来源 / 本机源 IP / 交互提示）仅作兜底：
 //   1) 用户通过 --controller 参数显式指定
-//   2) SSH 会话客户端 IP（SSH_CONNECTION 环境变量）
-//   3) 本机 IPv4 源 IP（ip route get 1.1.1.1）
-//   4) 本机 IPv6 源 IP（ip -6 route get 2001:4860:4860::8888）—— 仅 IPv6 环境
+//   2) 硬编码主控地址（本 handler 烘焙，正常路径必命中）
+//   3) SSH 会话客户端 IP（SSH_CONNECTION 环境变量）
+//   4) 本机源 IP（ip route get）—— 仅地址推导失败时
 //   5) 交互式提示
-// 这样主控 IP 为 4.4.4.4 时，被控脚本自动填入 4.4.4.4；纯 IPv6 环境自动走 IPv6。
 //
 // 也支持网络脚本一行命令（类似 Virtualizor / SolusVM 风格）：
 //   curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
@@ -846,8 +849,9 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 			// 错误绑定会导致 agent 注册必然 IP mismatch；绑定仅由 bind_ip 显式指定。
 		})
 	}
-	// 不再硬编码 controller —— 脚本运行时自动探测
-	script := buildAgentInstallScript("", installKey, node.Name, "")
+	// 烘焙主控对外地址（优先「面板绑定域名」，否则按本次请求 Host 推导）：
+	// 被控无法可靠自知主控地址，运行时探测仅在地址推导失败时兜底。
+	script := buildAgentInstallScript(externalBaseURL(r), installKey, node.Name, "")
 	hashBytes := sha256.Sum256([]byte(script))
 	hash := hex.EncodeToString(hashBytes[:])
 
@@ -901,29 +905,41 @@ func handleNodeInstallScriptSHA256(w http.ResponseWriter, r *http.Request, nodeI
 			// 不回填管理员 IP；绑定仅由 bind_ip 显式指定（见 handleNodeInstallCommand 注释）。
 		})
 	}
-	script := buildAgentInstallScript("", installKey, node.Name, "")
+	script := buildAgentInstallScript(externalBaseURL(r), installKey, node.Name, "")
 	hashBytes := sha256.Sum256([]byte(script))
 	hash := hex.EncodeToString(hashBytes[:])
 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{"sha256": hash}})
 }
 
+// buildAgentInstallScript 生成被控一键安装脚本。
+//
+// controller 为主控对外地址：由调用方传入 externalBaseURL(r)（优先「面板绑定
+// 域名」，否则按请求 Host 推导）——被控无法可靠自知主控地址（SSH 来源是管理
+// 员客户端 IP、ip route get 源地址是被控自身 IP），主控必须在生成脚本时把
+// 自己的地址烘焙进去。脚本内的运行时探测仅作为 controller 为空时的兜底。
+//
+// 注意：模板中所有 %s 都处于**双引号**上下文（INSTALL_KEY="%s" 等），必须用
+// shellDQ（双引号转义）而非 shellEscape（单引号包裹）。此前误用 shellEscape
+// 会生成 INSTALL_KEY="'<key>'"（值带字面单引号，后续 X-Install-Key 认证失败）、
+// 以及 [ -n "''" ]（非空恒真）导致 CONTROLLER 被赋成字面量 ''，curl 报
+// "Could not resolve host: ''"。
 func buildAgentInstallScript(controller, installKey, nodeName, defaultAddr string) string {
-	nameSQ := shellEscape(nodeName)
-	addrSQ := shellEscape(defaultAddr)
-	installKeySQ := shellEscape(installKey)
-	hardController := shellEscape(controller)
+	nameSQ := shellDQ(nodeName)
+	addrSQ := shellDQ(defaultAddr)
+	installKeySQ := shellDQ(installKey)
+	hardController := shellDQ(controller)
 	return fmt.Sprintf(`#!/bin/bash
 # EyvesCloud 被控节点一键安装脚本
 # 用法:
 #   bash eyvescloud-agent.sh [--controller URL] [--name 名称] [--addr 被控面板地址]
 #   curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
 #
-# 主控地址自动探测优先级：
+# 主控地址优先级：
 #   1) --controller 参数显式指定
-#   2) SSH 会话客户端 IP（通过 SSH_CONNECTION）
-#   3) 本机 IPv4 源 IP（ip route get 1.1.1.1）
-#   4) 本机 IPv6 源 IP（ip -6 route get 2001:4860:4860::8888）
+#   2) 主控烘焙地址（生成脚本时的面板域名/请求地址，正常路径必命中）
+#   3) SSH 会话客户端 IP（通过 SSH_CONNECTION）—— 兜底
+#   4) 本机 IPv4/IPv6 源 IP（ip route get）—— 兜底
 #   5) 交互式提示（非 tty 时跳过，会报错）
 set -e
 
@@ -1558,10 +1574,6 @@ func validateNodeAddress(value string, allowPrivate bool) error {
 		}
 	}
 	return nil
-}
-
-func shellEscape(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 // ---- 主动节点探活（HA 前置）----

@@ -581,36 +581,41 @@ func defaultScopesForType(ctx AuthContext) []string {
 	}
 }
 
+// authContextFromClaims 把已验证的 JWT claims 转换为认证上下文
+// （子用户带 container_uuids/role；管理员带 admin 角色）。
+func authContextFromClaims(claims jwt.MapClaims) AuthContext {
+	if subUser, _ := claims["sub_user"].(string); subUser != "" {
+		auth := AuthContext{Type: authTypeSubUser, Username: subUser, Actor: "user:" + subUser}
+		if role, _ := claims["role"].(string); role != "" {
+			auth.Role = role
+		}
+		if values, ok := claims["container_uuids"].([]interface{}); ok {
+			for _, value := range values {
+				if uuid, ok := value.(string); ok {
+					auth.ContainerUUIDs = append(auth.ContainerUUIDs, uuid)
+				}
+			}
+		}
+		return auth
+	}
+	username, _ := claims["username"].(string)
+	if username == "" {
+		username = config.AppConfig.AdminUser
+	}
+	// 角色：额外管理员令牌带 role；旧令牌（主管理员）视为全权 admin。
+	role := config.AdminRoleAdmin
+	if claimRole, _ := claims["role"].(string); claimRole != "" {
+		role = config.NormalizeAdminRole(claimRole)
+	}
+	return AuthContext{Type: authTypeAdmin, Username: username, Actor: username, Role: role}
+}
+
 // AuthMiddleware extracts JWT from cookies or Authorization header
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tokenString := tokenFromRequest(r)
 		if claims, ok := claimsFromToken(tokenString); ok {
-			if subUser, _ := claims["sub_user"].(string); subUser != "" {
-				auth := AuthContext{Type: authTypeSubUser, Username: subUser, Actor: "user:" + subUser}
-				if role, _ := claims["role"].(string); role != "" {
-					auth.Role = role
-				}
-				if values, ok := claims["container_uuids"].([]interface{}); ok {
-					for _, value := range values {
-						if uuid, ok := value.(string); ok {
-							auth.ContainerUUIDs = append(auth.ContainerUUIDs, uuid)
-						}
-					}
-				}
-				next(w, withAuthContext(r, auth))
-				return
-			}
-			username, _ := claims["username"].(string)
-			if username == "" {
-				username = config.AppConfig.AdminUser
-			}
-			// 角色：额外管理员令牌带 role；旧令牌（主管理员）视为全权 admin。
-			role := config.AdminRoleAdmin
-			if claimRole, _ := claims["role"].(string); claimRole != "" {
-				role = config.NormalizeAdminRole(claimRole)
-			}
-			next(w, withAuthContext(r, AuthContext{Type: authTypeAdmin, Username: username, Actor: username, Role: role}))
+			next(w, withAuthContext(r, authContextFromClaims(claims)))
 			return
 		}
 
@@ -624,6 +629,29 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Authentication required"})
+	}
+}
+
+// OptionalAuthMiddleware 在请求携带有效凭据时注入认证上下文，但不强制认证。
+// 用于 handler 内部自带认证逻辑的端点（如 install-script 的 X-Install-Key）：
+// 匿名请求放行进入 handler，由其自行判定（requireScope 对缺失上下文 fail-closed，
+// 仅持有效 X-Install-Key 的匿名请求可通过 handler 内的 key 校验分支）。
+func OptionalAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if tokenString := tokenFromRequest(r); tokenString != "" {
+			if claims, ok := claimsFromToken(tokenString); ok {
+				next(w, withAuthContext(r, authContextFromClaims(claims)))
+				return
+			}
+		}
+		if key, ok := validateApiKeyRequest(r); ok {
+			if !enforceAPIKeyRateLimit(w, key) {
+				return
+			}
+			next(w, withAuthContext(r, authContextFromAPIKey(key)))
+			return
+		}
+		next(w, r)
 	}
 }
 

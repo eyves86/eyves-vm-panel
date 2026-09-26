@@ -500,6 +500,23 @@ export const checkAuth = () =>
 export const changePassword = (oldPassword: string, newPassword: string) =>
   api.post<APIResponse>('/change-password', { old_password: oldPassword, new_password: newPassword })
 
+// ---- 子用户自助（用户门户「安全设置」）----
+
+export interface SubUserProfile {
+  username: string
+  email?: string
+  role: string
+  access_code: string
+  container_count: number
+}
+
+export const getSubUserProfile = () =>
+  api.get<APIResponse<SubUserProfile>>('/sub-user/profile')
+
+// 自助轮换：服务端生成随机安全密码并一次性返回（TokenVersion++ 强制重新登录）。
+export const selfRotatePassword = (oldPassword: string) =>
+  api.post<APIResponse<{ password: string }>>('/sub-user/rotate-password', { old_password: oldPassword })
+
 export const changeUsername = (newUsername: string, password: string) =>
   api.post<APIResponse>('/change-username', { new_username: newUsername, password })
 

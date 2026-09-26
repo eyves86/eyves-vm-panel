@@ -1676,7 +1676,7 @@ export default function ContainerDetail() {
     firewallNetworkOptions.push({ value: 'all', label: '全部网络' })
   }
   const managementUrl = subUser?.access_code
-    ? `${window.location.origin}/login?code=${encodeURIComponent(subUser.access_code)}`
+    ? `${window.location.origin}/user/login?code=${encodeURIComponent(subUser.access_code)}`
     : ''
   const charts: ResourceChartConfig[] = [
     {

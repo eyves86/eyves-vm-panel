@@ -2,7 +2,9 @@ package server
 
 import (
 	"compress/gzip"
+	"crypto/rand"
 	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"log"
@@ -138,6 +140,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sub-user/login", corsMiddleware(api.HandleSubUserLogin))
 	mux.HandleFunc("/api/sub-user/access", corsMiddleware(api.HandleSubUserAccessCode))
 	mux.HandleFunc("/api/sub-user/change-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserChangePassword)))
+	mux.HandleFunc("/api/sub-user/profile", corsMiddleware(api.AuthMiddleware(api.HandleSubUserProfile)))
+	mux.HandleFunc("/api/sub-user/rotate-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserSelfRotatePassword)))
 	mux.HandleFunc("/api/sub-users", corsMiddleware(api.AdminMiddleware(api.HandleSubUserList)))
 	mux.HandleFunc("/api/sub-users/", corsMiddleware(api.AdminMiddleware(api.HandleSubUserAction)))
 	mux.HandleFunc("/api/audit-logs", corsMiddleware(api.AdminMiddleware(api.HandleAuditLogs)))
@@ -318,6 +322,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/batch-action", corsMiddleware(api.AuthMiddleware(api.HandleBatchAction)))
 	mux.HandleFunc("/api/v1/sub-user/create", corsMiddleware(api.AdminMiddleware(api.HandleSubUserCreate)))
 	mux.HandleFunc("/api/v1/sub-user/change-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserChangePassword)))
+	mux.HandleFunc("/api/v1/sub-user/profile", corsMiddleware(api.AuthMiddleware(api.HandleSubUserProfile)))
+	mux.HandleFunc("/api/v1/sub-user/rotate-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserSelfRotatePassword)))
 	mux.HandleFunc("/api/v1/usage", corsMiddleware(api.AuthMiddleware(api.HandleUsageExport)))
 	mux.HandleFunc("/api/v1/smtp", corsMiddleware(api.AdminMiddleware(api.HandleSMTPSettings)))
 	mux.HandleFunc("/api/v1/smtp/test", corsMiddleware(api.AdminMiddleware(api.HandleSMTPTest)))
@@ -415,6 +421,15 @@ func setupRoutes(mux *http.ServeMux) {
 				return
 			}
 			defer f.Close()
+			// 目录（含根路径 "/"）：http.FileServer 会直接吐出**未注入管理员
+			// 入口路径**的原始 index.html（或目录列表）。根路径一旦走原始
+			// index.html，占位符不会被替换，前端会把占位符当作“默认根路径”
+			// 挂载管理端路由 —— 自定义管理入口即被 / 绕过。目录一律走
+			// SPA 入口页按请求路径注入。
+			if stat, serr := f.Stat(); serr == nil && stat.IsDir() {
+				serveSPAIndex(w, r)
+				return
+			}
 			fs.ServeHTTP(w, r)
 		})
 	}
@@ -423,6 +438,12 @@ func setupRoutes(mux *http.ServeMux) {
 // adminPathPlaceholder 是 frontend/index.html 里管理员入口路径的占位符。
 // 注意不要与 JS 变量名 __EYVES_ADMIN_PATH__ 相同，否则会被一并替换掉。
 const adminPathPlaceholder = "__EYVES_ADMIN_PATH_VALUE__"
+
+// adminNoncePlaceholder 是 frontend/index.html 里内联脚本 nonce 属性的占位符。
+// CSP 的 script-src 不含 unsafe-inline，注入的内联脚本必须携带一次性 nonce
+// 才会被浏览器执行；否则 window.__EYVES_ADMIN_PATH__ 为 undefined，前端一律
+// 按“默认根路径”挂载管理端路由，自定义管理入口形同虚设。
+const adminNoncePlaceholder = "__EYVES_ADMIN_NONCE__"
 
 // serveSPAIndex 返回 SPA 入口页，并按请求路径注入「管理员入口路径」。
 //
@@ -442,6 +463,16 @@ func serveSPAIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body := strings.ReplaceAll(string(raw), adminPathPlaceholder, config.AdminPathForRequest(r.URL.Path))
+	// 为注入的内联管理路径脚本签发一次性 nonce，并同步放宽本页 CSP：
+	// 仅该响应的该脚本被放行，不影响其它静态资源的 CSP 策略。
+	nonceRaw := make([]byte, 16)
+	if _, err := rand.Read(nonceRaw); err == nil && strings.Contains(body, adminNoncePlaceholder) {
+		nonce := base64.StdEncoding.EncodeToString(nonceRaw)
+		body = strings.ReplaceAll(body, adminNoncePlaceholder, nonce)
+		if csp := w.Header().Get("Content-Security-Policy"); csp != "" {
+			w.Header().Set("Content-Security-Policy", strings.Replace(csp, "script-src 'self'", "script-src 'self' 'nonce-"+nonce+"'", 1))
+		}
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// 注入内容随请求路径变化，必须禁用缓存，否则不同路径会互相串味。
 	w.Header().Set("Cache-Control", "no-store")
