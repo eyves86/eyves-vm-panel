@@ -24,7 +24,7 @@
 | 节点添加 | ✅ 一键（一次性 token + 24h TTL + IP 绑定 + SHA256 + systemd）+ 手动（admin-only）；注册审计日志已补（F3 已修复）；install_key 全链路走 `X-Install-Key` 头（F4 已修复） |
 | 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key、curl 不跟随重定向（F10 已修复）；⚠️ 面板侧节点 Token 明文存 SQLite（F7，低，P2） |
 
-**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 已完成 3 项（F6 备份计划归属校验、F9 节点地址默认 https、F11 拒绝明文落库），余 5 项规划中。详见第九节路线图。
+**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 已完成 6 项（F6 备份计划归属校验、F9 节点地址默认 https、F11 拒绝明文落库、F8 内存累计配额、P2-15 容器 ID 持久化、P2-16 快照/备份/防火墙挂客户区），余 2 项规划中。详见第九节路线图。
 
 ---
 
@@ -356,13 +356,13 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 | 客户区管理面板 | ✅ 11 按钮 | ✅ | ✅ | ✅ |
 | 后台按钮 + 服务页字段 | ✅ 8 按钮 + 10 字段 | ✅ | ✅ | ✅ |
 | Rescue/ISO/VNC 客户区直达 | ✅ | ✅ | ✅ | ✅ |
-| 快照/备份/防火墙挂 WHMCS | ❌ 仅面板（P2） | ✅ | ✅ | ✅ |
+| 快照/备份/防火墙挂 WHMCS | ✅（P2-16 已修复） | ✅ | ✅ | ✅ |
 | Additional Disk / 弹性 IP 计费 | ❌（P2） | ✅ | ✅ | ✅ |
 | PAYG 按量计费 | ❌ | ❌ | ❌ | ✅ |
 | Reseller 模块 | ❌ | ✅ | ✅ | ✅ |
 | SSO | ✅ | ✅ | ✅ | ✅ |
 
-**差距结论**：核心生命周期已无差距；剩余差距集中在**快照/备份/防火墙的 WHMCS 客户区入口**、**Additional Disk/弹性 IP 计费项**、**跨节点热迁移**、**PAYG**。
+**差距结论**：核心生命周期已无差距；快照/备份/防火墙的 WHMCS 客户区入口已补齐（P2-16）；剩余差距集中在**Additional Disk/弹性 IP 计费项**、**跨节点热迁移**、**PAYG**。
 
 ---
 
@@ -397,7 +397,7 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 | 13 | node address 默认 https + TLS 开关 | F9 | ✅ 已修复：主控 `normalizeNodeAddress` 无 scheme 默认补 `https://`；agent 侧注册时按自身面板 SSL 状态显式补全 scheme（`normalizeSelfAddress`/`selfPanelScheme`），无 scheme 的 `--addr` 不会被误存 https 断链。回归 `TestNormalizeNodeAddressDefaultsHTTPS`/`TestNormalizeSelfAddressByPanelScheme` |
 | 14 | store_password 降级分支拒绝明文落库 | F11 | ✅ 已修复：`eyvescloud_store_password` 加密不可用时返回 null（记日志），两处调用方（reset-password / update_host_from_container）跳过 password 字段写库，保留库中旧值 |
 | 15 | CreateAccount 持久化 container_id 自定义字段（抗 hostname 失配） | §5.1 | ✅ 已修复：开通后把面板容器 ID 写入产品「Container ID」自定义字段；`eyvescloud_find_container` 优先按 ID 定位（ID 失效回退主机名）；同步时自愈补齐存量服务；Terminate 后清空；`eyvescloud_service_params` 为 AJAX 路径加载 customfields。产品需建有名为 Container ID 的自定义字段（缺失时静默降级为主机名查找） |
-| 16 | 快照/备份/防火墙挂 WHMCS 客户区（对齐竞品） | §8.2 | 待做 |
+| 16 | 快照/备份/防火墙挂 WHMCS 客户区（对齐竞品） | §8.2 | ✅ 已修复：客户区已有防火墙/快照/备份三个 Tab（clientarea.tpl data-panel + PANELS JS），AJAX 分发（helpers.php eyvescloud_dispatch）与入口校验（api.php：CSRF/归属/domainstatus 白名单）齐备；本轮补齐 P2-15 对齐缺口——新增 `eyvescloud_container_url_id`，快照/备份/重装/电源/删除/改密/资源调整/流量/到期等全部容器级 URL 优先用持久化容器 ID 定位（无 ID 回退主机名），客户改 hostname 后操作不再失配 |
 | 17 | Additional Disk / 弹性 IP 计费项（Configurable Options 扩展） | §8.2 | 待做 |
 
 ---

@@ -1541,6 +1541,28 @@ function eyvescloud_container_api_id($params, &$container = null)
     return eyvescloud_container_name($params);
 }
 
+/**
+ * 返回用于容器级 API 路径的标识（P2-15/P2-16）。
+ *
+ * 面板 containerByIdentifier 同时接受数字 ID 与名字。这里优先返回持久化的
+ * 容器 ID（自定义字段），没有时回退主机名——客户在面板侧改 hostname 后，
+ * 电源/重装/快照/备份/资源调整等所有操作仍能命中正确容器。
+ *
+ * 与 eyvescloud_container_api_id 的区别：后者要先调一次 find_container
+ * （额外 API 往返），本函数只读本地存储，适合高频 URL 拼接场景。
+ *
+ * @param array $params
+ * @return string 数字 ID 或容器名
+ */
+function eyvescloud_container_url_id($params)
+{
+    $containerId = eyvescloud_stored_container_id($params);
+    if ($containerId > 0) {
+        return (string)$containerId;
+    }
+    return eyvescloud_container_name($params);
+}
+
 function eyvescloud_port_mappings_from_container($container)
 {
     if (!is_array($container)) {
@@ -2070,7 +2092,7 @@ function eyvescloud_normalize_assets($items, $sizeKey = 'size_bytes')
 
 function eyvescloud_snapshot_base($params)
 {
-    return '/api/v1/containers/' . rawurlencode(eyvescloud_container_name($params)) . '/snapshots';
+    return '/api/v1/containers/' . rawurlencode(eyvescloud_container_url_id($params)) . '/snapshots';
 }
 
 function eyvescloud_snapshotList($params)
@@ -2127,7 +2149,7 @@ function eyvescloud_snapshotDelete($params)
 
 function eyvescloud_backup_base($params)
 {
-    return '/api/v1/containers/' . rawurlencode(eyvescloud_container_name($params)) . '/backups';
+    return '/api/v1/containers/' . rawurlencode(eyvescloud_container_url_id($params)) . '/backups';
 }
 
 function eyvescloud_backupList($params)
@@ -2268,7 +2290,7 @@ function eyvescloud_client_reinstall($params)
     if ($reinstallMode !== '') {
         $payload['reinstall_mode'] = $reinstallMode;
     }
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode(eyvescloud_container_name($params)) . '/reinstall', $payload, 'POST', 60);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode(eyvescloud_container_url_id($params)) . '/reinstall', $payload, 'POST', 60);
     if (!eyvescloud_success($res)) {
         return ['status' => 'error', 'msg' => eyvescloud_message($res, '重装失败')];
     }
@@ -2281,7 +2303,7 @@ function eyvescloud_client_reinstall($params)
 
 function eyvescloud_container_action($params, $action, $successMsg, $timeout = 60)
 {
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
     $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/' . $action, [], 'POST', $timeout);
     return eyvescloud_success($res)
         ? ['status' => 'success', 'msg' => eyvescloud_message($res, $successMsg), 'data' => []]
@@ -2290,7 +2312,7 @@ function eyvescloud_container_action($params, $action, $successMsg, $timeout = 6
 
 function eyvescloud_container_delete($params)
 {
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
     $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/delete', [], 'DELETE', 60);
     return eyvescloud_success($res)
         ? ['status' => 'success', 'msg' => eyvescloud_message($res, '删除任务已提交'), 'data' => []]
@@ -2304,7 +2326,7 @@ function eyvescloud_reset_password($params, $newPassword)
         return ['status' => 'error', 'msg' => '新密码不能为空'];
     }
 
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
     $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/reset-password', ['password' => $newPassword], 'POST', 60);
     if (!eyvescloud_success($res)) {
         return ['status' => 'error', 'msg' => eyvescloud_message($res, '重置密码失败')];
@@ -2368,7 +2390,7 @@ function eyvescloud_changepackage_disk_precheck($params)
 function eyvescloud_resource_limit($params)
 {
     $options = eyvescloud_options($params);
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
 
     $resource = [
         'vcpu'            => eyvescloud_float_option($options, 'vcpu', 0),
@@ -2394,7 +2416,7 @@ function eyvescloud_resource_limit($params)
 function eyvescloud_traffic_limit($params)
 {
     $options = eyvescloud_options($params);
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
 
     $traffic = [
         'traffic_mode'       => $options['traffic_mode'] ?? 'total',
@@ -2414,7 +2436,7 @@ function eyvescloud_set_expiry($params)
     if ($expiresAt === '') {
         return ['status' => 'success', 'msg' => '未启用到期时间同步', 'data' => []];
     }
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
     $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/expiry', ['expires_at' => $expiresAt], 'PUT', 30);
     return eyvescloud_success($res)
         ? ['status' => 'success', 'msg' => '到期时间同步成功', 'data' => ['expires_at' => $expiresAt]]
@@ -2423,7 +2445,7 @@ function eyvescloud_set_expiry($params)
 
 function eyvescloud_traffic_reset($params)
 {
-    $name = eyvescloud_container_name($params);
+    $name = eyvescloud_container_url_id($params);
     $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/traffic-reset', [], 'POST', 30);
     return eyvescloud_success($res)
         ? ['status' => 'success', 'msg' => eyvescloud_message($res, '流量已重置'), 'data' => []]
@@ -2438,7 +2460,7 @@ function eyvescloud_traffic_reset($params)
 function eyvescloud_container_usage($params, $name = '')
 {
     if ($name === '') {
-        $name = eyvescloud_container_name($params);
+        $name = eyvescloud_container_url_id($params);
     }
 
     $usageRes = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/usage', [], 'GET', 30);
