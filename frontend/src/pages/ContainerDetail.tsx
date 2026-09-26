@@ -7,10 +7,13 @@ import {
   Clock,
   Copy,
   Cpu,
+  FileCode2,
+  Gauge,
   Globe,
   HardDrive,
   Key,
   LifeBuoy,
+  ListTree,
   Maximize2,
   MemoryStick,
   Minimize2,
@@ -27,6 +30,7 @@ import {
   Trash2,
   UserPlus,
   UserCog,
+  Wrench,
   X,
 } from 'lucide-react'
 import {
@@ -35,17 +39,29 @@ import {
   assignIPv6,
   APIResponse,
   Container,
+  ContainerBandwidthData,
+  ContainerHVMSettings,
+  ContainerProcessInfo,
+  ContainerScheduledAction,
+  ContainerServiceUnitInfo,
   ContainerMetricPoint as ContainerMetricSample,
   ContainerUsage,
   createSubUser,
   createContainerSnapshot,
   createContainerBackup,
+  createContainerScheduledAction,
   deleteContainer,
   deleteContainerSnapshot,
   deleteContainerBackup,
+  deleteContainerScheduledAction,
   deletePortMapping,
+  executeRecipeOnContainer,
   getContainer,
+  getContainerBandwidth,
+  getContainerHVMSettings,
   getContainerHistory,
+  getContainerProcesses,
+  getContainerServices,
   getContainerSnapshots,
   getContainerBackups,
   getContainerUsage,
@@ -57,10 +73,16 @@ import {
   getEnabledImages,
   getFirewall,
   getReverseDNS,
+  killContainerProcesses,
+  listContainerScheduledActions,
+  listRecipes,
   PortMapping,
   PublicIPv4Info,
   FirewallRule,
+  Recipe,
   ReverseDNSRecord,
+  containerServiceAction,
+  updateContainerHVMSettings,
   updatePublicIPv4Assignments,
   updateIPv6Assignments,
   reinstallContainer,
@@ -242,6 +264,47 @@ export default function ContainerDetail() {
   const [rdnsLoading, setRdnsLoading] = useState(false)
   const [rdnsSaving, setRdnsSaving] = useState(false)
   const [rdnsMessage, setRdnsMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  // 进程管理（GET/POST /containers/{id}/processes[/kill]，仅 LXC）
+  const [showProcesses, setShowProcesses] = useState(false)
+  const [processes, setProcesses] = useState<ContainerProcessInfo[]>([])
+  const [processesLoading, setProcessesLoading] = useState(false)
+  const [processesError, setProcessesError] = useState('')
+  const [selectedPids, setSelectedPids] = useState<number[]>([])
+  const [killSignal, setKillSignal] = useState<'TERM' | 'KILL' | 'HUP' | 'INT'>('TERM')
+  const [killingPids, setKillingPids] = useState(false)
+  // 服务管理（GET/POST /containers/{id}/services，仅 LXC systemd）
+  const [showServices, setShowServices] = useState(false)
+  const [services, setServices] = useState<ContainerServiceUnitInfo[]>([])
+  const [servicesLoading, setServicesLoading] = useState(false)
+  const [servicesError, setServicesError] = useState('')
+  const [serviceBusy, setServiceBusy] = useState('')
+  const [serviceFilter, setServiceFilter] = useState('')
+  // 定时任务（GET/POST/DELETE /containers/{id}/scheduled-actions）
+  const [showScheduled, setShowScheduled] = useState(false)
+  const [scheduledActions, setScheduledActions] = useState<ContainerScheduledAction[]>([])
+  const [scheduledLoading, setScheduledLoading] = useState(false)
+  const [scheduledForm, setScheduledForm] = useState({ type: 'stop', executeAt: '', repeat: 'none' })
+  const [scheduledBusy, setScheduledBusy] = useState(false)
+  // 流量明细（GET /containers/{id}/bandwidth）
+  const [showBandwidth, setShowBandwidth] = useState(false)
+  const [bandwidth, setBandwidth] = useState<ContainerBandwidthData | null>(null)
+  const [bandwidthMode, setBandwidthMode] = useState<'hourly' | 'month'>('hourly')
+  const [bandwidthMonth, setBandwidthMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const [bandwidthLoading, setBandwidthLoading] = useState(false)
+  // KVM HVM 设置（GET/PUT /containers/{id}/hvm-settings）
+  const [showHVM, setShowHVM] = useState(false)
+  const [hvmDraft, setHvmDraft] = useState({ bootOrder: 'cda', nicDriver: 'virtio', vncKeymap: 'en-us', enableTuntap: false, enablePPP: false, acceleration: 'default' })
+  const [hvmKeymaps, setHvmKeymaps] = useState<string[]>([])
+  const [hvmNicDrivers, setHvmNicDrivers] = useState<string[]>([])
+  const [hvmSaving, setHvmSaving] = useState(false)
+  const [hvmError, setHvmError] = useState('')
+  // 脚本（Recipe）执行（POST /containers/{id}/recipes/execute）
+  const [showRecipes, setShowRecipes] = useState(false)
+  const [recipeList, setRecipeList] = useState<Recipe[]>([])
+  const [selectedRecipeId, setSelectedRecipeId] = useState('')
+  const [recipeTimeout, setRecipeTimeout] = useState(300)
+  const [recipeExecuting, setRecipeExecuting] = useState(false)
+  const [recipeOutput, setRecipeOutput] = useState('')
 
   const fetchContainer = useCallback(async () => {
     if (!containerIdentifier) return
@@ -921,6 +984,268 @@ export default function ContainerDetail() {
     }
   }
 
+  // ---- 进程管理（仅 LXC） ------------------------------------------------------
+  const refreshProcesses = async () => {
+    if (!containerIdentifier) return
+    setProcessesLoading(true)
+    setProcessesError('')
+    setSelectedPids([])
+    try {
+      const res = await getContainerProcesses(containerIdentifier)
+      const data = res.data.data
+      if (!res.data.success) {
+        // KVM / 非 systemd 容器：后端返回 success=false + 提示
+        setProcesses([])
+        setProcessesError(res.data.message || '进程信息不可用')
+        return
+      }
+      setProcesses(data?.processes || [])
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setProcessesError(error.response?.data?.message || '获取进程列表失败')
+    } finally {
+      setProcessesLoading(false)
+    }
+  }
+
+  const openProcesses = async () => {
+    setShowProcesses(true)
+    await refreshProcesses()
+  }
+
+  const togglePid = (pid: number) => {
+    setSelectedPids((prev) => (prev.includes(pid) ? prev.filter((p) => p !== pid) : [...prev, pid]))
+  }
+
+  const killSelectedProcesses = async () => {
+    if (!containerIdentifier || selectedPids.length === 0) return
+    const ok = await dialog.confirm(
+      '终止进程',
+      `确定要向 ${selectedPids.length} 个进程发送 ${killSignal} 信号吗？误杀关键进程可能导致容器内服务不可用。`,
+    )
+    if (!ok) return
+    setKillingPids(true)
+    try {
+      await killContainerProcesses(containerIdentifier, selectedPids, killSignal)
+      dialog.alert('操作成功', `已向 ${selectedPids.length} 个进程发送 ${killSignal} 信号`)
+      await refreshProcesses()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('终止失败', error.response?.data?.message || '请稍后重试')
+    } finally {
+      setKillingPids(false)
+    }
+  }
+
+  // ---- 服务管理（仅 LXC systemd） ----------------------------------------------
+  const refreshServices = async () => {
+    if (!containerIdentifier) return
+    setServicesLoading(true)
+    setServicesError('')
+    try {
+      const res = await getContainerServices(containerIdentifier)
+      if (!res.data.success) {
+        setServices([])
+        setServicesError(res.data.message || '服务列表不可用（容器可能不是 systemd）')
+        return
+      }
+      setServices(res.data.data?.services || [])
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setServicesError(error.response?.data?.message || '获取服务列表失败')
+    } finally {
+      setServicesLoading(false)
+    }
+  }
+
+  const openServices = async () => {
+    setShowServices(true)
+    await refreshServices()
+  }
+
+  const runServiceAction = async (service: string, action: 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable') => {
+    if (!containerIdentifier) return
+    setServiceBusy(`${service}:${action}`)
+    try {
+      await containerServiceAction(containerIdentifier, service, action)
+      await refreshServices()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('操作失败', error.response?.data?.message || `对 ${service}.service 执行 ${action} 失败`)
+    } finally {
+      setServiceBusy('')
+    }
+  }
+
+  // ---- 定时任务 ------------------------------------------------------------------
+  const refreshScheduledActions = async () => {
+    if (!containerIdentifier) return
+    setScheduledLoading(true)
+    try {
+      const res = await listContainerScheduledActions(containerIdentifier)
+      setScheduledActions(res.data.data?.actions || [])
+    } catch (err) {
+      console.error('Failed to fetch scheduled actions:', err)
+    } finally {
+      setScheduledLoading(false)
+    }
+  }
+
+  const openScheduled = async () => {
+    setShowScheduled(true)
+    setScheduledForm({ type: 'stop', executeAt: '', repeat: 'none' })
+    await refreshScheduledActions()
+  }
+
+  const createScheduled = async () => {
+    if (!containerIdentifier || !scheduledForm.executeAt) {
+      dialog.alert('创建失败', '请选择执行时间')
+      return
+    }
+    // datetime-local（本地时区）→ RFC3339（UTC）
+    const executeAt = new Date(scheduledForm.executeAt).toISOString()
+    setScheduledBusy(true)
+    try {
+      await createContainerScheduledAction(containerIdentifier, {
+        type: scheduledForm.type,
+        execute_at: executeAt,
+        repeat: scheduledForm.repeat,
+      })
+      setScheduledForm({ type: 'stop', executeAt: '', repeat: 'none' })
+      await refreshScheduledActions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('创建失败', error.response?.data?.message || '请稍后重试')
+    } finally {
+      setScheduledBusy(false)
+    }
+  }
+
+  const removeScheduledAction = async (actionId: string) => {
+    if (!containerIdentifier) return
+    const ok = await dialog.confirm('删除定时任务', `确定要删除定时任务 ${actionId} 吗？`)
+    if (!ok) return
+    try {
+      await deleteContainerScheduledAction(containerIdentifier, actionId)
+      await refreshScheduledActions()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert('删除失败', error.response?.data?.message || '请稍后重试')
+    }
+  }
+
+  // ---- 流量明细 ------------------------------------------------------------------
+  const refreshBandwidth = useCallback(async (mode: 'hourly' | 'month', month: string) => {
+    if (!containerIdentifier) return
+    setBandwidthLoading(true)
+    try {
+      const period = mode === 'hourly' ? 'hourly' : month
+      const res = await getContainerBandwidth(containerIdentifier, period)
+      setBandwidth(res.data.data || null)
+    } catch (err) {
+      console.error('Failed to fetch bandwidth:', err)
+      setBandwidth(null)
+    } finally {
+      setBandwidthLoading(false)
+    }
+  }, [containerIdentifier])
+
+  const openBandwidth = async () => {
+    setShowBandwidth(true)
+    await refreshBandwidth(bandwidthMode, bandwidthMonth)
+  }
+
+  const switchBandwidthMode = async (mode: 'hourly' | 'month') => {
+    setBandwidthMode(mode)
+    await refreshBandwidth(mode, bandwidthMonth)
+  }
+
+  const switchBandwidthMonth = async (month: string) => {
+    setBandwidthMonth(month)
+    await refreshBandwidth('month', month)
+  }
+
+  // ---- KVM HVM 设置 --------------------------------------------------------------
+  const openHVM = async () => {
+    if (!containerIdentifier) return
+    setShowHVM(true)
+    setHvmError('')
+    setHvmSaving(false)
+    try {
+      const res = await getContainerHVMSettings(containerIdentifier)
+      const data = res.data.data
+      if (data) {
+        setHvmDraft({
+          bootOrder: data.boot_order || 'cda',
+          nicDriver: data.nic_driver || 'virtio',
+          vncKeymap: data.vnc_keymap || 'en-us',
+          enableTuntap: !!data.enable_tuntap,
+          enablePPP: !!data.enable_ppp,
+          acceleration: data.acceleration || 'default',
+        })
+        setHvmKeymaps(data.available_keymaps || [])
+        setHvmNicDrivers(data.available_nic_drivers || [])
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setHvmError(error.response?.data?.message || '加载 HVM 设置失败')
+    }
+  }
+
+  const saveHVMSettings = async () => {
+    if (!containerIdentifier) return
+    setHvmSaving(true)
+    setHvmError('')
+    try {
+      await updateContainerHVMSettings(containerIdentifier, {
+        boot_order: hvmDraft.bootOrder,
+        nic_driver: hvmDraft.nicDriver,
+        vnc_keymap: hvmDraft.vncKeymap,
+        enable_tuntap: hvmDraft.enableTuntap,
+        enable_ppp: hvmDraft.enablePPP,
+        acceleration: hvmDraft.acceleration,
+      })
+      dialog.alert('已保存', 'HVM 设置已更新，将在下次启动虚拟机时生效')
+      setShowHVM(false)
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setHvmError(error.response?.data?.message || '保存失败')
+    } finally {
+      setHvmSaving(false)
+    }
+  }
+
+  // ---- 脚本（Recipe）执行 --------------------------------------------------------
+  const openRecipes = async () => {
+    setShowRecipes(true)
+    setRecipeOutput('')
+    setSelectedRecipeId('')
+    try {
+      const res = await listRecipes()
+      setRecipeList(res.data.data || [])
+    } catch {
+      setRecipeList([])
+    }
+  }
+
+  const runRecipeOnContainer = async () => {
+    if (!containerIdentifier || !selectedRecipeId) {
+      dialog.alert('执行失败', '请先选择要执行的脚本')
+      return
+    }
+    setRecipeExecuting(true)
+    setRecipeOutput('')
+    try {
+      const res = await executeRecipeOnContainer(containerIdentifier, selectedRecipeId, recipeTimeout)
+      setRecipeOutput(res.data.data?.output || '(无输出)')
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setRecipeOutput('执行失败: ' + (error.response?.data?.message || '请稍后重试'))
+    } finally {
+      setRecipeExecuting(false)
+    }
+  }
+
   const openIPAssign = () => {
     const currentIPv4 = (container?.public_ipv4s || []).map((item) => item.address).filter(Boolean)
     const currentIPv6 = (container?.ipv6_addresses || []).map((item) => item.address).filter(Boolean)
@@ -1494,6 +1819,36 @@ export default function ContainerDetail() {
             <ActionButton onClick={() => setShowBackups(true)} disabled={!!taskStatus || !!backupBusy || isSubUserPolicyBlocked || readOnly}>
               <HardDrive className="w-3.5 h-3.5" />
               备份
+            </ActionButton>
+            {!isKVM && (
+              <ActionButton onClick={() => void openProcesses()} disabled={!isRunning || isSubUserPolicyBlocked || readOnly}>
+                <ListTree className="w-3.5 h-3.5" />
+                进程
+              </ActionButton>
+            )}
+            {!isKVM && (
+              <ActionButton onClick={() => void openServices()} disabled={!isRunning || isSubUserPolicyBlocked || readOnly}>
+                <Wrench className="w-3.5 h-3.5" />
+                服务
+              </ActionButton>
+            )}
+            <ActionButton onClick={() => void openScheduled()} disabled={isSubUserPolicyBlocked || readOnly}>
+              <Clock className="w-3.5 h-3.5" />
+              定时任务
+            </ActionButton>
+            <ActionButton onClick={() => void openBandwidth()} disabled={isSubUserPolicyBlocked || readOnly}>
+              <Gauge className="w-3.5 h-3.5" />
+              流量明细
+            </ActionButton>
+            {isKVM && (
+              <ActionButton onClick={() => void openHVM()} disabled={isSubUserPolicyBlocked || readOnly}>
+                <Settings className="w-3.5 h-3.5" />
+                HVM 设置
+              </ActionButton>
+            )}
+            <ActionButton onClick={() => void openRecipes()} disabled={!isRunning || isSubUserPolicyBlocked || readOnly}>
+              <FileCode2 className="w-3.5 h-3.5" />
+              脚本
             </ActionButton>
             {isKVM && !isSubUser && (
               <ActionButton
@@ -2926,6 +3281,430 @@ export default function ContainerDetail() {
                 {savingResource ? '保存中...' : '保存'}
               </button>
             </div>
+          </div>
+        </Modal>
+      )}
+
+      {showProcesses && (
+        <Modal title={`进程管理 - ${container.name}`} onClose={() => setShowProcesses(false)} wide>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void refreshProcesses()}
+                disabled={processesLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${processesLoading ? 'animate-spin' : ''}`} />
+                刷新
+              </button>
+              <select value={killSignal} onChange={(e) => setKillSignal(e.target.value as 'TERM' | 'KILL' | 'HUP' | 'INT')} className={inputClass + ' w-28'}>
+                <option value="TERM">TERM</option>
+                <option value="KILL">KILL</option>
+                <option value="HUP">HUP</option>
+                <option value="INT">INT</option>
+              </select>
+              <button
+                onClick={() => void killSelectedProcesses()}
+                disabled={selectedPids.length === 0 || killingPids}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-red-200 text-red-600 rounded-md hover:bg-red-50 disabled:opacity-40"
+              >
+                <Trash2 className="w-4 h-4" />
+                {killingPids ? '终止中...' : `终止选中 (${selectedPids.length})`}
+              </button>
+              <span className="text-xs text-gray-400">仅 LXC 容器可用；PID 1 (init) 不允许终止</span>
+            </div>
+
+            {processesError ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{processesError}</p>
+            ) : processesLoading ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+            ) : processes.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无进程数据</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+                    <tr>
+                      <TableHead>
+                        <input
+                          type="checkbox"
+                          checked={selectedPids.length === processes.length && processes.length > 0}
+                          onChange={(e) => setSelectedPids(e.target.checked ? processes.map((p) => p.pid) : [])}
+                        />
+                      </TableHead>
+                      <TableHead>PID</TableHead>
+                      <TableHead>用户</TableHead>
+                      <TableHead>CPU%</TableHead>
+                      <TableHead>内存%</TableHead>
+                      <TableHead>RSS</TableHead>
+                      <TableHead>命令</TableHead>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {processes.map((p) => (
+                      <tr key={p.pid} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                        <td className="px-3 py-2">
+                          <input type="checkbox" checked={selectedPids.includes(p.pid)} onChange={() => togglePid(p.pid)} disabled={p.pid === 1} />
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs">{p.pid}</td>
+                        <td className="px-3 py-2 text-xs">{p.user}</td>
+                        <td className="px-3 py-2 font-mono text-xs">{p.cpu_pct.toFixed(1)}</td>
+                        <td className="px-3 py-2 font-mono text-xs">{p.mem_pct.toFixed(1)}</td>
+                        <td className="px-3 py-2 font-mono text-xs">{formatBytes(p.rss_kb * 1024)}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-600 max-w-md truncate" title={p.command}>{p.command}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {showServices && (
+        <Modal title={`服务管理 - ${container.name}`} onClose={() => setShowServices(false)} wide>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => void refreshServices()}
+                disabled={servicesLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-4 h-4 ${servicesLoading ? 'animate-spin' : ''}`} />
+                刷新
+              </button>
+              <input
+                type="text"
+                value={serviceFilter}
+                onChange={(e) => setServiceFilter(e.target.value)}
+                placeholder="按服务名过滤..."
+                className={inputClass + ' w-48'}
+              />
+              <span className="text-xs text-gray-400">仅 LXC systemd 容器可用</span>
+            </div>
+
+            {servicesError ? (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{servicesError}</p>
+            ) : servicesLoading ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto rounded-lg border border-gray-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="sticky top-0 border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+                    <tr>
+                      <TableHead>服务名</TableHead>
+                      <TableHead>开机自启</TableHead>
+                      <TableHead>操作</TableHead>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {services
+                      .filter((s) => !serviceFilter || s.name.toLowerCase().includes(serviceFilter.toLowerCase()))
+                      .map((s) => (
+                        <tr key={s.name} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                          <td className="px-3 py-2 font-mono text-xs">{s.name}</td>
+                          <td className="px-3 py-2">
+                            {s.enabled ? (
+                              <span className="rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-700">enabled</span>
+                            ) : (
+                              <span className="rounded bg-gray-100 px-1.5 py-0.5 text-xs font-medium text-gray-500">disabled</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-1">
+                              {(['start', 'stop', 'restart', 'reload', s.enabled ? 'disable' : 'enable'] as const).map((act) => (
+                                <button
+                                  key={act}
+                                  onClick={() => void runServiceAction(s.name, act)}
+                                  disabled={!!serviceBusy}
+                                  className={`rounded border px-2 py-1 text-[11px] font-medium disabled:opacity-40 ${
+                                    act === 'stop'
+                                      ? 'border-red-200 text-red-600 hover:bg-red-50'
+                                      : 'border-gray-200 text-gray-600 hover:bg-gray-50'
+                                  }`}
+                                >
+                                  {serviceBusy === `${s.name}:${act}` ? '...' : act}
+                                </button>
+                              ))}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+                {services.length === 0 && (
+                  <p className="px-4 py-6 text-center text-sm text-gray-400">无服务数据</p>
+                )}
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {showScheduled && (
+        <Modal title={`定时任务 - ${container.name}`} onClose={() => setShowScheduled(false)}>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+              <Field label="操作类型">
+                <select
+                  value={scheduledForm.type}
+                  onChange={(e) => setScheduledForm({ ...scheduledForm, type: e.target.value })}
+                  className={inputClass + ' w-32'}
+                >
+                  <option value="start">开机</option>
+                  <option value="stop">关机</option>
+                  <option value="restart">重启</option>
+                  <option value="poweroff">强制断电</option>
+                </select>
+              </Field>
+              <Field label="执行时间">
+                <input
+                  type="datetime-local"
+                  value={scheduledForm.executeAt}
+                  onChange={(e) => setScheduledForm({ ...scheduledForm, executeAt: e.target.value })}
+                  className={inputClass + ' w-56'}
+                />
+              </Field>
+              <Field label="重复">
+                <select
+                  value={scheduledForm.repeat}
+                  onChange={(e) => setScheduledForm({ ...scheduledForm, repeat: e.target.value })}
+                  className={inputClass + ' w-28'}
+                >
+                  <option value="none">单次</option>
+                  <option value="daily">每天</option>
+                  <option value="weekly">每周</option>
+                  <option value="monthly">每月</option>
+                </select>
+              </Field>
+              <button
+                onClick={() => void createScheduled()}
+                disabled={scheduledBusy || !scheduledForm.executeAt}
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" />
+                {scheduledBusy ? '创建中...' : '创建任务'}
+              </button>
+            </div>
+
+            {scheduledLoading ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+            ) : scheduledActions.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无定时任务（单容器最多 10 条）</p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+                    <tr>
+                      <TableHead>操作</TableHead>
+                      <TableHead>执行时间</TableHead>
+                      <TableHead>重复</TableHead>
+                      <TableHead>创建者</TableHead>
+                      <TableHead>操作列</TableHead>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {scheduledActions.map((a) => (
+                      <tr key={a.id} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                        <td className="px-3 py-2">
+                          <span className="rounded bg-blue-50 px-1.5 py-0.5 text-xs font-medium text-blue-700">{a.type}</span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs">{a.execute_at.replace('T', ' ').replace('Z', ' UTC')}</td>
+                        <td className="px-3 py-2 text-xs">{a.repeat === 'none' ? '单次' : a.repeat}</td>
+                        <td className="px-3 py-2 text-xs text-gray-500">{a.created_by || '-'}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            onClick={() => void removeScheduledAction(a.id)}
+                            className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            删除
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {showBandwidth && (
+        <Modal title={`流量明细 - ${container.name}`} onClose={() => setShowBandwidth(false)} wide>
+          <div className="space-y-4">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="inline-flex rounded-md border border-gray-200 overflow-hidden">
+                <button
+                  onClick={() => void switchBandwidthMode('hourly')}
+                  className={`px-3 py-1.5 text-xs ${bandwidthMode === 'hourly' ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  最近 24 小时
+                </button>
+                <button
+                  onClick={() => void switchBandwidthMode('month')}
+                  className={`px-3 py-1.5 text-xs ${bandwidthMode === 'month' ? 'bg-black text-white' : 'text-gray-600 hover:bg-gray-50'}`}
+                >
+                  按月
+                </button>
+              </div>
+              {bandwidthMode === 'month' && (
+                <input
+                  type="month"
+                  value={bandwidthMonth}
+                  onChange={(e) => void switchBandwidthMonth(e.target.value)}
+                  className={inputClass + ' w-40'}
+                />
+              )}
+              <button
+                onClick={() => void refreshBandwidth(bandwidthMode, bandwidthMonth)}
+                disabled={bandwidthLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${bandwidthLoading ? 'animate-spin' : ''}`} />
+                刷新
+              </button>
+              {bandwidth && (
+                <span className="text-xs text-gray-500">
+                  合计：入 {bandwidth.total.in_gb.toFixed(2)} GB / 出 {bandwidth.total.out_gb.toFixed(2)} GB（来源 {bandwidth.source}）
+                </span>
+              )}
+            </div>
+
+            {bandwidthLoading ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+            ) : !bandwidth || !bandwidth.series || bandwidth.series.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
+                暂无流量数据（被控节点未部署流量采集时不可用）
+              </p>
+            ) : (
+              <div className="overflow-x-auto rounded-lg border border-gray-200">
+                <table className="w-full text-left text-sm">
+                  <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
+                    <tr>
+                      <TableHead>时间</TableHead>
+                      <TableHead>入站 (GB)</TableHead>
+                      <TableHead>出站 (GB)</TableHead>
+                      <TableHead>合计 (GB)</TableHead>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {bandwidth.series.map((pt) => (
+                      <tr key={pt.bucket} className="border-b border-gray-100 last:border-0 hover:bg-gray-50">
+                        <td className="px-3 py-2 font-mono text-xs">{pt.bucket}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-blue-700">{pt.in_gb.toFixed(3)}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-emerald-700">{pt.out_gb.toFixed(3)}</td>
+                        <td className="px-3 py-2 font-mono text-xs font-medium">{pt.total_gb.toFixed(3)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {showHVM && (
+        <Modal title={`HVM 设置 - ${container.name}`} onClose={() => setShowHVM(false)}>
+          <div className="space-y-4">
+            {hvmError && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hvmError}</p>}
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label="启动顺序" hint="cda=硬盘优先 / dca=光驱优先 / cd=仅光驱">
+                <select value={hvmDraft.bootOrder} onChange={(e) => setHvmDraft({ ...hvmDraft, bootOrder: e.target.value })} className={inputClass}>
+                  <option value="cda">cda（硬盘优先）</option>
+                  <option value="dca">dca（光驱优先）</option>
+                  <option value="cd">cd（仅光驱）</option>
+                </select>
+              </Field>
+              <Field label="网卡驱动">
+                <select value={hvmDraft.nicDriver} onChange={(e) => setHvmDraft({ ...hvmDraft, nicDriver: e.target.value })} className={inputClass}>
+                  {(hvmNicDrivers.length ? hvmNicDrivers : ['virtio', 'e1000', 'rtl8139', 'ne2k_pci', 'vmxnet3']).map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="VNC 键盘布局">
+                <select value={hvmDraft.vncKeymap} onChange={(e) => setHvmDraft({ ...hvmDraft, vncKeymap: e.target.value })} className={inputClass}>
+                  {(hvmKeymaps.length ? hvmKeymaps : ['en-us', 'zh-cn', 'de', 'fr', 'ja', 'ko', 'ru', 'es']).map((k) => (
+                    <option key={k} value={k}>{k}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="CPU 加速">
+                <select value={hvmDraft.acceleration} onChange={(e) => setHvmDraft({ ...hvmDraft, acceleration: e.target.value })} className={inputClass}>
+                  <option value="default">default（默认）</option>
+                  <option value="host-passthrough">host-passthrough（直通）</option>
+                  <option value="off">off（关闭）</option>
+                </select>
+              </Field>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={hvmDraft.enableTuntap}
+                  onChange={(e) => setHvmDraft({ ...hvmDraft, enableTuntap: e.target.checked })}
+                />
+                启用 TUN/TAP（VPN 客户端）
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={hvmDraft.enablePPP}
+                  onChange={(e) => setHvmDraft({ ...hvmDraft, enablePPP: e.target.checked })}
+                />
+                启用 PPP 拨号
+              </label>
+            </div>
+            <p className="text-[11px] text-gray-400">设置在下次启动虚拟机时生效，运行中的虚拟机不受影响。</p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setShowHVM(false)} className="px-4 py-2 text-sm text-gray-600 border border-gray-200 rounded-md hover:bg-gray-50">取消</button>
+              <button onClick={() => void saveHVMSettings()} disabled={hvmSaving} className="px-4 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50">
+                {hvmSaving ? '保存中...' : '保存'}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {showRecipes && (
+        <Modal title={`执行脚本 - ${container.name}`} onClose={() => setShowRecipes(false)}>
+          <div className="space-y-4">
+            <Field label="选择脚本" hint="脚本在容器内以 root 执行，请确认脚本来源可信">
+              <select value={selectedRecipeId} onChange={(e) => setSelectedRecipeId(e.target.value)} className={inputClass}>
+                <option value="">请选择脚本模板...</option>
+                {recipeList.map((r) => (
+                  <option key={r.id} value={r.id}>{r.name}{r.scope === 'shared' ? '（共享）' : ''}</option>
+                ))}
+              </select>
+            </Field>
+            <Field label="超时（秒，30-3600）">
+              <input
+                type="number"
+                min={30}
+                max={3600}
+                value={recipeTimeout}
+                onChange={(e) => setRecipeTimeout(Math.min(3600, Math.max(30, Math.round(Number(e.target.value) || 300))))}
+                className={inputClass + ' w-32'}
+              />
+            </Field>
+            <button
+              onClick={() => void runRecipeOnContainer()}
+              disabled={!selectedRecipeId || recipeExecuting}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-black text-white rounded-md hover:bg-gray-800 disabled:opacity-50"
+            >
+              <Play className="w-4 h-4" />
+              {recipeExecuting ? '执行中...' : '执行'}
+            </button>
+            {(recipeOutput || recipeExecuting) && (
+              <div>
+                <p className="mb-1 text-xs font-medium text-gray-600">执行输出</p>
+                <pre className="max-h-64 overflow-auto rounded-lg border border-gray-200 bg-gray-900 p-3 text-xs text-gray-100 whitespace-pre-wrap">
+                  {recipeExecuting ? '脚本执行中，耗时较长请耐心等待...' : recipeOutput}
+                </pre>
+              </div>
+            )}
           </div>
         </Modal>
       )}

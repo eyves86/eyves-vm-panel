@@ -1418,7 +1418,8 @@ function eyvescloud_stored_container_id($params)
 }
 
 /**
- * 定位产品上「Container ID」自定义字段的 fieldid；不存在返回 0。
+ * 定位产品上「Container ID」自定义字段的 fieldid；不存在时自动创建（B3，
+ * 消除 P2-15 要求管理员手工建字段的前置依赖），仍失败返回 0。
  *
  * @return int
  */
@@ -1442,6 +1443,23 @@ function eyvescloud_container_id_field_id($params)
                 return (int)$field->id;
             }
         }
+        // 产品尚未配置该字段：自动补建一个管理员可见、客户端隐藏的文本字段，
+        // 供 eyvescloud_persist_container_id 写入面板容器 ID。首次开通即自愈，
+        // 无需管理员预先到产品设置里手工添加。
+        $fieldId = \WHMCS\Database\Capsule::table('tblcustomfields')->insertGetId([
+            'type'        => 'product',
+            'relid'       => $packageId,
+            'fieldname'   => $label,
+            'fieldtype'   => 'text',
+            'description' => 'EYVESCLOUD 面板容器 ID（模块自动维护，勿手工修改）',
+            'adminonly'   => 'on',
+            'required'    => '',
+            'showorder'   => '',
+            'sortorder'   => 0,
+            'hidden'      => 0,
+        ]);
+        eyvescloud_debug('container_id_field_id: auto-created Container ID custom field', 'fieldid=' . $fieldId);
+        return (int)$fieldId;
     } catch (\Throwable $e) {
         eyvescloud_debug('container_id_field_id query failed', $e->getMessage());
     }
@@ -2506,9 +2524,16 @@ function eyvescloud_resource_limit($params)
         'io_speed_mbps'   => eyvescloud_int_option($options, 'io_speed_mbps', 0),
         'network_bw_mbps' => eyvescloud_int_option($options, 'network_bw_mbps', 0),
     ];
-    $resource = array_filter($resource, function ($value) {
+    // B1：限速字段（io_speed_mbps / network_bw_mbps）的 0 是合法语义"不限制"，
+    // 必须原样推送给面板；只有容量类字段（vcpu/ram_mb/disk_gb）的 0 表示
+    // "未配置"，剔除以免触发面板资源校验失败。原先的 array_filter 会把
+    // 0 一并吞掉，导致"不限速"套餐的限速设置永远无法下发（升降级后旧限速残留）。
+    $resource = array_filter($resource, function ($value, $key) {
+        if ($key === 'io_speed_mbps' || $key === 'network_bw_mbps') {
+            return $value !== null;
+        }
         return $value !== 0 && $value !== 0.0;
-    });
+    }, ARRAY_FILTER_USE_BOTH);
 
     if (empty($resource)) {
         return ['status' => 'success', 'msg' => '没有需要调整的资源限制', 'data' => []];

@@ -2097,4 +2097,182 @@ export const exportAuditLogs = (format: 'csv' | 'json' | 'cef' | 'syslog') =>
 export const verifyAuditChain = () =>
   api.get<APIResponse<{ valid: boolean; checked?: number; reason?: string }>>('/audit-logs/export', { params: { chain: 'verify' } })
 
+// ===================== 容器自服务扩展（进程 / 服务 / 定时任务 / 带宽 / HVM） =====================
+// 对应后端 Virtualizor 风格端点（backend/internal/api/container_*.go），v1.9.x 起可用。
+
+export interface ContainerProcessInfo {
+  pid: number
+  user: string
+  cpu_pct: number
+  mem_pct: number
+  rss_kb: number
+  stat: string
+  command: string
+}
+
+export interface ContainerProcessesData {
+  container_id: number
+  container_name: string
+  total: number
+  processes: ContainerProcessInfo[] | null
+  sampled_at: string
+  source: string
+}
+
+// 容器内进程列表（仅 LXC；KVM 需 qemu-guest-agent，后端返回 success=false）
+export const getContainerProcesses = (id: ContainerIdentifier) =>
+  api.get<APIResponse<ContainerProcessesData>>(`/containers/${id}/processes`)
+
+// 批量终止进程：pids 最多 64 个、禁止 PID 1；signal ∈ TERM/KILL/HUP/INT
+export const killContainerProcesses = (id: ContainerIdentifier, pids: number[], signal?: string) =>
+  api.post<APIResponse>(`/containers/${id}/processes/kill`, { pids, signal })
+
+export interface ContainerServiceUnitInfo {
+  name: string
+  state: string
+  autostart: boolean
+  enabled: boolean
+  unit_type: string
+}
+
+export interface ContainerServicesData {
+  container_id: number
+  container_name: string
+  total: number
+  services: ContainerServiceUnitInfo[] | null
+  sampled_at: string
+  source: string
+}
+
+// 容器内 systemd 服务列表（仅 LXC systemd 容器）
+export const getContainerServices = (id: ContainerIdentifier) =>
+  api.get<APIResponse<ContainerServicesData>>(`/containers/${id}/services`)
+
+// 单服务操作：action ∈ start/stop/restart/reload/enable/disable
+export const containerServiceAction = (id: ContainerIdentifier, service: string, action: 'start' | 'stop' | 'restart' | 'reload' | 'enable' | 'disable') =>
+  api.post<APIResponse>(`/containers/${id}/services`, { service, action })
+
+export interface ContainerScheduledAction {
+  id: string
+  container_id: number
+  container_name: string
+  type: string // start/stop/restart/poweroff
+  repeat: string // none/daily/weekly/monthly
+  execute_at: string
+  enabled: boolean
+  created_at: string
+  created_by: string
+}
+
+export const listContainerScheduledActions = (id: ContainerIdentifier) =>
+  api.get<APIResponse<{ actions: ContainerScheduledAction[] | null; total: number }>>(`/containers/${id}/scheduled-actions`)
+
+// execute_at 须为 RFC3339 且在未来 5 年内；单容器最多 10 条
+export const createContainerScheduledAction = (id: ContainerIdentifier, payload: { type: string; execute_at: string; repeat?: string }) =>
+  api.post<APIResponse<ContainerScheduledAction>>(`/containers/${id}/scheduled-actions`, payload)
+
+export const deleteContainerScheduledAction = (id: ContainerIdentifier, actionId: string) =>
+  api.delete<APIResponse>(`/containers/${id}/scheduled-actions/${actionId}`)
+
+export interface ContainerBandwidthPoint {
+  bucket: string
+  in_gb: number
+  out_gb: number
+  total_gb: number
+}
+
+export interface ContainerBandwidthData {
+  container_id: number
+  container_name: string
+  period: string // "yyyy-mm" / "hourly" / "yyyy-mm-dd"
+  unit: string
+  total: { in_gb: number; out_gb: number; total_gb: number }
+  series: ContainerBandwidthPoint[] | null
+  sampled_at: string
+  source: string // agent / local / unavailable
+}
+
+// 流量明细：period 省略 = 当月；"hourly" = 24 小时逐时
+export const getContainerBandwidth = (id: ContainerIdentifier, period?: string) =>
+  api.get<APIResponse<ContainerBandwidthData>>(`/containers/${id}/bandwidth`, { params: period ? { period } : undefined })
+
+export interface ContainerHVMSettings {
+  container_id: number
+  container_name: string
+  boot_order: string // cda/dca/cd
+  nic_driver: string // virtio/e1000/rtl8139/ne2k_pci/vmxnet3
+  vnc_keymap: string
+  enable_tuntap: boolean
+  enable_ppp: boolean
+  acceleration: string // default/host-passthrough/off
+  available_keymaps: string[] | null
+  available_nic_drivers: string[] | null
+}
+
+// KVM HVM 设置读取（仅 KVM 容器）
+export const getContainerHVMSettings = (id: ContainerIdentifier) =>
+  api.get<APIResponse<ContainerHVMSettings>>(`/containers/${id}/hvm-settings`)
+
+// KVM HVM 设置更新（下次启动生效）
+export const updateContainerHVMSettings = (id: ContainerIdentifier, payload: {
+  boot_order?: string
+  nic_driver?: string
+  vnc_keymap?: string
+  enable_tuntap?: boolean
+  enable_ppp?: boolean
+  acceleration?: string
+}) =>
+  api.put<APIResponse>(`/containers/${id}/hvm-settings`, payload)
+
+// 在当前容器上执行 Recipe（容器级入口；容器须 running）
+export const executeRecipeOnContainer = (id: ContainerIdentifier, recipeId: string, timeout?: number) =>
+  api.post<APIResponse<{ recipe_id: string; container: string; output: string }>>(`/containers/${id}/recipes/execute`, { recipe_id: recipeId, timeout })
+
+// ===================== 全量用量导出（财务对账） =====================
+// GET /api/v1/usage?tenant=xxx（权限 usage:read，子用户不可用，防止跨租户枚举）
+export interface UsageExportTraffic {
+  monthly_limit_gb: number
+  mode: string
+  used_rx_bytes: number
+  used_tx_bytes: number
+  used_rx_gb: number
+  used_tx_gb: number
+  reset_date: string
+}
+
+export interface UsageExportItem {
+  uuid: string
+  name: string
+  tenant?: string
+  virtualization?: string
+  node?: string
+  vcpu: number
+  ram_mb: number
+  disk_gb: number
+  status: string
+  suspended: boolean
+  suspended_reason?: string
+  suspended_at?: string
+  expires_at?: string
+  created_at?: string
+  traffic: UsageExportTraffic
+  usage?: Record<string, unknown>
+}
+
+export interface UsageExportData {
+  generated_at: string
+  filter_tenant: string
+  count: number
+  count_by_tenant: Record<string, number>
+  containers: UsageExportItem[]
+}
+
+export const getUsageExport = (tenant?: string, includeUsage = true) =>
+  api.get<APIResponse<UsageExportData>>('/v1/usage', {
+    params: {
+      ...(tenant ? { tenant } : {}),
+      ...(includeUsage ? {} : { include: 'config_only' }),
+    },
+  })
+
 export default api

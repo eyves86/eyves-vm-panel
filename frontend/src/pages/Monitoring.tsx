@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { RefreshCw, Activity, Server, ShieldAlert } from 'lucide-react'
-import { getContainerMonitoring, ContainerMonitorRow } from '../services/api'
+import { RefreshCw, Activity, Server, ShieldAlert, Download } from 'lucide-react'
+import { getContainerMonitoring, getUsageExport, ContainerMonitorRow } from '../services/api'
 
 const severityClass: Record<string, string> = {
   critical: 'bg-red-100 text-red-700',
@@ -38,6 +38,32 @@ export default function Monitoring() {
   const [generatedAt, setGeneratedAt] = useState('')
   const [loading, setLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
+  const [usageExporting, setUsageExporting] = useState(false)
+  const [usageTenant, setUsageTenant] = useState('')
+
+  // 全量用量导出（GET /api/v1/usage，权限 usage:read；供财务对账/计费系统拉取）
+  const exportUsage = async () => {
+    if (usageExporting) return
+    setUsageExporting(true)
+    try {
+      const res = await getUsageExport(usageTenant.trim() || undefined)
+      const data = res.data.data
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `eyvescloud-usage-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      alert(error.response?.data?.message || '导出用量失败，请稍后重试')
+    } finally {
+      setUsageExporting(false)
+    }
+  }
 
   const fetchData = useCallback(async () => {
     try {
@@ -77,6 +103,22 @@ export default function Monitoring() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-xl font-semibold text-black">容器监控</h1>
         <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="text"
+            value={usageTenant}
+            onChange={(e) => setUsageTenant(e.target.value)}
+            placeholder="按租户过滤导出（可选）"
+            className="h-9 w-48 rounded-md border border-gray-300 px-3 text-sm text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-black"
+          />
+          <button
+            onClick={() => void exportUsage()}
+            disabled={usageExporting}
+            title="导出全量容器用量 JSON（含配置额度/流量计数/生命周期状态，供财务对账）"
+            className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm disabled:opacity-50"
+          >
+            <Download className="w-4 h-4" />
+            {usageExporting ? '导出中...' : '导出用量'}
+          </button>
           <button
             type="button"
             role="switch"

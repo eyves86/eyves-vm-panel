@@ -240,26 +240,26 @@ function eyvescloud_ChangePackage(array $params)
         return $precheck['msg'] ?? '套餐变更预检失败';
     }
 
-    $resource = eyvescloud_resource_limit($params);
-    if (($resource['status'] ?? '') !== 'success') {
-        return $resource['msg'] ?? '资源限制调整失败';
-    }
-
-    $traffic = eyvescloud_traffic_limit($params);
-    if (($traffic['status'] ?? '') !== 'success') {
-        return $traffic['msg'] ?? '流量限制调整失败';
-    }
-
-    $expiry = eyvescloud_set_expiry($params);
-    if (($expiry['status'] ?? '') !== 'success') {
-        return $expiry['msg'] ?? '到期时间同步失败';
-    }
-
-    // P2-17：升降级订单里的「弹性 IP」数量变化同步到面板（多退少补）。
-    // 未配置该计费项时静默跳过，不影响面板侧手工绑定。
-    $ipv4 = eyvescloud_public_ipv4_sync($params);
-    if (($ipv4['status'] ?? '') !== 'success') {
-        return $ipv4['msg'] ?? '弹性 IP 同步失败';
+    // B2：后续步骤串行执行（资源→流量→到期→弹性 IP），任一步失败时把
+    // 已完成的步骤枚举进错误信息，管理员可直接看出"改到哪一步"。各步
+    // 均为绝对值写入（幂等），重试 ChangePackage 会原样重放，无需人工
+    // 回滚已生效的步骤。
+    $steps = [
+        ['label' => '资源限制', 'fn' => 'eyvescloud_resource_limit'],
+        ['label' => '流量限制', 'fn' => 'eyvescloud_traffic_limit'],
+        ['label' => '到期时间', 'fn' => 'eyvescloud_set_expiry'],
+        ['label' => '弹性 IP', 'fn' => 'eyvescloud_public_ipv4_sync'],
+    ];
+    $done = [];
+    foreach ($steps as $step) {
+        $result = $step['fn']($params);
+        if (($result['status'] ?? '') !== 'success') {
+            $suffix = $done !== []
+                ? '（已完成: ' . implode('、', $done) . '；可直接重试变更，已完成步骤为幂等写入会原样重放）'
+                : '';
+            return ($result['msg'] ?? ($step['label'] . '调整失败')) . $suffix;
+        }
+        $done[] = $step['label'];
     }
 
     return 'success';
