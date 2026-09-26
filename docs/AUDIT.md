@@ -1,7 +1,7 @@
 # EyvesCloud 源码审计报告
 
 > 审计对象：仓库 `FenhaoLost/eyves-vm-panel`（产品名 EyvesCloud，二进制 `eyvescloud`）
-> 审计范围：Go 后端（`backend/`）、React 前端（`frontend/src`）、Mofang 集成模块（`Mofang/`）、部署脚本（`install.sh`）与文档。
+> 审计范围：Go 后端（`backend/`）、React 前端（`frontend/src`）、计费系统对接模块（`billing-module/`）、部署脚本（`install.sh`）与文档。
 > 性质：静态审计（结论均有源码依据，未执行/未编译）。严重程度：高 / 中 / 低。
 
 ## 修复状态快照
@@ -12,8 +12,8 @@
 | H2 | `/api/v1/tasks/` 缺管理员门禁 | ✅ 已修（`server.go` 补 `AdminMiddleware`） |
 | H3 | 空绑定 API Key 越权操作全部容器 | ⚪ 判定为**设计行为**：容器绑定是“附加限制”，无绑定的 Key 由 scope 管控；改为“空=无权”会破坏计费系统/自动化按名称管理容器的场景。缓解手段应为 scope 最小化 + 按需绑定（未改代码） |
 | H4 | `install.sh` 默认从上游拉发行版 | ✅ 已修（默认仓库改为 `FenhaoLost/eyves-vm-panel`） |
-| H5 | Mofang `webssh.php` 任意 WebSocket/SSRF | ✅ 已修：目标白名单（当前域名 + `EYVESCLOUD_WS_ALLOW`）+ 拒绝私网/回环/保留地址，且仅 ws/wss |
-| H6 | Mofang `clicd.php` 关闭 TLS 校验 | ✅ 已修：默认开启 `CURLOPT_SSL_VERIFYPEER/HOST`，仅 `insecure=1` 显式跳过 |
+| H5 | billing-module `webssh.php` 任意 WebSocket/SSRF | ✅ 已修：目标白名单（当前域名 + `EYVESCLOUD_WS_ALLOW`）+ 拒绝私网/回环/保留地址，且仅 ws/wss |
+| H6 | billing-module `clicd.php` 关闭 TLS 校验 | ✅ 已修：默认开启 `CURLOPT_SSL_VERIFYPEER/HOST`，仅 `insecure=1` 显式跳过 |
 | M1 | 子用户/容器口令明文落库并回显 | ⭕ 未修：涉及哈希/一次性返回的大改造，风险高，建议单独做 |
 | M2 | 空 scope Key 默认升级为 `["*"]` | ✅ 已修（空 scope 保持为空、默认无权限） |
 | M3 | `sh -c` / `bash -c` 拼接执行（注入形状） | ✅ 已修：`getContainerVethByNS` 纯数字校验；防火墙清理改为 argv 执行去 shell |
@@ -86,11 +86,11 @@
 
 ---
 
-## 四轮复核（Mofang / API Key / 策略引擎，2026-09-22）
+## 四轮复核（billing-module / API Key / 策略引擎，2026-09-22）
 
 > 对三个此前未深评的高风险独立面做源码复核，均未发现可确证的新缺陷。
 
-- **Mofang PHP 模块**
+- **billing-module PHP 模块**
   - `webssh.php`：WebSocket 目标仅放行「当前请求主机 + `EYVESCLOUD_WS_ALLOW`」白名单，公网/私网 IP 均被拒（无 SSRF）；协议串经白名单正则 `websocketProtocolValue` 校验且全部 `json_encode` 输出进 JS，无 XSS/注入。
   - `eyvescloud.php`：计费系统对接客户端，默认启用 `CURLOPT_SSL_VERIFYPEER/HOST`（H6 已修），以管理员配置的 API Key + 服务器地址对接面板，无 shell 执行面。
 - **API Key 鉴权（apikey.go）**：密钥 argon2id 加盐哈希、常量时间比较、legacy 迁移；每次请求实时校验 disabled/过期/IP 白名单/scope；**创建时空 scope 落入「只读默认 scope」，无法借此提权**。注：`validateApiKeyDetails` 对存量空 scope 密钥在认证时升级为 `"*"`（legacy 兼容），仅 M2 文档描述与实际不符，**不可利用**，为避免破坏存量密钥未改动。
@@ -162,7 +162,7 @@
 2. **未绑定容器的 API Key 绑定判断失效 → 可越权操作全部容器**（H3）。
 3. **`install.sh` 默认从上游 EYVESCLOUD 下载发行版**，导致仓库文档里的一键安装实际装的是别家二进制（H4）。
 
-Mofang 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理、eyvescloud.php 关闭 TLS 校验）。
+billing-module 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理、eyvescloud.php 关闭 TLS 校验）。
 
 ---
 
@@ -203,16 +203,16 @@ Mofang 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理
 - **现象**：原代码 `REPO` 默认值指向上游仓库（`MengMengCode/CLICD`），导致一键安装实际下载别家二进制。**已修复**：默认值改为本仓库 `FenhaoLost/eyves-vm-panel`（`EYVESCLOUD_REPO` 仍可覆盖）。由于本仓库代码/产物已全量改名为 `eyvescloud`，默认发行版来源即为本仓库。
 - **影响**：修复前发布 / 回滚 / 功能皆错位；现默认即本仓库。
 
-### H5. Mofang `webssh.php` 无鉴权 + 任意目标 → 浏览器端 SSRF / Open WebSocket 代理
+### H5. billing-module `webssh.php` 无鉴权 + 任意目标 → 浏览器端 SSRF / Open WebSocket 代理
 
-- **位置**：`Mofang/handlers/webssh.php:2-5,70-72,198-208`
+- **位置**：`billing-module/handlers/webssh.php:2-5,70-72,198-208`
 - **现象**：`ws`（WebSocket 目标）与 `ticket`/`protocol`/`container` 全部取自 URL，未校验目标域名 / 内网网段 / 端口范围，前端直接 `new WebSocket(wsUrl, protocolValue)`。
 - **风险**：构造 `webssh.php?ws=ws://127.0.0.1:6379/...` 诱导管理员打开，可利用受害浏览器探测内网端口 / 访问内网服务 / 作为任意目标的反向代理（反射型 SSRF）。页面本身无鉴权，任何人可拼装。
 - **建议**：服务端白名单校验 `ws`（仅允许面板所在域、拒绝回环/内网/保留地址、限定端口范围），并要求携带会话/票据校验。
 
-### H6. Mofang `eyvescloud.php` 关闭 TLS 证书校验 → API Key 可被中间人窃取
+### H6. billing-module `eyvescloud.php` 关闭 TLS 证书校验 → API Key 可被中间人窃取
 
-- **位置**：`Mofang/eyvescloud.php:133-134`
+- **位置**：`billing-module/eyvescloud.php:133-134`
   ```php
   CURLOPT_SSL_VERIFYPEER => false,
   CURLOPT_SSL_VERIFYHOST => false,
@@ -272,21 +272,21 @@ Mofang 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理
 - **风险**：大 JSON 请求体可能造成内存占用/慢速读取 DoS。
 - **建议**：`http.MaxBytesReader` 限制请求体，限制/流式返回大列表。
 
-### M8. Mofang 防火墙规则字段无服务端校验，原样透传
+### M8. billing-module 防火墙规则字段无服务端校验，原样透传
 
-- **位置**：`Mofang/eyvescloud.php:1468-1593`（`$rules` 原样转发 `/firewall`）。
+- **位置**：`billing-module/eyvescloud.php:1468-1593`（`$rules` 原样转发 `/firewall`）。
 - **风险**：端口范围、IP/CIDR、描述均不校验即透传给后端；若后端拼入 iptables/shell 则构成规则注入。
 - **建议**：在 PHP 侧做端口/IP/CIDR 白名单校验后再转发。
 
-### M9. Mofang 客户区 func/ID 由请求完全控制 + 敏感数据/debug 回显
+### M9. billing-module 客户区 func/ID 由请求完全控制 + 敏感数据/debug 回显
 
-- **位置**：`Mofang/eyvescloud.php:616-629,947-980,1612-1716`。
+- **位置**：`billing-module/eyvescloud.php:616-629,947-980,1612-1716`。
 - **风险**：`func`/`id/service_id` 直接取自请求；`eyvescloud_info_ajax` 把 EYVESCLOUD 容器 `usage`、`debug`（含回显的 `$_GET`/payload）直接返回给客户。横向越权与敏感信息泄露是否可利用取决于计费系统框架外层是否做会话+归属校验（当前文件未见）。
 - **建议**：在函数入口对 `func` 白名单 + 服务归属做强校验；关闭生产环境 debug 回显。
 
-### M10. Mofang 票据经 URL/查询串明文传送 + Host 头注入
+### M10. billing-module 票据经 URL/查询串明文传送 + Host 头注入
 
-- **位置**：`Mofang/eyvescloud.php:361-382,1433-1449`；`webssh.php:5,8,72`。
+- **位置**：`billing-module/eyvescloud.php:361-382,1433-1449`；`webssh.php:5,8,72`。
 - **风险**：`eyvescloud_webssh_url()` 用 `$_SERVER['HTTP_HOST']` 生成 handler 地址，可被 Host 头注入指向攻击者域名；票据放 URL 易被日志/Referer 泄露。
 - **建议**：Host 头校验/白名单；票据改用短时一次性凭证走 header/cookie。
 
@@ -304,8 +304,8 @@ Mofang 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理
 - **L8** 前端轮询重建：`Containers.tsx:156-165`、`ImageManagement.tsx:75-79` 的 `setInterval` 依赖数组含每轮变化的对象导致 interval 反复重建、请求放大；建议把依赖收敛为布尔量/ref。
 - **L9** 前端契约飘移：`migrate-export`、`nodes/{id}/install-script` 的返回形态与全局 `APIResponse<T>` 约定不一致；`BaseURL '/api'` 与文档的 `/api/v1` 并存易造成 404/格式错误。建议统一。
 - **L10** 前端：策略触发记录 `h.value.toFixed(2)` 缺 `||0` 兜底，服务端缺该字段时整页白屏。
-- **L11** Mofang：`templates/info.html:164` 客户区明文渲染 SSH 密码；`templates/nat.html:110,144` 首次服务端渲染变量未确认转义（前端 AJAX 已转义）；JWT 经 URL `$_GET.jwt` 传递（Referer/日志泄露）。
-- **L12** Mofang `webssh.php:15`：`echo QUERY_STRING` 未转义，但响应为 `Content-Type: text/plain`，现代浏览器按纯文本渲染，反射型 XSS 基本被 neutralize（依 Content-Type 而定，仍建议转义）。
+- **L11** billing-module：`templates/info.html:164` 客户区明文渲染 SSH 密码；`templates/nat.html:110,144` 首次服务端渲染变量未确认转义（前端 AJAX 已转义）；JWT 经 URL `$_GET.jwt` 传递（Referer/日志泄露）。
+- **L12** billing-module `webssh.php:15`：`echo QUERY_STRING` 未转义，但响应为 `Content-Type: text/plain`，现代浏览器按纯文本渲染，反射型 XSS 基本被 neutralize（依 Content-Type 而定，仍建议转义）。
 
 ---
 
@@ -315,7 +315,7 @@ Mofang 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理
 2. **发行版来源错位**：`install.sh` 默认 `FenhaoLost/eyves-vm-panel`（见 H4），与 README/部署文档宣称"安装本仓库"不一致（文档已加 `EYVESCLOUD_REPO` 说明）。
 3. **Go 版本号不一致**：README/shiq 声明 Go 1.24，`backend/go.mod` 为 `go 1.25.0`。
 4. **README 内容重复 + 格式损坏**：原 README 功能/技术栈/预览/免责声明/致谢/Star 历史大量整段重复，并在段落间夹带遗留 Markdown 表格碎片与孤立 `<` 字符；已整体重写去重。
-5. **Mofang README 声称"Origin 校验由 EYVESCLOUD 后端完成、前端无法伪造"**：但 `webssh.php` 接受任意 `ws` 目标，计费系统侧无任何校验（见 H5），该声明与实际不符，且未提及 TLS 关闭（H6）与防火墙规则透传（M8）。
+5. **billing-module README 声称"Origin 校验由 EYVESCLOUD 后端完成、前端无法伪造"**：但 `webssh.php` 接受任意 `ws` 目标，计费系统侧无任何校验（见 H5），该声明与实际不符，且未提及 TLS 关闭（H6）与防火墙规则透传（M8）。
 
 ---
 
@@ -325,7 +325,7 @@ Mofang 模块是独立高风险面（webssh.php 无鉴权任意 WebSocket 代理
 | --- | --- | --- |
 | P0 | 统一 `/api/v1/*` 与 `/api/*` 鉴权基线（H1/H2）；修复空绑定 API Key 越权（H3） | server.go / subuser.go / handlers.go |
 | P0 | `install.sh` 默认仓库改为本仓库（H4） | install.sh |
-| P1 | Mofang：webssh 目标白名单 + TLS 校验 + 客户区校验/脱敏（H5/H6/M8/M9/M10） | Mofang/ |
+| P1 | billing-module：webssh 目标白名单 + TLS 校验 + 客户区校验/脱敏（H5/H6/M8/M9/M10） | billing-module/ |
 | P1 | API Key 缺失 scope 不再默认 `["*"]`（M2）；明文口令改哈希 + 列表不下发（M1） | config.go / store_sqlite.go |
 | P2 | 落地 shell 命令 argv 参数化（M3）；AppConfig 统一加锁（M4）；日志精确匹配（M5）；JWT 补 issuer/audience（M6） | lxc/portmap/security/subuser/auth |
 

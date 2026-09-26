@@ -4,7 +4,7 @@
  *
  * 该文件承载三类内容：
  *   1. WHMCS $params 适配器（serverhostname / serverport / serveraccesshash 等）；
- *   2. 与 EYVESCLOUD 面板交互的底层 API 封装（端点和载荷以已验证的魔方模块为权威契约）；
+ *   2. 与 EYVESCLOUD 面板交互的底层 API 封装（端点和载荷以已验证的计费模块为权威契约）；
  *   3. 供客户区 AJAX 使用的统一分发器与结果规整器。
  *
  * 本文件被 eyvescloud.php 与 handlers/api.php 通过 require_once 复用，因此所有函数
@@ -334,7 +334,7 @@ function eyvescloud_options($params)
  * 计算面板基础地址。
  *
  * 优先 serverhostname，其次 serverip；serversecure 为真时使用 https；serverport
- * 非空且未包含在 host 中时追加端口。同时保留魔方风格的 server_host / server_ip /
+ * 非空且未包含在 host 中时追加端口。同时保留计费系统风格的 server_host / server_ip /
  * port / secure 作为回退，方便共用同一套代码。
  *
  * @param array $params
@@ -377,7 +377,7 @@ function eyvescloud_base_url($params)
 
 /**
  * 解析面板 API Key：serveraccesshash 优先，其次 serverpassword。
- * 兼容魔方风格的 accesshash / server_password。
+ * 兼容计费系统风格的 accesshash / server_password。
  *
  * 注意：WHMCS 服务器模块 $params 中的 `password` 是「主机账号密码」（客户实例密码），
  * 不是面板 API Key，因此绝不能作为回退，否则会把客户实例密码当作 API Key 发往面板。

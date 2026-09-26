@@ -408,7 +408,7 @@ w.Header().Set("X-Content-SHA256", hex.EncodeToString(scriptHash[:]))
 
 ### 8.1 API 能力矩阵
 
-| 能力 | EYVESCLOUD | 魔方云 | Virtualizor | SolusVM 2 |
+| 能力 | EYVESCLOUD | 国内主流方案 | Virtualizor | SolusVM 2 |
 |------|-----------|--------|-------------|-----------|
 | **虚拟化** | LXC + KVM | KVM | OpenVZ/Xen/KVM | KVM/OpenVZ/Virtuozzo |
 | **API 风格** | REST JSON | REST JSON | REST/JSON/XML | REST JSON |
@@ -438,7 +438,7 @@ w.Header().Set("X-Content-SHA256", hex.EncodeToString(scriptHash[:]))
 
 ### 8.2 WHMCS 模块能力矩阵
 
-| WHMCS 功能 | EYVESCLOUD | 魔方云 | Virtualizor | SolusVM 2 |
+| WHMCS 功能 | EYVESCLOUD | 国内主流方案 | Virtualizor | SolusVM 2 |
 |-----------|-----------|--------|-------------|-----------|
 | **CreateAccount** | ✅ | ✅ | ✅ | ✅ |
 | **Suspend/Unsuspend** | ✅ | ✅ | ✅ | ✅ |
@@ -615,7 +615,7 @@ POST /api/webhooks {"url":"http://127.0.0.1:22/"}
 
 | 竞品 | 来源 |
 |------|------|
-| 魔方云 | [docs.idcsmart.com](https://docs.idcsmart.com/docs/%E9%AD%94%E6%96%B9%B9%E4%BA%91)、[idcsmart.com/wiki_search](https://www.idcsmart.com/wiki_search/F/20.html) |
+| 国内主流方案 | [docs.idcsmart.com](https://docs.idcsmart.com/docs/%E9%AD%94%E6%96%B9%B9%E4%BA%91)、[idcsmart.com/wiki_search](https://www.idcsmart.com/wiki_search/F/20.html) |
 | Virtualizor | [apps.whmcs.com/cloud/virtualizor](https://apps.whmcs.com/cloud/virtualizor/)、[docs.whmcs.com/8-12/servers/server-modules/virtualizor](https://docs.whmcs.com/8-12/servers/server-modules/virtualizor/)、[virtualizor.com/docs/billing/whmcs-module](https://www.virtualizor.com/docs/billing/whmcs-module/) |
 | SolusVM | [apps.whmcs.com/cloud/solusvm](https://apps.whmcs.com/cloud/solusvm/)、[docs.solusvm.com/v2/billing-integration-guide](https://docs.solusvm.com/v2/billing-integration-guide/prepaid-billing/Configurable-options/Additional+disk.html)、[solusvm.com/features](https://www.solusvm.com/features) |
 

@@ -14,7 +14,7 @@ backend/internal/server/web/*
 # Build artifacts
 /build/
 /dist/
-Mofang/*.zip
+billing-module/*.zip
 *.exe
 *.dll
 *.so

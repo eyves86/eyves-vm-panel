@@ -7,7 +7,7 @@ import (
 
 // containerIdempotency 记录“已成功创建”的容器名，键为客户端提供的
 // Idempotency-Key。用于打通开通流程：同一幂等键重试时直接返回既有容器，
-// 避免计费系统（WHMCS / 魔方）在回调超时后重复开通第二次。
+// 避免计费系统（WHMCS 等）在回调超时后重复开通第二次。
 //
 // 说明：容器名的唯一性校验（lxc.Manager.CreateContainer 的
 // “container name already exists”）仍是最终兜底，本表仅让同键重试
