@@ -280,10 +280,14 @@ func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, a
 			return false
 		}
 		body = bytes.NewReader(buf)
+		// 关键：读完后立刻用完整缓存重建 r.Body（不消耗原 reader 的状态），
+		// 这样转发失败返回 false 时，本地 fallback handler 还能再读一次。
+		r.Body = io.NopCloser(bytes.NewReader(buf))
 	}
 	data, status, err := proxyNodeRequest(r, node, method,
 		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, action), body)
 	if err != nil || status >= 500 {
+		// 转发失败，但 r.Body 已经被上面重建过，handler 继续读没问题。
 		return false
 	}
 	w.Header().Set("Content-Type", "application/json")

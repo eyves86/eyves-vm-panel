@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -21,10 +23,16 @@ import (
 //   - enabled (bool)：true=进入救援，false=退出救援
 //   - iso_id (string)：进入救援时必填
 //
-// 多节点：先查容器是否属于远端 agent，是则转发到 agent 的 /api/agent/containers/{id}/rescue。
+// 多节点：先把 body 完整缓存，转发给 agent 的 /api/agent/containers/{id}/rescue，
+// 再决定是否执行本地逻辑。agent 不可达 fallback 到本机。
 func HandleContainerRescue(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	buf, err := io.ReadAll(io.LimitReader(r.Body, 8*1024*1024))
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Failed to read body"})
 		return
 	}
 	var req struct {
@@ -32,7 +40,7 @@ func HandleContainerRescue(w http.ResponseWriter, r *http.Request) {
 		Enabled     bool   `json:"enabled"`
 		ISOID       string `json:"iso_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.NewDecoder(bytes.NewReader(buf)).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request"})
 		return
 	}
@@ -45,8 +53,20 @@ func HandleContainerRescue(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
 		return
 	}
-	if routeToAgent(w, r, c, "rescue") {
-		return
+	// 多节点转发：必须用缓存的 buf（不能再读 r.Body，它已经被 io.ReadAll 消耗完了）。
+	if c.NodeID != "" {
+		if node, ok := config.FindNode(c.NodeID); ok && node.Address != "" {
+			data, status, pErr := proxyNodeRequest(r, node, http.MethodPost,
+				fmt.Sprintf("/api/agent/containers/%d/rescue", c.ID),
+				bytes.NewReader(buf))
+			if pErr == nil && status < 500 {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write(data)
+				return
+			}
+			// agent 不可达/5xx → 本地 fallback
+		}
 	}
 	doRescue(w, r, c, req.Enabled, req.ISOID)
 }

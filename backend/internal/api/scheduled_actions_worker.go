@@ -77,12 +77,21 @@ func runScheduledActionsTick() {
 			releaseScheduledActionRun(a.ID)
 			continue
 		}
+		// tick 里起 goroutine 异步执行，但 tick 结束前 WaitGroup 等待全部完成，
+		// 避免下次 tick 叠加上一轮还没执行完的任务；也让测试可以在 runScheduledActionsTick
+		// 返回后立即 assert，不用 sleep 等待异步。
+		wg.Add(1)
 		go func(a config.ScheduledAction) {
+			defer wg.Done()
 			defer releaseScheduledActionRun(a.ID)
 			executeScheduledAction(a)
 		}(a)
 	}
+	wg.Wait()
 }
+
+// runScheduledActionsTick 的 goroutine 都登记到这个 WaitGroup，便于单元测试和 race 检测。
+var wg sync.WaitGroup
 
 // scheduledActionNextFire 根据 Repeat 计算下次执行时间（RFC3339）。
 //   - none / 空：返回 ""（调用方会禁用任务）。
