@@ -197,6 +197,12 @@ func handleContainerProcessKill(w http.ResponseWriter, r *http.Request, c *confi
 		})
 		return
 	}
+	if c.Status != "running" {
+		jsonResponse(w, http.StatusConflict, APIResponse{
+			Success: false, Message: "容器当前未运行（status=" + c.Status + "），无法 kill 进程",
+		})
+		return
+	}
 	lxcName := c.LxcName()
 	if lxcName == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "容器 LXC 内部名缺失"})
@@ -219,4 +225,6 @@ func handleContainerProcessKill(w http.ResponseWriter, r *http.Request, c *confi
 		Success: true,
 		Message: "已发送 " + sig + " 给 " + strconv.Itoa(len(req.PIDs)) + " 个进程",
 	})
+	auditRequest(r, "container.process_kill", strconv.Itoa(c.ID),
+		sig+" pids="+strconv.Itoa(len(req.PIDs)), true, "")
 }

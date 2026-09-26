@@ -81,6 +81,19 @@ func handleContainerBandwidth(w http.ResponseWriter, r *http.Request, c *config.
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: resp})
 }
 
+var (
+	// bandwidthIfaceExcludePrefixes 容器流量统计时排除的虚拟/隧道接口前缀。
+	// 这些接口的 rx/tx 字节属于宿主侧（VPN、K8s CNI、bonding、容器间桥接），不应计入
+	// 单个容器的"流量明细"。Virtualizor 也是在面板上声明"per-VM bandwidth"，
+	// 对应的就是宿主物理 NIC 的差分聚合，虚拟接口必须剥除。
+	bandwidthIfaceExcludePrefixes = []string{
+		"lo", "docker", "veth", "br-", "ifb", "virbr",
+		"tailscale", "wg", "tun", "tap", "bond",
+		"flannel", "cni", "calico", "ipvlan", "macvlan",
+		"kube", "vxlan", "geneve", "dummy",
+	}
+)
+
 // readLocalNetCounterSeries 读本机所有物理 NIC 的 rx/tx 字节计数器（瞬时值）。
 // 真实带宽历史需要 RRD/vnstat，这里仅返回当前采样作为占位，前端可展示"实时速率"。
 //
@@ -94,10 +107,7 @@ func readLocalNetCounterSeries(period string) ([]bandwidthPoint, bandwidthTotal)
 	var inTotal, outTotal uint64
 	for _, d := range ifaceDirs {
 		iface := filepath.Base(filepath.Dir(d))
-		// 排除 lo / docker* / veth* / br-* / ifb-* 等虚拟接口
-		if iface == "lo" || strings.HasPrefix(iface, "docker") ||
-			strings.HasPrefix(iface, "veth") || strings.HasPrefix(iface, "br-") ||
-			strings.HasPrefix(iface, "ifb") || strings.HasPrefix(iface, "virbr") {
+		if isBandwidthExcludedIface(iface) {
 			continue
 		}
 		rx := readCounter(filepath.Join(d, "rx_bytes"))
@@ -117,6 +127,16 @@ func readLocalNetCounterSeries(period string) ([]bandwidthPoint, bandwidthTotal)
 	return []bandwidthPoint{point}, bandwidthTotal{
 		InGB: inGB, OutGB: outGB, Total: inGB + outGB,
 	}
+}
+
+// isBandwidthExcludedIface 判断给定接口名是否属于"非宿主物理 NIC"，决定是否计入带宽聚合。
+func isBandwidthExcludedIface(iface string) bool {
+	for _, p := range bandwidthIfaceExcludePrefixes {
+		if iface == p || strings.HasPrefix(iface, p) {
+			return true
+		}
+	}
+	return false
 }
 
 func readCounter(path string) uint64 {

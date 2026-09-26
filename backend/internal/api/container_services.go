@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,4 +197,6 @@ func handleContainerServiceAction(w http.ResponseWriter, r *http.Request, c *con
 		Success: true,
 		Message: "已对 " + unit + " 执行 " + req.Action,
 	})
+	auditRequest(r, "container.service_action", strconv.Itoa(c.ID),
+		unit+" "+req.Action, true, "")
 }

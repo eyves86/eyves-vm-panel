@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"eyvescloud/internal/config"
@@ -95,6 +96,9 @@ type hvmSettingsRequest struct {
 //   - NicDriver 白名单 [virtio e1000 rtl8139 ne2k_pci vmxnet3]
 //   - VNCKeyMap 白名单（与 GET AvailableKeyMaps 同步）
 //   - Acceleration 白名单 [default host-passthrough off]
+//
+// 实现要点：在 MutateGlobal 内一次性修改 cfg.Containers，避免先写指针再持久化的
+// "半提交" 状态（持久化失败时内存已被脏改，下次 list 看到错值）。
 func handleContainerHVMSettingsPut(w http.ResponseWriter, r *http.Request, c *config.Container) {
 	if c == nil {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
@@ -135,7 +139,6 @@ func handleContainerHVMSettingsPut(w http.ResponseWriter, r *http.Request, c *co
 			})
 			return
 		}
-		c.HVMBootOrder = *req.BootOrder
 	}
 	if req.NicDriver != nil {
 		if !nicWhitelist[*req.NicDriver] {
@@ -144,7 +147,6 @@ func handleContainerHVMSettingsPut(w http.ResponseWriter, r *http.Request, c *co
 			})
 			return
 		}
-		c.HVMNicDriver = *req.NicDriver
 	}
 	if req.VNCKeyMap != nil {
 		if !keymapWhitelist[*req.VNCKeyMap] {
@@ -153,7 +155,6 @@ func handleContainerHVMSettingsPut(w http.ResponseWriter, r *http.Request, c *co
 			})
 			return
 		}
-		c.HVMVNCKeyMap = *req.VNCKeyMap
 	}
 	if req.Acceleration != nil {
 		if !accelWhitelist[*req.Acceleration] {
@@ -162,17 +163,43 @@ func handleContainerHVMSettingsPut(w http.ResponseWriter, r *http.Request, c *co
 			})
 			return
 		}
-		c.HVMAcceleration = *req.Acceleration
 	}
-	if req.EnableTuntap != nil {
-		c.HVMEnableTuntap = *req.EnableTuntap
-	}
-	if req.EnablePPP != nil {
-		c.HVMEnablePPP = *req.EnablePPP
-	}
-	if err := config.UpdateContainer(c); err != nil {
+	var mutated bool
+	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID != c.ID {
+				continue
+			}
+			if req.BootOrder != nil {
+				cfg.Containers[i].HVMBootOrder = *req.BootOrder
+			}
+			if req.NicDriver != nil {
+				cfg.Containers[i].HVMNicDriver = *req.NicDriver
+			}
+			if req.VNCKeyMap != nil {
+				cfg.Containers[i].HVMVNCKeyMap = *req.VNCKeyMap
+			}
+			if req.Acceleration != nil {
+				cfg.Containers[i].HVMAcceleration = *req.Acceleration
+			}
+			if req.EnableTuntap != nil {
+				cfg.Containers[i].HVMEnableTuntap = *req.EnableTuntap
+			}
+			if req.EnablePPP != nil {
+				cfg.Containers[i].HVMEnablePPP = *req.EnablePPP
+			}
+			mutated = true
+			return
+		}
+	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{
 			Success: false, Message: "持久化失败: " + err.Error(),
+		})
+		return
+	}
+	if !mutated {
+		jsonResponse(w, http.StatusNotFound, APIResponse{
+			Success: false, Message: "容器在配置中找不到",
 		})
 		return
 	}
@@ -180,4 +207,6 @@ func handleContainerHVMSettingsPut(w http.ResponseWriter, r *http.Request, c *co
 		Success: true,
 		Message: "HVM 设置已更新（下次启动时生效）",
 	})
+	auditRequest(r, "container.hvm_settings", strconv.Itoa(c.ID),
+		"HVM settings updated", true, "")
 }

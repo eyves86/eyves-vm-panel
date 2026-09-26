@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -240,6 +242,9 @@ func parseDFInodes(s string) (used, limit int64, err error) {
 // routeToAgent 容器级转发：与主 handler 内联 routeToAgent 类似。
 // 如果容器没有 NodeID（非多节点场景）直接返回 false，由调用方走本地实现。
 // agent 不可达或返回 5xx 也返回 false，让本地 fallback 接管（避免 agent 单点故障）。
+//
+// 对 POST/PUT 必须把原始 r.Body 透传给 agent，否则 agent 端会收到空 body 导致
+// 杀进程 / 服务操作 / HVM 写入 / 定时任务创建等写动作全部丢失入参。
 func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, action string) bool {
 	if c == nil || c.NodeID == "" {
 		return false
@@ -250,11 +255,34 @@ func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, a
 	}
 	method := http.MethodGet
 	switch action {
-	case "processes/kill", "services/action", "scheduled-actions", "scheduled-actions/delete":
+	case "processes/kill", "services/action":
 		method = http.MethodPost
+	case "scheduled-actions", "scheduled-actions/delete":
+		// 这两个 action 主控端允许 GET（list）和 POST（create）；
+		// 用 r.Method 透传，避免误把 list 也当作 create。
+		if r.Method == http.MethodPost {
+			method = http.MethodPost
+		}
+	case "hvm-settings":
+		// hvm-settings 既可以是 GET（读）也可以是 PUT（写），透传原方法。
+		if r.Method == http.MethodPut {
+			method = http.MethodPut
+		}
+	}
+	var body io.Reader
+	if method != http.MethodGet && r.Body != nil {
+		// body 是一次性的 ReadCloser，必须读到 []byte 再包装成 Reader 才能转发。
+		// 8MB 上限对齐 proxyNodeRequest 的 8MB 限制，防止 OOM。
+		buf, err := io.ReadAll(io.LimitReader(r.Body, 8*1024*1024))
+		if err != nil {
+			// 主体读取失败：本机 fallback 不要再去解析损坏的 body（已读到 EOF 后的状态机），
+			// 直接返回 false 让调用方按"无 body"语义自行处理（GET 类无影响）。
+			return false
+		}
+		body = bytes.NewReader(buf)
 	}
 	data, status, err := proxyNodeRequest(r, node, method,
-		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, action), nil)
+		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, action), body)
 	if err != nil || status >= 500 {
 		return false
 	}

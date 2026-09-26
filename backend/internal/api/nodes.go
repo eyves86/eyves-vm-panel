@@ -1071,6 +1071,15 @@ func proxyNodeRequest(r *http.Request, node config.Node, method, path string, bo
 	}
 	req.Header.Set("Authorization", "Bearer "+node.Token)
 	req.Header.Set("Content-Type", "application/json")
+	// 多节点转发：把原始请求的 actor（API Key / 子用户 / admin）写到
+	// X-Original-Actor header，agent 端审计时优先使用，避免把操作记到 agent token 名下。
+	if r != nil {
+		if orig := r.Header.Get("X-Original-Actor"); orig != "" {
+			req.Header.Set("X-Original-Actor", orig)
+		} else {
+			req.Header.Set("X-Original-Actor", requestActor(r))
+		}
+	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Do(req)

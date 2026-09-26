@@ -68,6 +68,12 @@ func authContextFromRequest(r *http.Request) (AuthContext, bool) {
 }
 
 func requestActor(r *http.Request) string {
+	// 多节点转发场景：主控 → agent 转发时把原始请求的 actor 写到 X-Original-Actor。
+	// agent 端审计时应优先使用这个值，避免把"agent 自身 token"记成操作人。
+	// 仅当 header 非空时使用（直连到 agent 的请求不会有这个 header，自然 fallback）。
+	if orig := r.Header.Get("X-Original-Actor"); orig != "" {
+		return orig
+	}
 	if ctx, ok := authContextFromRequest(r); ok && ctx.Actor != "" {
 		return ctx.Actor
 	}

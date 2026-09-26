@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -138,6 +139,8 @@ func handleScheduledActionCreate(w http.ResponseWriter, r *http.Request, c *conf
 		Message: "已创建定时任务 " + id,
 		Data:    action,
 	})
+	auditRequest(r, "container.scheduled_action.create", strconv.Itoa(c.ID),
+		id+" type="+req.Type+" repeat="+req.Repeat, true, "")
 }
 
 // handleScheduledActionDelete 删除定时任务（DELETE /api/containers/{id}/scheduled-actions/{actionID}）。
@@ -170,6 +173,8 @@ func handleScheduledActionDelete(w http.ResponseWriter, r *http.Request, c *conf
 		Success: true,
 		Message: "已删除 " + actionID,
 	})
+	auditRequest(r, "container.scheduled_action.delete", strconv.Itoa(c.ID),
+		actionID, true, "")
 }
 
 func scheduledActionCreatedBy(r *http.Request) string {
