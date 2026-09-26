@@ -64,15 +64,21 @@ PUT /api/metrics/retention
 
 `PUT` 请求体（仅管理员）：`{"retention_days": N}`，范围 `0`–`3650`，`0` 表示永久保留。响应还包含 `sample_interval_secs`、`raw_history_secs`。
 
-## 面板版本检测
+## 面板版本检测与升级
 
-设置中的「版本」页面会检测是否有可用更新。
+版本检测与升级入口位于**侧边栏底部**（非系统设置页）：面板登录后自动检测一次新版本，有更新时侧边栏显示「有更新」角标；点击角标打开「面板更新」弹窗，可选择更新仓库（默认官方仓库，支持 `owner/name` 格式的第三方仓库）与目标版本，二次确认后升级。
 
 ```http
 GET /api/v1/check-update
+GET /api/v1/update/releases?repo=owner/name
+POST /api/v1/update
 ```
 
-仅管理员可调，返回 `current`（当前版本）、`latest`（最新版本）、`has_update`（是否有更新）、`err`（检测错误）。结果缓存 10 分钟，仅做检测不下载；升级由 install.sh / CLI 完成。
+- `GET /check-update` 仅管理员可调，返回 `current`（当前版本）、`latest`（最新版本）、`has_update`（是否有更新）、`err`（检测错误）。结果缓存 10 分钟。
+- `GET /update/releases` 返回可选升级版本列表（默认最新 20 个），带 2 分钟短缓存；`repo` 参数经严格校验防 SSRF。
+- `POST /update` 触发**面板内直接升级**：后台执行下载 → 解压 → 备份 → 就地替换二进制 → 自动重启服务，请求立即返回「已开始」。请求体可选 `{repo, tag}`；同一时间仅允许一个升级任务（并发触发返回 409）。升级只替换 `/usr/local/bin/eyvescloud`，`/root/.eyvescloud` 中的配置、容器数据与任务记录全部保留。
+
+除面板内升级外，仍可通过 `install.sh` 或 CLI（`eyvescloud cli` 菜单）升级，三种方式等价。
 
 ## 账号密码恢复命令
 
@@ -102,3 +108,5 @@ eyvescloud account reset --password <新密码>   # 显式指定新密码（至�
 | GET/PUT | `/api/overcommit/settings` | 内存超售与 KSM 调优 |
 | GET/PUT | `/api/metrics/retention` | 指标留存策略 |
 | GET | `/api/v1/check-update` | 面板版本检测 |
+| GET | `/api/v1/update/releases` | 可选升级版本列表 |
+| POST | `/api/v1/update` | 面板内直接升级 |

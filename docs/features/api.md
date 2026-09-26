@@ -8,6 +8,7 @@ EyvesCloud 对外提供一套版本化 HTTP API（`/api/v1`），覆盖容器生
 
 - 版本化前缀：`/api/v1`（推荐，新增接口优先在这里提供）。
 - 兼容前缀：`/api`（历史路径，保留可用）。
+- 注意：少数端点**仅注册 `/api` 前缀**，没有 `/api/v1` 变体，包括登录与账号（`/api/login`、`/api/check-auth`、`/api/change-password`、`/api/change-username`、`/api/2fa/*`）、子用户登录（`/api/sub-user/login`、`/api/sub-user/access`）、超分与指标留存（`/api/overcommit/settings`、`/api/metrics/retention`）、节点相关（`/api/nodes*`、`/api/node-groups*`、`/api/clusters*`）、`/api/regions*`、`/api/ip-groups*`、`/api/isos`（`/api/isos/upload` 除外）以及 `/api/version`。调用这些端点时必须使用 `/api` 前缀。
 - 版本信息：`GET /api/version`。
 - 健康检查：`GET /api/v1/health`、`GET /api/v1/health/detail`（后者仅管理员）。
 
@@ -26,7 +27,7 @@ API 支持三种身份，统一通过请求头识别：
 ### 管理员登录
 
 ```http
-POST /api/v1/login
+POST /api/login
 Content-Type: application/json
 
 { "username": "admin", "password": "your-password", "twofa_code": "" }
@@ -186,20 +187,22 @@ GET /api/v1/tasks/stats
 
 ## 接口参考
 
-以下路径均省略 `/api/v1` 前缀。标注「管理员」的接口需要管理员会话或持 `admin:access` 的 API Key。
+以下路径均省略 `/api/v1` 前缀；表中以 `/api/` 开头的完整路径表示该端点**仅注册 `/api` 前缀**（无 `/api/v1` 变体）。标注「管理员」的接口需要管理员会话或持 `admin:access` 的 API Key。
 
 ### 登录与账号
 
+以下端点仅注册 `/api` 前缀。
+
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| POST | `/login` | 管理员登录，返回 JWT |
-| GET | `/check-auth` | 校验当前身份与生效 scope |
-| POST | `/sub-user/login` | 子用户登录 |
-| POST | `/sub-user/access` | 使用访问码登录 |
-| POST | `/sub-user/change-password` | 子用户改密（需登录） |
-| POST | `/change-password` | 修改主管理员密码（仅本人会话） |
-| POST | `/change-username` | 修改主管理员用户名（仅本人会话） |
-| GET | `/2fa/status` `/2fa/setup` `/2fa/enable` `/2fa/disable` `/2fa/regenerate-backup-codes` | 两步验证（仅主管理员会话） |
+| POST | `/api/login` | 管理员登录，返回 JWT |
+| GET | `/api/check-auth` | 校验当前身份与生效 scope |
+| POST | `/api/sub-user/login` | 子用户登录 |
+| POST | `/api/sub-user/access` | 使用访问码登录 |
+| POST | `/api/sub-user/change-password` | 子用户改密（需登录） |
+| POST | `/api/change-password` | 修改主管理员密码（仅本人会话） |
+| POST | `/api/change-username` | 修改主管理员用户名（仅本人会话） |
+| GET | `/api/2fa/status` `/api/2fa/setup` `/api/2fa/enable` `/api/2fa/disable` `/api/2fa/regenerate-backup-codes` | 两步验证（仅主管理员会话） |
 
 ### 总览与主机
 
@@ -215,8 +218,27 @@ GET /api/v1/tasks/stats
 | POST | `/routing/ipv4-scan` | 扫描公网 IPv4 段（管理员） |
 | GET | `/ipv6/status` | IPv6 状态 |
 | GET | `/task-queue/settings` / PUT | 任务并发设置（管理员） |
-| GET | `/overcommit/settings` | 超分设置（管理员） |
-| GET | `/metrics/retention` | 指标保留策略（管理员） |
+| GET | `/api/overcommit/settings` / PUT | 超分设置（管理员，仅 `/api` 前缀） |
+| GET | `/api/metrics/retention` / PUT | 指标保留策略（管理员，仅 `/api` 前缀） |
+
+### 节点与分组
+
+以下端点仅注册 `/api` 前缀，供主控-被控架构与节点编排使用。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET/POST | `/api/nodes` | 节点列表 / 创建（管理员） |
+| DELETE | `/api/nodes/{id}` | 删除节点（管理员） |
+| GET | `/api/nodes/{id}/install-script` | 获取被控一键安装脚本（管理员） |
+| GET | `/api/nodes/binary` | 下载主控二进制（安装脚本使用） |
+| POST | `/api/nodes/register` | 被控注册（安装密钥换 token） |
+| POST | `/api/nodes/{id}/heartbeat` | 被控心跳（节点 token） |
+| GET/POST | `/api/node-groups` | 节点分组列表 / 创建（管理员，创建时可选 `node_ids` 绑定成员） |
+| GET/PUT/DELETE | `/api/node-groups/{id}` | 分组详情 / 更新 / 删除（`node_ids` 非 nil 时整体替换成员） |
+| GET/POST | `/api/clusters` | 集群列表 / 创建（管理员，支持 `node_ids`） |
+| GET/PUT/DELETE | `/api/clusters/{id}` | 集群详情 / 更新 / 删除（支持 `node_ids` 整体替换成员） |
+
+节点分组与集群的 `node_ids` 语义为**整体替换成员集合**：创建 / 更新时传入节点 ID 数组（可为空数组）即全量替换成员；PUT 不传该字段则保持现有成员不变。一个节点同一时间只能归属一个分组与一个集群。
 
 ### 容器
 
@@ -428,6 +450,9 @@ GET /api/v1/tasks/stats
 | GET/POST | `/ssh-keys` , `/ssh-keys/{id}` | 平台托管 SSH 公钥 |
 | GET/POST | `/recipes` , `/recipes/{id}` | 自定义脚本模板 |
 | GET | `/swap` / POST | Swap 信息 / 调整 |
+| GET | `/check-update` | 面板版本检测（管理员，结果缓存 10 分钟） |
+| GET | `/update/releases` | 可选升级版本列表（管理员，支持 `?repo=owner/name`，缓存 2 分钟） |
+| POST | `/update` | 面板内直接升级（管理员，后台执行下载→备份→替换→重启） |
 
 ### Webhooks（事件订阅）
 

@@ -54,6 +54,15 @@ eyvescloud agent \
 
 After a successful registration, the configuration is stored in the worker's `agent.json`; on subsequent restarts the install key is no longer needed (unless you switch Controllers).
 
+## Node Groups and Clusters
+
+When you manage many nodes, organize them into **groups** or **clusters**:
+
+- When creating or editing a group/cluster, pick member nodes directly in the dialog via a checkbox list; nodes already in another group are flagged, and saving moves them out of the old group automatically.
+- Membership semantics is **full replacement**: the `node_ids` array submitted on save is the complete member set of that group/cluster (an empty array clears all members); leaving it untouched on edit keeps the current members.
+- A node belongs to at most one group and one cluster at a time; removing a node from the member list clears its assignment automatically.
+- The cluster list shows a "Members" column (hover to see member names), aligned with the group list.
+
 ## Heartbeat and Status
 
 The worker reports a heartbeat every 10 seconds, based on which the Controller updates:
@@ -106,5 +115,9 @@ systemctl disable --now eyvescloud-agent
 | POST | `/api/nodes/{id}/heartbeat` | Worker heartbeat (node token) |
 | GET | `/api/nodes/{id}/containers` | Proxy view of worker containers (admin) |
 | POST | `/api/nodes/{id}/containers/{cid}/{action}` | Proxy operation on worker containers (admin) |
+| GET/POST | `/api/node-groups` | Node group list / create (optional `node_ids` to bind members) |
+| GET/PUT/DELETE | `/api/node-groups/{id}` | Group detail / update / delete (`node_ids` non-nil replaces all members) |
+| GET/POST | `/api/clusters` | Cluster list / create (supports `node_ids`) |
+| GET/PUT/DELETE | `/api/clusters/{id}` | Cluster detail / update / delete (supports `node_ids` member replacement) |
 | GET | `/api/agent/containers` | Worker container list (Controller token) |
 | POST | `/api/agent/containers/{cid}/{action}` | Worker container operation (Controller token) |

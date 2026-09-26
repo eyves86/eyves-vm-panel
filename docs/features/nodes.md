@@ -54,6 +54,15 @@ eyvescloud agent \
 
 注册成功后，配置保存在被控的 `agent.json`，之后重启无需再传安装密钥（除非更换主控）。
 
+## 节点分组与集群
+
+节点数量较多时，可将节点划入**分组**或**集群**便于批量管理：
+
+- 创建 / 编辑分组或集群时，弹窗内直接**勾选成员节点**（复选框列表）；节点当前属于其他分组时会提示，保存后自动移出原分组。
+- 成员管理语义为**整体替换**：保存时提交的 `node_ids` 数组即为该分组/集群的完整成员集合（传空数组即清空成员）；编辑时若不改动成员则保持不变。
+- 一个节点同一时间只能归属一个分组与一个集群；从成员列表移除节点即自动清空其归属。
+- 集群列表提供「成员节点」列（悬浮显示成员名称），与分组列表一致。
+
 ## 心跳与状态
 
 被控每 10 秒上报一次心跳，主控据此更新：
@@ -142,6 +151,10 @@ systemctl disable --now eyvescloud-agent
 | GET | `/api/nodes/{id}/images` | 代理查看被控镜像清单 |
 | POST | `/api/nodes/{id}/images/sync` | 下发主控镜像清单并触发被控同步 |
 | POST | `/api/nodes/{id}/backup` | 节点级冷备份（被控全量容器备份） |
+| GET/POST | `/api/node-groups` | 节点分组列表 / 创建（创建时可选 `node_ids` 绑定成员） |
+| GET/PUT/DELETE | `/api/node-groups/{id}` | 分组详情 / 更新 / 删除（`node_ids` 非 nil 时整体替换成员） |
+| GET/POST | `/api/clusters` | 集群列表 / 创建（支持 `node_ids`） |
+| GET/PUT/DELETE | `/api/clusters/{id}` | 集群详情 / 更新 / 删除（支持 `node_ids` 整体替换成员） |
 | GET | `/api/agent/containers` | 被控容器列表（主控 token） |
 | POST | `/api/agent/containers/{cid}/{action}` | 被控容器操作（主控 token）。action：`start`/`stop`/`restart`/`destroy`/`reinstall`/`suspend`/`unsuspend`/`reset-password`/`usage`/`resize`/`snapshot`/`snapshots/delete`/`snapshots/restore` |
 | POST | `/api/agent/ssh-ticket` | 发行被控 WebSSH 一次性票据（主控 token，级联拨号用） |
@@ -156,7 +169,7 @@ systemctl disable --now eyvescloud-agent
 | POST | `/api/containers/{id}/start|stop|restart` | 转发被控执行 |
 | POST | `/api/containers/{id}/reinstall` | 转发被控执行 |
 | POST | `/api/containers/{id}/suspend|unsuspend` | 转发被控执行 |
-| DELETE | `/api/containers/{id}` | 转发被控销毁 |
+| DELETE | `/api/containers/{id}/delete` | 转发被控销毁（注意带 `/delete` 后缀） |
 | POST | `/api/containers/{id}/reset-password` | 转发被控执行 |
 | GET | `/api/containers/{id}/usage` | 被控本机计算实时用量并返回 |
 | GET | `/api/containers/{id}/history` | 心跳聚合的指标历史（主控本地） |
