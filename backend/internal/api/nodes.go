@@ -274,21 +274,6 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-func clientIP(r *http.Request) string {
-	if xff := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); xff != "" {
-		if idx := strings.Index(xff, ","); idx != -1 {
-			xff = strings.TrimSpace(xff[:idx])
-		}
-		if xff != "" {
-			return xff
-		}
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return strings.TrimPrefix(strings.TrimSuffix(r.RemoteAddr, "]"), "[")
-	}
-	return host
-}
 
 func sameIPv4Prefix24(a, b string) bool {
 	ipa := net.ParseIP(a)

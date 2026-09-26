@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"time"
 	"context"
-	"path/filepath"
 	"strings"
 
 	"eyvescloud/internal/config"

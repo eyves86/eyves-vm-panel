@@ -660,9 +660,6 @@ func subUserAllowedContainers(r *http.Request) (subUserAccess, bool) {
 
 func requestAllowedContainers(r *http.Request) (subUserAccess, bool) {
 	if ctx, ok := authContextFromRequest(r); ok {
-		if ctx.Type == authTypeAPIKey && len(ctx.ContainerUUIDs) == 0 {
-			return subUserAccess{}, false
-		}
 		if ctx.Type == authTypeSubUser || ctx.Type == authTypeAPIKey {
 			allowed := subUserAccess{names: make(map[string]bool), uuids: make(map[string]bool)}
 			for _, uuid := range ctx.ContainerUUIDs {
@@ -891,9 +888,6 @@ func containerByIdentifier(identifier string) *config.Container {
 }
 
 func isContainerAllowedForRequest(r *http.Request, identifier string) bool {
-	if ctx, ok := authContextFromRequest(r); ok && ctx.Type == authTypeAPIKey && len(ctx.ContainerUUIDs) == 0 {
-		return false
-	}
 	allowed, restricted := requestAllowedContainers(r)
 	if !restricted {
 		return true

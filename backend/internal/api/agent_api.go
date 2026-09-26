@@ -268,7 +268,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if req.VCPU > 0 {
-					cfg.Containers[i].VCPU = req.VCPU
+					cfg.Containers[i].VCPU = float64(req.VCPU)
 				}
 				if req.RAMMB > 0 {
 					cfg.Containers[i].RAMMB = req.RAMMB
