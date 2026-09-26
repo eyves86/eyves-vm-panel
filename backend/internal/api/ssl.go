@@ -313,7 +313,9 @@ func requestLetsEncryptCertificate(target, email string) (string, string, error)
 	} else {
 		args = append(args, "-d", target)
 	}
-	cmd := exec.Command("certbot", args...)
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 120*time.Second)
+ defer _cancel0()
+	cmd := exec.CommandContext(_ctx0, "certbot", args...)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", "", fmt.Errorf("Let's Encrypt request failed: %s", strings.TrimSpace(string(output)))
@@ -522,7 +524,9 @@ func restartIfRequested(applyNow bool) {
 	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
-		_ = exec.Command("systemctl", "restart", "eyvescloud").Start()
+  _ctx1, _cancel1 := context.WithTimeout(context.Background(), 15*time.Second)
+  defer _cancel1()
+		_ = exec.CommandContext(_ctx1, "systemctl", "restart", "eyvescloud").Start()
 	}()
 }
 

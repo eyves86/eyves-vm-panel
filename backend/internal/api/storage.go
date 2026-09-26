@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
+	"context"
 	pathpkg "path"
 	"path/filepath"
 	"strings"
@@ -311,7 +313,9 @@ func detectStorageDisks() []storageDiskInfo {
 	var payload struct {
 		BlockDevices []lsblkDevice `json:"blockdevices"`
 	}
-	out, err := exec.Command("lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,RO").Output()
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _cancel0()
+	out, err := exec.CommandContext(_ctx0, "lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL,RO").Output()
 	if err != nil {
 		return nil
 	}
@@ -386,7 +390,9 @@ func isUsableStorageMount(deviceType, fsType, devicePath, mountPoint string, rea
 }
 
 func mountIsReadOnly(mountPoint string) bool {
-	out, err := exec.Command("findmnt", "-n", "-o", "OPTIONS", "--target", mountPoint).Output()
+ _ctx1, _cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _cancel1()
+	out, err := exec.CommandContext(_ctx1, "findmnt", "-n", "-o", "OPTIONS", "--target", mountPoint).Output()
 	if err != nil {
 		return false
 	}
@@ -445,7 +451,9 @@ func dirSizeBytes(path string) int64 {
 	// Count allocated blocks on this filesystem only. LXC rootfs directories can
 	// contain active mounts such as proc/sys; traversing them is slow and reports
 	// enormous virtual sizes that are not actually occupied by EYVESCLOUD data.
-	out, err := exec.Command("du", "-skx", path).Output()
+ _ctx2, _cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _cancel2()
+	out, err := exec.CommandContext(_ctx2, "du", "-skx", path).Output()
 	if err == nil {
 		fields := strings.Fields(string(out))
 		if len(fields) > 0 {
@@ -469,7 +477,9 @@ func dirSizeBytes(path string) int64 {
 }
 
 func dfPath(path string) (size int64, used int64, free int64) {
-	out, err := exec.Command("df", "-B1", "-P", path).Output()
+ _ctx3, _cancel3 := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _cancel3()
+	out, err := exec.CommandContext(_ctx3, "df", "-B1", "-P", path).Output()
 	if err != nil {
 		return 0, 0, 0
 	}

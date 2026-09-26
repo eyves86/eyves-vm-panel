@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"context"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -55,7 +56,9 @@ func ensureRemoteBackupKey(keyPath string) error {
 	if err := os.MkdirAll(filepath.Dir(keyPath), 0700); err != nil {
 		return err
 	}
-	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "eyvescloud-remote-backup", "-f", keyPath)
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _cancel0()
+	cmd := exec.CommandContext(_ctx0, "ssh-keygen", "-t", "ed25519", "-N", "", "-C", "eyvescloud-remote-backup", "-f", keyPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("ssh-keygen failed: %v: %s", err, strings.TrimSpace(string(out)))
 	}

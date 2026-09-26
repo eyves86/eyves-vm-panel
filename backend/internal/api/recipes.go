@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"os/exec"
+	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -469,7 +470,9 @@ func executeRecipeOnKVM(c *config.Container, script string, timeoutSec int) (str
 
 	// 先尝试 virsh qemu-agent-command guest-exec
 	guestExecJSON := fmt.Sprintf(`{"execute":"guest-exec","arguments":{"path":"/bin/bash","arg":["-c",%q],"run-as":"root","cwd":"/"}}`, script)
-	cmd := exec.Command("virsh", "qemu-agent-command", vmName, guestExecJSON)
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 20*time.Second)
+ defer _cancel0()
+	cmd := exec.CommandContext(_ctx0, "virsh", "qemu-agent-command", vmName, guestExecJSON)
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return string(out), nil
@@ -487,7 +490,9 @@ func executeRecipeOnKVM(c *config.Container, script string, timeoutSec int) (str
 	}
 
 	if c.SSHPassword != "" {
-		sshCmd := exec.Command("sshpass", "-p", c.SSHPassword,
+  _ctx1, _cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
+  defer _cancel1()
+		sshCmd := exec.CommandContext(_ctx1, "sshpass", "-p", c.SSHPassword,
 			"ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
 			"-p", fmt.Sprintf("%d", sshPort), "root@"+sshTarget, "bash", "-c", script)
 		out2, err2 := sshCmd.CombinedOutput()

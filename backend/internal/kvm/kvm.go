@@ -896,6 +896,10 @@ func (m *Manager) EnterRescue(id int, isoID, isoPath string) error {
 	if err := m.StopContainer(id); err != nil {
 		return fmt.Errorf("failed to stop VM before rescue: %v", err)
 	}
+	// 如果 VM 之前挂了可选 ISO (sdb CD-ROM)，force detach 掉。
+	// virsh detach-disk 在设备不存在时会返回非零 exit code——我们视为幂等成功。
+	_ = execWithTimeout(cmdTimeoutMedium, "virsh", "detach-disk", name, "sdb").Run()
+	clearOptionalISO(id)
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
@@ -1033,11 +1037,28 @@ func (m *Manager) DetachISO(id int) error {
 	return nil
 }
 
+// clearOptionalISO 清理 config 里的可选 ISO (CD-ROM sdb) 字段。
+// Destroy/Reinstall/Clone/EnterRescue 都会调用：重装或克隆的 VM 不应该带着旧的挂载 ISO；
+// EnterRescue 时旧的 CD-ROM 会和 rescue ISO 在 boot order 里冲突，需要先 detach。
+func clearOptionalISO(id int) {
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == id {
+				cfg.Containers[i].OptionalISOID = ""
+				cfg.Containers[i].OptionalISOPath = ""
+				break
+			}
+		}
+	})
+	_ = config.SaveConfig()
+}
+
 func (m *Manager) DestroyContainer(id int) error {
 	c := config.FindContainer(id)
 	if c == nil {
 		return fmt.Errorf("container not found: %d", id)
 	}
+	clearOptionalISO(id)
 	name := c.VirshName()
 	removeKVMIPv6Runtime(c)
 	_ = m.StopContainer(id)
@@ -1056,6 +1077,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 	if c == nil {
 		return fmt.Errorf("container not found: %d", id)
 	}
+	clearOptionalISO(id)
 	image := FindImage(templateID)
 	if image == nil {
 		return fmt.Errorf("KVM image not found: %s", templateID)
@@ -1218,7 +1240,9 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		// full 模式：完整拷贝
 		qemuArgs = []string{"convert", "-O", "qcow2", srcDisk, newDiskPath}
 	}
-	if out, err := exec.Command("qemu-img", qemuArgs...).CombinedOutput(); err != nil {
+ _kctx0, _kctx0_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx0_cancel()
+	if out, err := exec.CommandContext(_kctx0, "qemu-img", qemuArgs...).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(newInstanceDir)
 		return fmt.Errorf("qemu-img clone (%s): %v: %s", mode, err, strings.TrimSpace(string(out)))
 	}
@@ -1229,7 +1253,9 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		srcDataDisk := filepath.Join(filepath.Dir(src.DiskImage), "datadisk.qcow2")
 		if _, err := os.Stat(srcDataDisk); err == nil {
 			newDataDiskPath = filepath.Join(newInstanceDir, "datadisk.qcow2")
-			if out, err := exec.Command("qemu-img", "convert", "-O", "qcow2", srcDataDisk, newDataDiskPath).CombinedOutput(); err != nil {
+   _kctx1, _kctx1_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+   defer _kctx1_cancel()
+			if out, err := exec.CommandContext(_kctx1, "qemu-img", "convert", "-O", "qcow2", srcDataDisk, newDataDiskPath).CombinedOutput(); err != nil {
 				_ = os.RemoveAll(newInstanceDir)
 				return fmt.Errorf("qemu-img clone data disk: %v: %s", err, strings.TrimSpace(string(out)))
 			}
@@ -1944,9 +1970,13 @@ func copyTree(src string, dst string) error {
 	if err := os.MkdirAll(dst, 0700); err != nil {
 		return err
 	}
-	output, err := exec.Command("cp", "-a", "--sparse=always", "--reflink=auto", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
+ _kctx2, _kctx2_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx2_cancel()
+	output, err := exec.CommandContext(_kctx2, "cp", "-a", "--sparse=always", "--reflink=auto", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
 	if err != nil {
-		output, err = exec.Command("cp", "-a", "--sparse=always", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
+  _kctx3, _kctx3_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+  defer _kctx3_cancel()
+		output, err = exec.CommandContext(_kctx3, "cp", "-a", "--sparse=always", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("cp failed: %v, output: %s", err, string(output))
 		}
@@ -1955,7 +1985,9 @@ func copyTree(src string, dst string) error {
 }
 
 func dirSizeBytes(path string) int64 {
-	out, err := exec.Command("du", "-s", "-B1", path).Output()
+ _kctx4, _kctx4_cancel := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _kctx4_cancel()
+	out, err := exec.CommandContext(_kctx4, "du", "-s", "-B1", path).Output()
 	if err != nil {
 		return 0
 	}
@@ -2316,7 +2348,9 @@ func kvmEmulatorPath() string {
 
 func ensureDefaultNetwork() error {
 	// Ensure libvirtd is running
-	if err := exec.Command("systemctl", "start", "libvirtd").Run(); err != nil {
+ _kctx5, _kctx5_cancel := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _kctx5_cancel()
+	if err := exec.CommandContext(_kctx5, "systemctl", "start", "libvirtd").Run(); err != nil {
 		// Non-systemd systems may use a different init, try virsh connect
 		if virshCLocaleCommand("connect").Run() != nil {
 			return fmt.Errorf("libvirtd is not running and could not be started")
@@ -2397,11 +2431,15 @@ func createOverlayDisk(base, target string, diskGB float64) error {
 		diskGB = 5
 	}
 	diskMB := int(math.Round(diskGB * 1024))
-	cmd := exec.Command("qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", base, target)
+ _kctx6, _kctx6_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx6_cancel()
+	cmd := exec.CommandContext(_kctx6, "qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", base, target)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img create failed: %v, output: %s", err, string(output))
 	}
-	cmd = exec.Command("qemu-img", "resize", target, fmt.Sprintf("%dM", diskMB))
+ _kctx7, _kctx7_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx7_cancel()
+	cmd = exec.CommandContext(_kctx7, "qemu-img", "resize", target, fmt.Sprintf("%dM", diskMB))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, string(output))
 	}
@@ -2437,7 +2475,9 @@ func createEmptyDisk(target string, diskGB float64) error {
 		diskGB = 5
 	}
 	diskMB := int(math.Round(diskGB * 1024))
-	cmd := exec.Command("qemu-img", "create", "-f", "qcow2", target, fmt.Sprintf("%dM", diskMB))
+ _kctx8, _kctx8_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx8_cancel()
+	cmd := exec.CommandContext(_kctx8, "qemu-img", "create", "-f", "qcow2", target, fmt.Sprintf("%dM", diskMB))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img create empty disk failed: %v, output: %s", err, string(output))
 	}
@@ -2904,7 +2944,9 @@ ethernets:
 	if err := os.WriteFile(networkPath, []byte(networkConfig), 0600); err != nil {
 		return err
 	}
-	cmd := exec.Command("cloud-localds", "--network-config="+networkPath, seedPath, userPath, metaPath)
+ _kctx9, _kctx9_cancel := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _kctx9_cancel()
+	cmd := exec.CommandContext(_kctx9, "cloud-localds", "--network-config="+networkPath, seedPath, userPath, metaPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("cloud-localds failed: %v, output: %s", err, string(output))
 	}
@@ -4427,10 +4469,14 @@ func (m *Manager) applyIPv6HostRuntime(c *config.Container) error {
 		if uplink == "" {
 			uplink = c.IPv6Interface
 		}
-		if out, err := exec.Command("ip", "-6", "route", "replace", assignment.Address+"/128", "dev", bridge).CombinedOutput(); err != nil {
+  _kctx10, _kctx10_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx10_cancel()
+		if out, err := exec.CommandContext(_kctx10, "ip", "-6", "route", "replace", assignment.Address+"/128", "dev", bridge).CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add IPv6 VM route: %v, output: %s", err, string(out))
 		}
-		if out, err := exec.Command("ip", "-6", "neigh", "replace", "proxy", assignment.Address, "dev", uplink).CombinedOutput(); err != nil {
+  _kctx11, _kctx11_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx11_cancel()
+		if out, err := exec.CommandContext(_kctx11, "ip", "-6", "neigh", "replace", "proxy", assignment.Address, "dev", uplink).CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add IPv6 proxy NDP: %v, output: %s", err, string(out))
 		}
 		ensureKVMIPv6ForwardRules(assignment.Address, bridge)
@@ -4454,8 +4500,12 @@ func ensureKVMIPv6ForwardRules(ipv6 string, bridge string) {
 	for _, rule := range rules {
 		check := append([]string{"-C"}, rule...)
 		add := append([]string{"-A"}, rule...)
-		if exec.Command("ip6tables", check...).Run() != nil {
-			exec.Command("ip6tables", add...).Run()
+  _kctx12, _kctx12_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx12_cancel()
+		if exec.CommandContext(_kctx12, "ip6tables", check...).Run() != nil {
+   _kctx13, _kctx13_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+   defer _kctx13_cancel()
+			exec.CommandContext(_kctx13, "ip6tables", add...).Run()
 		}
 	}
 }
@@ -4490,8 +4540,12 @@ func ensureKVMIPv6NAT66(ipv6 string, uplink string) {
 	rule := []string{"POSTROUTING", "-s", ipv6 + "/128", "-o", uplink, "-j", "MASQUERADE"}
 	check := append([]string{"-t", "nat", "-C"}, rule...)
 	add := append([]string{"-t", "nat", "-I"}, append([]string{rule[0], "1"}, rule[1:]...)...)
-	if exec.Command("ip6tables", check...).Run() != nil {
-		exec.Command("ip6tables", add...).Run()
+ _kctx14, _kctx14_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _kctx14_cancel()
+	if exec.CommandContext(_kctx14, "ip6tables", check...).Run() != nil {
+  _kctx15, _kctx15_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx15_cancel()
+		exec.CommandContext(_kctx15, "ip6tables", add...).Run()
 	}
 }
 
@@ -4514,9 +4568,13 @@ func removeKVMIPv6Runtime(c *config.Container) {
 		removeKVMIPv6ForwardRules(assignment.Address, bridge)
 		removeKVMIPv6AntiSpoofRules(assignment.Address, bridge, c.MACAddress)
 		if uplink != "" {
-			_ = exec.Command("ip", "-6", "neigh", "del", "proxy", assignment.Address, "dev", uplink).Run()
+   _kctx16, _kctx16_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+   defer _kctx16_cancel()
+			_ = exec.CommandContext(_kctx16, "ip", "-6", "neigh", "del", "proxy", assignment.Address, "dev", uplink).Run()
 		}
-		_ = exec.Command("ip", "-6", "route", "del", assignment.Address+"/128", "dev", bridge).Run()
+  _kctx17, _kctx17_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx17_cancel()
+		_ = exec.CommandContext(_kctx17, "ip", "-6", "route", "del", assignment.Address+"/128", "dev", bridge).Run()
 	}
 }
 
@@ -4557,7 +4615,9 @@ func removeKVMIPv6NAT66(ipv6 string, uplink string) {
 	rule := []string{"POSTROUTING", "-s", ipv6 + "/128", "-o", uplink, "-j", "MASQUERADE"}
 	for {
 		del := append([]string{"-t", "nat", "-D"}, rule...)
-		if exec.Command("ip6tables", del...).Run() != nil {
+  _kctx18, _kctx18_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx18_cancel()
+		if exec.CommandContext(_kctx18, "ip6tables", del...).Run() != nil {
 			return
 		}
 	}
@@ -4568,13 +4628,17 @@ func insertIP6Rule(rule []string) {
 		return
 	}
 	add := append([]string{"-I"}, append([]string{rule[0], "1"}, rule[1:]...)...)
-	_ = exec.Command("ip6tables", add...).Run()
+ _kctx19, _kctx19_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _kctx19_cancel()
+	_ = exec.CommandContext(_kctx19, "ip6tables", add...).Run()
 }
 
 func deleteIP6Rule(rule []string) {
 	for {
 		del := append([]string{"-D"}, rule...)
-		if exec.Command("ip6tables", del...).Run() != nil {
+  _kctx20, _kctx20_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx20_cancel()
+		if exec.CommandContext(_kctx20, "ip6tables", del...).Run() != nil {
 			return
 		}
 	}

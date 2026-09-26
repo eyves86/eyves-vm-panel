@@ -2003,7 +2003,8 @@ function eyvescloud_isoAttach($params)
     if ($cid <= 0) {
         return ['status' => 'error', 'msg' => '无法解析容器编号，请确认实例名称与面板一致'];
     }
-    $res = eyvescloud_request($params, '/api/isos/attach', ['container_id' => $cid, 'iso_id' => $isoId, 'attach' => true], 'POST', 60);
+    // 走容器级多节点路径（自动 routeToAgent）。请求体只需 iso_id + attach。
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=iso', ['iso_id' => $isoId, 'attach' => true], 'POST', 60);
     if (!eyvescloud_success($res)) {
         return ['status' => 'error', 'msg' => eyvescloud_message($res, '挂载 ISO 失败')];
     }
@@ -2016,7 +2017,8 @@ function eyvescloud_isoDetach($params)
     if ($cid <= 0) {
         return ['status' => 'error', 'msg' => '无法解析容器编号，请确认实例名称与面板一致'];
     }
-    $res = eyvescloud_request($params, '/api/isos/attach', ['container_id' => $cid, 'iso_id' => '', 'attach' => false], 'POST', 60);
+    // 走容器级多节点路径。detach 不需要 iso_id。
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=iso', ['iso_id' => '', 'attach' => false], 'POST', 60);
     if (!eyvescloud_success($res)) {
         return ['status' => 'error', 'msg' => eyvescloud_message($res, '卸载 ISO 失败')];
     }

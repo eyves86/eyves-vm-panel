@@ -5,6 +5,8 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"time"
+	"context"
 	"path/filepath"
 	"strings"
 
@@ -385,7 +387,9 @@ func growKVMQcow2Disk(c *config.Container, newDiskGB float64) error {
 	if diskMB < 128 {
 		diskMB = 128
 	}
-	out, err := exec.Command("qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB)).CombinedOutput()
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _cancel0()
+	out, err := exec.CommandContext(_ctx0, "qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -404,7 +408,9 @@ func growLXCRootfsDisk(c *config.Container, newDiskGB float64) error {
 	if diskMB < 128 {
 		diskMB = 128
 	}
-	out, err := exec.Command("truncate", "-s", fmt.Sprintf("%dM", diskMB), imagePath).CombinedOutput()
+ _ctx1, _cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _cancel1()
+	out, err := exec.CommandContext(_ctx1, "truncate", "-s", fmt.Sprintf("%dM", diskMB), imagePath).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("grow rootfs image failed: %v, output: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -414,7 +420,9 @@ func growLXCRootfsDisk(c *config.Container, newDiskGB float64) error {
 		// 文件系统自愈（resize2fs 幂等）。此处不报错，避免阻塞配置提交。
 		return nil
 	}
-	out, err = exec.Command("resize2fs", device).CombinedOutput()
+ _ctx2, _cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _cancel2()
+	out, err = exec.CommandContext(_ctx2, "resize2fs", device).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("resize2fs failed on %s: %v, output: %s", device, err, strings.TrimSpace(string(out)))
 	}
@@ -423,7 +431,9 @@ func growLXCRootfsDisk(c *config.Container, newDiskGB float64) error {
 
 // loopDeviceForImage 解析 rootfs.img 对应已挂载的 loop 设备（如 /dev/loop0）。
 func loopDeviceForImage(imagePath string) string {
-	out, err := exec.Command("losetup", "-j", imagePath).Output()
+ _ctx3, _cancel3 := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _cancel3()
+	out, err := exec.CommandContext(_ctx3, "losetup", "-j", imagePath).Output()
 	if err != nil {
 		return ""
 	}

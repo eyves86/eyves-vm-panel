@@ -318,3 +318,10 @@ func execWithTimeout(name string, args ...string) (*exec.Cmd, context.CancelFunc
 	ctx, cancel := context.WithTimeout(context.Background(), execCommandTimeoutSec*time.Second)
 	return exec.CommandContext(ctx, name, args...), cancel
 }
+
+// execWithTimeoutCustom 允许调用方指定不同的 timeout（秒），
+// 用于 tar / certbot / resize2fs 等耗时可能较长的底层工具。
+func execWithTimeoutCustom(timeoutSec int, name string, args ...string) (*exec.Cmd, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutSec)*time.Second)
+	return exec.CommandContext(ctx, name, args...), cancel
+}

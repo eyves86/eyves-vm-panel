@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"context"
 	"regexp"
 	"strings"
 	"time"
@@ -356,9 +357,15 @@ func computeSSHKeyFingerprint(pubKey string) (string, error) {
 	// 优先用 ssh-keygen（系统命令）
 	tmpDir := "/tmp"
 	tmpFile := fmt.Sprintf("%s/eyvescloud_sshkey_%s.pub", tmpDir, randomHex(8))
-	defer func() { _ = exec.Command("rm", "-f", tmpFile).Run() }()
+	defer func() {
+		_ctxRM, _cancelRM := context.WithTimeout(context.Background(), 5*time.Second)
+		defer _cancelRM()
+		_ = exec.CommandContext(_ctxRM, "rm", "-f", tmpFile).Run()
+	}()
 	if err := os.WriteFile(tmpFile, []byte(pubKey), 0600); err == nil {
-		if out, err := exec.Command("ssh-keygen", "-lf", tmpFile).CombinedOutput(); err == nil {
+		_ctx1, _cancel1 := context.WithTimeout(context.Background(), 15*time.Second)
+		defer _cancel1()
+		if out, err := exec.CommandContext(_ctx1, "ssh-keygen", "-lf", tmpFile).CombinedOutput(); err == nil {
 			// ssh-keygen -lf 输出格式："2048 SHA256:xxx comment (RSA)"
 			parts := strings.Fields(string(out))
 			for i, p := range parts {

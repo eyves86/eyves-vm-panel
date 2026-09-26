@@ -320,7 +320,9 @@ func lxcImageDownloadTempName(id string) string {
 
 func cleanupLXCImageDownloadTemp(id string) {
 	tmpName := lxcImageDownloadTempName(id)
-	exec.Command("lxc-destroy", "-n", tmpName, "-f").Run()
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _cancel0()
+	exec.CommandContext(_ctx0, "lxc-destroy", "-n", tmpName, "-f").Run()
 	os.RemoveAll(filepath.Join("/var/lib/lxc", tmpName))
 }
 
@@ -949,7 +951,9 @@ func ensureLXCImageCachePool(pool config.StoragePool) error {
 		return fmt.Errorf("LXC image cache is not a directory: %s", cachePath)
 	}
 
-	if output, err := exec.Command("cp", "-a", sourceAbs+string(os.PathSeparator)+".", targetAbs+string(os.PathSeparator)).CombinedOutput(); err != nil {
+ _ctx1, _cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _cancel1()
+	if output, err := exec.CommandContext(_ctx1, "cp", "-a", sourceAbs+string(os.PathSeparator)+".", targetAbs+string(os.PathSeparator)).CombinedOutput(); err != nil {
 		return fmt.Errorf("failed to migrate LXC image cache: %v, output: %s", err, strings.TrimSpace(string(output)))
 	}
 

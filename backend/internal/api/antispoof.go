@@ -3,6 +3,8 @@ package api
 import (
 	"net"
 	"os/exec"
+	"time"
+	"context"
 	"sort"
 	"strings"
 	"sync"
@@ -73,12 +75,16 @@ func reconcileIPAntiSpoof() {
 	if !ensureAntiSpoofChain("iptables", antiSpoofIPParent) {
 		return
 	}
-	_ = exec.Command("iptables", "-F", antiSpoofChain).Run()
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _cancel0()
+	_ = exec.CommandContext(_ctx0, "iptables", "-F", antiSpoofChain).Run()
 
 	// arptables 为可选增强（ARP 层防伪），工具缺失或链不可用时自动跳过。
 	arpReady := ensureAntiSpoofChain("arptables", antiSpoofARPParent)
 	if arpReady {
-		_ = exec.Command("arptables", "-F", antiSpoofChain).Run()
+  _ctx1, _cancel1 := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _cancel1()
+		_ = exec.CommandContext(_ctx1, "arptables", "-F", antiSpoofChain).Run()
 	}
 
 	for _, target := range targets {

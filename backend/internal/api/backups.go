@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"context"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -270,7 +271,9 @@ func deleteInstanceBackup(backupID string) error {
 
 func tarDirectory(srcDir, archive string) error {
 	// 使用 tar 归档，保留稀疏文件语义，支持大型 rootfs / qcow2。
-	cmd := exec.Command("tar", "-C", srcDir, "--totals", "-cf", archive, ".")
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 120*time.Second)
+ defer _cancel0()
+	cmd := exec.CommandContext(_ctx0, "tar", "-C", srcDir, "--totals", "-cf", archive, ".")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("tar failed: %v: %s", err, string(out))
@@ -279,7 +282,9 @@ func tarDirectory(srcDir, archive string) error {
 }
 
 func untarDirectory(archive, destDir string) error {
-	cmd := exec.Command("tar", "-C", destDir, "-xf", archive)
+ _ctx1, _cancel1 := context.WithTimeout(context.Background(), 120*time.Second)
+ defer _cancel1()
+	cmd := exec.CommandContext(_ctx1, "tar", "-C", destDir, "-xf", archive)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("untar failed: %v: %s", err, string(out))
