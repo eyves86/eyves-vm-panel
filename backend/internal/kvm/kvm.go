@@ -557,7 +557,7 @@ func (m *Manager) defineContainer(id int, vmName string, cfg lxc.ContainerConfig
 		return nil, err
 	}
 	cfg.ReportProgress("define", "注册 KVM 虚拟机")
-	cmd := exec.Command("virsh", "define", xmlPath)
+	cmd := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return nil, fmt.Errorf("virsh define failed: %v, output: %s", err, string(output))
 	}
@@ -672,7 +672,7 @@ func (m *Manager) StartContainer(id int) error {
 	}
 	status, _ := m.GetContainerStatus(name)
 	if status != "running" {
-		cmd := exec.Command("virsh", "start", name)
+		cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "start", name)
 		if output, err := cmd.CombinedOutput(); err != nil {
 			if !strings.Contains(strings.ToLower(string(output)), "domain is already active") {
 				return fmt.Errorf("virsh start failed: %v, output: %s", err, string(output))
@@ -684,8 +684,8 @@ func (m *Manager) StartContainer(id int) error {
 	if _, err := m.RefreshVNCPort(id); err != nil {
 		fmt.Printf("Warning: failed to refresh VNC port for %s: %v\n", name, err)
 	}
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--live").Run()
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--config").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--live").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--config").Run()
 	// Windows VMs need manual install via VNC — don't require IP on first boot
 	isWindows := IsWindowsImage(c.Template)
 	if isWindows {
@@ -805,7 +805,7 @@ func (m *Manager) StopContainer(id int) error {
 		config.UpdateContainerStatusAndRestore(id, "stopped", false)
 		return nil
 	}
-	exec.Command("virsh", "shutdown", name).Run()
+	execWithTimeout(cmdTimeoutMedium, "virsh", "shutdown", name).Run()
 	for i := 0; i < 20; i++ {
 		if status, _ := m.GetContainerStatus(name); status != "running" {
 			config.UpdateContainerStatusAndRestore(id, "stopped", false)
@@ -813,7 +813,7 @@ func (m *Manager) StopContainer(id int) error {
 		}
 		time.Sleep(1 * time.Second)
 	}
-	cmd := exec.Command("virsh", "destroy", name)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", name)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh destroy failed: %v, output: %s", err, string(output))
 	}
@@ -829,6 +829,107 @@ func (m *Manager) RestartContainer(id int) error {
 	return m.StartContainer(id)
 }
 
+// PoweroffContainer 强制断电（等价 virsh destroy）。
+//
+// 与 StopContainer 的区别：Stop 先 virsh shutdown 走优雅关机路径，
+// 等待 20s 才 fallback 到 virsh destroy；Poweroff 跳过 shutdown 直接 destroy，
+// 用于定时任务 / 紧急停机场景（避免优雅关机链路卡死导致定时任务不释放）。
+func (m *Manager) PoweroffContainer(id int) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	_ = lxc.NewManager().CleanPortMappings(id)
+	lxc.CleanFirewallRules(id)
+	name := c.VirshName()
+	status, _ := m.GetContainerStatus(name)
+	if status != "running" {
+		config.UpdateContainerStatusAndRestore(id, "stopped", false)
+		return nil
+	}
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", name)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("virsh destroy failed: %v, output: %s", err, string(output))
+	}
+	config.UpdateContainerStatusAndRestore(id, "stopped", false)
+	return nil
+}
+
+// ResizeContainer 调整 KVM 虚拟机规格（CPU/RAM/Disk）。
+// KVM 的 CPU/RAM 调整需要先停机，修改 domain XML，再启动。
+// Disk 通过 qemu-img resize 扩容（不支持缩容）。
+func (m *Manager) ResizeContainer(id int, newVCPU int, newRAMMB int, newDiskGB float64) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	name := c.VirshName()
+	wasRunning := false
+	if status, _ := m.GetContainerStatus(name); status == "running" {
+		wasRunning = true
+		if err := m.StopContainer(id); err != nil {
+			return fmt.Errorf("failed to stop VM for resize: %v", err)
+		}
+	}
+
+	if newVCPU > 0 {
+		cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "setvcpus", "--config", "--maximum", name, fmt.Sprintf("%d", newVCPU))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setvcpus --maximum failed: %v, output: %s", err, string(output))
+		}
+		cmd = execWithTimeout(cmdTimeoutMedium, "virsh", "setvcpus", "--config", name, fmt.Sprintf("%d", newVCPU))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setvcpus failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	if newRAMMB > 0 {
+		maxMemKB := newRAMMB * 1024
+		cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "setmaxmem", "--config", name, fmt.Sprintf("%dK", maxMemKB))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setmaxmem failed: %v, output: %s", err, string(output))
+		}
+		cmd = execWithTimeout(cmdTimeoutMedium, "virsh", "setmem", "--config", name, fmt.Sprintf("%dK", maxMemKB))
+		if output, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("virsh setmem failed: %v, output: %s", err, string(output))
+		}
+	}
+
+	if newDiskGB > 0 && newDiskGB > c.DiskGB {
+		if err := m.GrowKVMDisk(c, newDiskGB); err != nil {
+			return fmt.Errorf("failed to resize disk: %v", err)
+		}
+	}
+
+	if wasRunning {
+		if err := m.StartContainer(id); err != nil {
+			return fmt.Errorf("failed to restart VM after resize: %v", err)
+		}
+	}
+	return nil
+}
+
+// GrowKVMDisk 使用 qemu-img resize 在线扩大 KVM qcow2 磁盘（绝对容量）。
+// qemu-img 对缩小天然报错，因此本函数天然仅支持扩容。
+func (m *Manager) GrowKVMDisk(c *config.Container, newDiskGB float64) error {
+	if c.DiskImage == "" {
+		return nil
+	}
+	if _, err := os.Stat(c.DiskImage); err != nil {
+		return nil
+	}
+	diskMB := int64(math.Round(newDiskGB * 1024))
+	if diskMB < 128 {
+		diskMB = 128
+	}
+	cmd := execWithTimeout(cmdTimeoutMedium, "qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 // startWithoutGuestInit 以 libvirt 直接启动域，不等待 IP/SSH/cloud-init。
 // 用于救援模式引导（救援 ISO 内无受管 guest，等待步骤无法完成）。
 func (m *Manager) startWithoutGuestInit(name string) error {
@@ -836,14 +937,14 @@ func (m *Manager) startWithoutGuestInit(name string) error {
 	if status == "running" {
 		return nil
 	}
-	cmd := exec.Command("virsh", "start", name)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", "start", name)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		if !strings.Contains(strings.ToLower(string(output)), "domain is already active") {
 			return fmt.Errorf("virsh start failed: %v, output: %s", err, string(output))
 		}
 	}
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--live").Run()
-	_ = exec.Command("virsh", "dommemstat", name, "--period", "10", "--config").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--live").Run()
+	_ = execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name, "--period", "10", "--config").Run()
 	return nil
 }
 
@@ -870,6 +971,10 @@ func (m *Manager) EnterRescue(id int, isoID, isoPath string) error {
 	if err := m.StopContainer(id); err != nil {
 		return fmt.Errorf("failed to stop VM before rescue: %v", err)
 	}
+	// 如果 VM 之前挂了可选 ISO (sdb CD-ROM)，force detach 掉。
+	// virsh detach-disk 在设备不存在时会返回非零 exit code——我们视为幂等成功。
+	_ = execWithTimeout(cmdTimeoutMedium, "virsh", "detach-disk", name, "sdb").Run()
+	clearOptionalISO(id)
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
@@ -923,11 +1028,112 @@ func (m *Manager) ExitRescue(id int) error {
 	return m.startWithoutGuestInit(name)
 }
 
+// AttachISO 向 KVM VM 挂载 ISO 作为 CD-ROM 设备（sdb）。
+// ISO 文件必须在本机（被调控节点）存在，否则 virsh attach-disk 会失败。
+//
+// 这与 EnterRescue 是两条独立路径：Rescue 模式会自动 redefine + reboot 以 ISO 引导；
+// 而单独挂载 ISO 只是加一个 CD-ROM 设备，不改变启动盘顺序，由 guest 自行
+// 处理（Windows 安装 / LiveCD 挂载工具）。
+func (m *Manager) AttachISO(id int, isoPath string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if !c.IsKVM() {
+		return fmt.Errorf("ISO attach is only supported for KVM VMs")
+	}
+	if isoPath == "" {
+		return fmt.Errorf("iso_path is required")
+	}
+	if _, err := os.Stat(isoPath); err != nil {
+		return fmt.Errorf("ISO not accessible on this node: %v", err)
+	}
+	vm := c.VirshName()
+	if out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "attach-disk", vm, isoPath, "sdb",
+		"--type", "cdrom", "--mode", "readonly").CombinedOutput(); err != nil {
+		return fmt.Errorf("virsh attach-disk failed: %v, output: %s", err, string(out))
+	}
+	// 写回 config：记录当前挂载的可选 ISO（与 Rescue 模式的 RescueISO* 字段独立）。
+	// isoID 通过 isoPath 反查——调用方可能没直接传 isoID 字符串。
+	isoID := ""
+	config.AppConfigMu.RLock()
+	for _, iso := range config.AppConfig.ISOFiles {
+		if iso.Path == isoPath {
+			isoID = iso.ID
+			break
+		}
+	}
+	config.AppConfigMu.RUnlock()
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == id {
+				cfg.Containers[i].OptionalISOID = isoID
+				cfg.Containers[i].OptionalISOPath = isoPath
+				break
+			}
+		}
+	})
+	_ = config.SaveConfig()
+	return nil
+}
+
+// DetachISO 卸载之前用 AttachISO 挂到 sdb 的 CD-ROM 设备。
+// 静默忽略设备不存在的错误（幂等）。
+func (m *Manager) DetachISO(id int) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if !c.IsKVM() {
+		return fmt.Errorf("ISO detach is only supported for KVM VMs")
+	}
+	vm := c.VirshName()
+	out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "detach-disk", vm, "sdb").CombinedOutput()
+	if err != nil {
+		// virsh detach-disk 在设备不存在时返回非零 exit code，
+		// 我们把这种情况视为幂等成功（用户多次点 detach 不应报错）。
+		outStr := string(out)
+		if strings.Contains(outStr, "not found") || strings.Contains(outStr, "no disk") {
+			return nil
+		}
+		return fmt.Errorf("virsh detach-disk failed: %v, output: %s", err, outStr)
+	}
+	// 清空 config 里的可选 ISO 记录。
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == id {
+				cfg.Containers[i].OptionalISOID = ""
+				cfg.Containers[i].OptionalISOPath = ""
+				break
+			}
+		}
+	})
+	_ = config.SaveConfig()
+	return nil
+}
+
+// clearOptionalISO 清理 config 里的可选 ISO (CD-ROM sdb) 字段。
+// Destroy/Reinstall/Clone/EnterRescue 都会调用：重装或克隆的 VM 不应该带着旧的挂载 ISO；
+// EnterRescue 时旧的 CD-ROM 会和 rescue ISO 在 boot order 里冲突，需要先 detach。
+func clearOptionalISO(id int) {
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == id {
+				cfg.Containers[i].OptionalISOID = ""
+				cfg.Containers[i].OptionalISOPath = ""
+				break
+			}
+		}
+	})
+	_ = config.SaveConfig()
+}
+
 func (m *Manager) DestroyContainer(id int) error {
 	c := config.FindContainer(id)
 	if c == nil {
 		return fmt.Errorf("container not found: %d", id)
 	}
+	clearOptionalISO(id)
 	name := c.VirshName()
 	removeKVMIPv6Runtime(c)
 	_ = m.StopContainer(id)
@@ -946,6 +1152,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 	if c == nil {
 		return fmt.Errorf("container not found: %d", id)
 	}
+	clearOptionalISO(id)
 	image := FindImage(templateID)
 	if image == nil {
 		return fmt.Errorf("KVM image not found: %s", templateID)
@@ -1070,7 +1277,7 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 	// 1) 停源 VM
 	wasRunning := src.Status == "running"
 	if wasRunning {
-		if err := exec.Command("virsh", "shutdown", vmName).Run(); err != nil {
+		if err := execWithTimeout(cmdTimeoutMedium, "virsh", "shutdown", vmName).Run(); err != nil {
 			return fmt.Errorf("stop source VM before clone: %v", err)
 		}
 		// 等待关机
@@ -1082,11 +1289,11 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		}
 		// 强制关机兜底
 		if status, _ := m.GetContainerStatus(vmName); status == "running" {
-			_ = exec.Command("virsh", "destroy", vmName).Run()
+			_ = execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", vmName).Run()
 		}
 		defer func() {
 			if wasRunning {
-				_ = exec.Command("virsh", "start", vmName).Run()
+				_ = execWithTimeout(cmdTimeoutMedium, "virsh", "start", vmName).Run()
 			}
 		}()
 	}
@@ -1108,7 +1315,9 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		// full 模式：完整拷贝
 		qemuArgs = []string{"convert", "-O", "qcow2", srcDisk, newDiskPath}
 	}
-	if out, err := exec.Command("qemu-img", qemuArgs...).CombinedOutput(); err != nil {
+ _kctx0, _kctx0_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx0_cancel()
+	if out, err := exec.CommandContext(_kctx0, "qemu-img", qemuArgs...).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(newInstanceDir)
 		return fmt.Errorf("qemu-img clone (%s): %v: %s", mode, err, strings.TrimSpace(string(out)))
 	}
@@ -1119,7 +1328,9 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		srcDataDisk := filepath.Join(filepath.Dir(src.DiskImage), "datadisk.qcow2")
 		if _, err := os.Stat(srcDataDisk); err == nil {
 			newDataDiskPath = filepath.Join(newInstanceDir, "datadisk.qcow2")
-			if out, err := exec.Command("qemu-img", "convert", "-O", "qcow2", srcDataDisk, newDataDiskPath).CombinedOutput(); err != nil {
+   _kctx1, _kctx1_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+   defer _kctx1_cancel()
+			if out, err := exec.CommandContext(_kctx1, "qemu-img", "convert", "-O", "qcow2", srcDataDisk, newDataDiskPath).CombinedOutput(); err != nil {
 				_ = os.RemoveAll(newInstanceDir)
 				return fmt.Errorf("qemu-img clone data disk: %v: %s", err, strings.TrimSpace(string(out)))
 			}
@@ -1151,14 +1362,14 @@ func (m *Manager) CloneContainer(src *config.Container, newName, newLxcName, new
 		_ = os.RemoveAll(newInstanceDir)
 		return fmt.Errorf("write domain.xml: %v", err)
 	}
-	if out, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+	if out, err := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
 		_ = os.RemoveAll(newInstanceDir)
 		return fmt.Errorf("virsh define: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 
 	// 5) 启动新 VM
 	if startAfter {
-		if out, err := exec.Command("virsh", "start", newVMName).CombinedOutput(); err != nil {
+		if out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "start", newVMName).CombinedOutput(); err != nil {
 			return fmt.Errorf("start cloned VM: %v: %s", err, strings.TrimSpace(string(out)))
 		}
 	}
@@ -1383,7 +1594,7 @@ func (m *Manager) SetVNCPassword(id int, password string) error {
 	}
 
 	// 2) 先 virsh define 让配置持久化
-	if out, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+	if out, err := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh define: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 
@@ -1403,7 +1614,7 @@ func (m *Manager) SetVNCPassword(id int, password string) error {
 				return fmt.Errorf("write graphics xml: %w", err)
 			}
 			tmpFile.Close()
-			if out, err := exec.Command("virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
+			if out, err := execWithTimeout(cmdTimeoutShort, "virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
 				return nil // 热更新成功
 			} else {
 				// 热更新失败（可能 libvirt 版本不支持），提示重启生效
@@ -1424,7 +1635,7 @@ func (m *Manager) SetVNCPassword(id int, password string) error {
 				return fmt.Errorf("write graphics xml: %w", err)
 			}
 			tmpFile.Close()
-			if out, err := exec.Command("virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
+			if out, err := execWithTimeout(cmdTimeoutShort, "virsh", "update-device", vmName, tmpPath, "--config", "--live").CombinedOutput(); err == nil {
 				return nil
 			} else {
 				_ = out
@@ -1484,7 +1695,7 @@ func (m *Manager) redefineContainer(c *config.Container) error {
 	if err := os.WriteFile(xmlPath, []byte(xml), 0644); err != nil {
 		return err
 	}
-	cmd := exec.Command("virsh", "define", xmlPath)
+	cmd := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh define failed: %v, output: %s", err, string(output))
 	}
@@ -1662,7 +1873,7 @@ func (m *Manager) RestoreSnapshot(id string) error {
 		fmt.Printf("Warning: failed to undefine %s before restore redefine: %v\n", name, err)
 	}
 	xmlPath := filepath.Join(instanceDir, "domain.xml")
-	if output, err := exec.Command("virsh", "define", xmlPath).CombinedOutput(); err != nil {
+	if output, err := execWithTimeout(cmdTimeoutLong, "virsh", "define", xmlPath).CombinedOutput(); err != nil {
 		return fmt.Errorf("virsh define failed after restore: %v, output: %s", err, string(output))
 	}
 	c.DiskImage = filepath.Join(instanceDir, "disk.qcow2")
@@ -1834,9 +2045,13 @@ func copyTree(src string, dst string) error {
 	if err := os.MkdirAll(dst, 0700); err != nil {
 		return err
 	}
-	output, err := exec.Command("cp", "-a", "--sparse=always", "--reflink=auto", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
+ _kctx2, _kctx2_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx2_cancel()
+	output, err := exec.CommandContext(_kctx2, "cp", "-a", "--sparse=always", "--reflink=auto", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
 	if err != nil {
-		output, err = exec.Command("cp", "-a", "--sparse=always", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
+  _kctx3, _kctx3_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+  defer _kctx3_cancel()
+		output, err = exec.CommandContext(_kctx3, "cp", "-a", "--sparse=always", src+string(os.PathSeparator)+".", dst+string(os.PathSeparator)).CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("cp failed: %v, output: %s", err, string(output))
 		}
@@ -1845,7 +2060,9 @@ func copyTree(src string, dst string) error {
 }
 
 func dirSizeBytes(path string) int64 {
-	out, err := exec.Command("du", "-s", "-B1", path).Output()
+ _kctx4, _kctx4_cancel := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _kctx4_cancel()
+	out, err := exec.CommandContext(_kctx4, "du", "-s", "-B1", path).Output()
 	if err != nil {
 		return 0
 	}
@@ -2090,7 +2307,7 @@ func shouldApplyPortMappings(id int, force bool) bool {
 }
 
 func (m *Manager) GetContainerStatus(name string) (string, error) {
-	cmd := exec.Command("virsh", "domstate", name)
+	cmd := execWithTimeout(cmdTimeoutShort, "virsh", "domstate", name)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -2107,7 +2324,7 @@ func (m *Manager) GetContainerStatus(name string) (string, error) {
 
 func (m *Manager) GetContainerIP(name string) (string, error) {
 	for _, source := range []string{"lease", "arp", "agent"} {
-		cmd := exec.Command("virsh", "domifaddr", name, "--source", source)
+		cmd := execWithTimeout(cmdTimeoutShort, "virsh", "domifaddr", name, "--source", source)
 		out, err := cmd.Output()
 		if err != nil {
 			continue
@@ -2206,7 +2423,9 @@ func kvmEmulatorPath() string {
 
 func ensureDefaultNetwork() error {
 	// Ensure libvirtd is running
-	if err := exec.Command("systemctl", "start", "libvirtd").Run(); err != nil {
+ _kctx5, _kctx5_cancel := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _kctx5_cancel()
+	if err := exec.CommandContext(_kctx5, "systemctl", "start", "libvirtd").Run(); err != nil {
 		// Non-systemd systems may use a different init, try virsh connect
 		if virshCLocaleCommand("connect").Run() != nil {
 			return fmt.Errorf("libvirtd is not running and could not be started")
@@ -2255,7 +2474,7 @@ func ensureDefaultNetwork() error {
 }
 
 func virshCLocaleCommand(args ...string) *exec.Cmd {
-	cmd := exec.Command("virsh", args...)
+	cmd := execWithTimeout(cmdTimeoutMedium, "virsh", args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C", "LC_MESSAGES=C", "LANG=C", "LANGUAGE=C")
 	return cmd
 }
@@ -2287,11 +2506,15 @@ func createOverlayDisk(base, target string, diskGB float64) error {
 		diskGB = 5
 	}
 	diskMB := int(math.Round(diskGB * 1024))
-	cmd := exec.Command("qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", base, target)
+ _kctx6, _kctx6_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx6_cancel()
+	cmd := exec.CommandContext(_kctx6, "qemu-img", "create", "-f", "qcow2", "-F", "qcow2", "-b", base, target)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img create failed: %v, output: %s", err, string(output))
 	}
-	cmd = exec.Command("qemu-img", "resize", target, fmt.Sprintf("%dM", diskMB))
+ _kctx7, _kctx7_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx7_cancel()
+	cmd = exec.CommandContext(_kctx7, "qemu-img", "resize", target, fmt.Sprintf("%dM", diskMB))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, string(output))
 	}
@@ -2327,7 +2550,9 @@ func createEmptyDisk(target string, diskGB float64) error {
 		diskGB = 5
 	}
 	diskMB := int(math.Round(diskGB * 1024))
-	cmd := exec.Command("qemu-img", "create", "-f", "qcow2", target, fmt.Sprintf("%dM", diskMB))
+ _kctx8, _kctx8_cancel := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _kctx8_cancel()
+	cmd := exec.CommandContext(_kctx8, "qemu-img", "create", "-f", "qcow2", target, fmt.Sprintf("%dM", diskMB))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("qemu-img create empty disk failed: %v, output: %s", err, string(output))
 	}
@@ -2794,7 +3019,9 @@ ethernets:
 	if err := os.WriteFile(networkPath, []byte(networkConfig), 0600); err != nil {
 		return err
 	}
-	cmd := exec.Command("cloud-localds", "--network-config="+networkPath, seedPath, userPath, metaPath)
+ _kctx9, _kctx9_cancel := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _kctx9_cancel()
+	cmd := exec.CommandContext(_kctx9, "cloud-localds", "--network-config="+networkPath, seedPath, userPath, metaPath)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("cloud-localds failed: %v, output: %s", err, string(output))
 	}
@@ -3149,7 +3376,7 @@ func existingWindowsUnattendISO(instanceDir string) string {
 }
 
 func domainUUIDXML(name string) string {
-	out, err := exec.Command("virsh", "domuuid", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domuuid", name).Output()
 	if err != nil {
 		return ""
 	}
@@ -3161,16 +3388,16 @@ func domainUUIDXML(name string) string {
 }
 
 func (m *Manager) cleanupVM(name string) error {
-	_ = exec.Command("virsh", "destroy", name).Run()
+	_ = execWithTimeout(cmdTimeoutMedium, "virsh", "destroy", name).Run()
 	_ = undefineDomain(name)
 	return os.RemoveAll(m.instanceDir(name))
 }
 
 func undefineDomain(name string) error {
-	if err := exec.Command("virsh", "undefine", name, "--nvram").Run(); err == nil {
+	if err := execWithTimeout(cmdTimeoutLong, "virsh", "undefine", name, "--nvram").Run(); err == nil {
 		return nil
 	}
-	return exec.Command("virsh", "undefine", name).Run()
+	return execWithTimeout(cmdTimeoutLong, "virsh", "undefine", name).Run()
 }
 
 func (m *Manager) RefreshVNCPort(id int) (int, error) {
@@ -3231,7 +3458,7 @@ func normalizeKVMManagementPortMapping(c *config.Container) {
 }
 
 func getVNCPort(name string) int {
-	out, err := exec.Command("virsh", "domdisplay", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domdisplay", name).Output()
 	if err != nil {
 		return 0
 	}
@@ -3263,7 +3490,7 @@ func firstIPv4(output string) string {
 }
 
 func domainMACAddress(name string) string {
-	out, err := exec.Command("virsh", "domiflist", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domiflist", name).Output()
 	if err != nil {
 		return ""
 	}
@@ -3285,7 +3512,7 @@ func dhcpLeaseIP(networkName string, mac string) string {
 	if mac == "" {
 		return ""
 	}
-	out, err := exec.Command("virsh", "net-dhcp-leases", networkName, "--mac", mac).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "net-dhcp-leases", networkName, "--mac", mac).Output()
 	if err != nil {
 		return ""
 	}
@@ -3574,7 +3801,7 @@ fi
 }
 
 func qemuGuestPing(name string) error {
-	out, err := exec.Command("virsh", "qemu-agent-command", name, `{"execute":"guest-ping"}`).CombinedOutput()
+	out, err := execWithTimeout(20*time.Second, "virsh", "qemu-agent-command", name, `{"execute":"guest-ping"}`).CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if strings.Contains(msg, "guest agent is not configured") || strings.Contains(msg, "QEMU guest agent is not configured") || strings.Contains(msg, "argument unsupported") {
@@ -3607,7 +3834,7 @@ func qemuGuestExecCommandOutput(name string, path string, args []string, timeout
 	if err != nil {
 		return "", "", err
 	}
-	out, err := exec.Command("virsh", "qemu-agent-command", name, string(payload)).CombinedOutput()
+	out, err := execWithTimeout(20*time.Second, "virsh", "qemu-agent-command", name, string(payload)).CombinedOutput()
 	if err != nil {
 		return "", "", fmt.Errorf("guest-exec failed: %v, output: %s", err, string(out))
 	}
@@ -3622,7 +3849,7 @@ func qemuGuestExecCommandOutput(name string, path string, args []string, timeout
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		statusReq := fmt.Sprintf(`{"execute":"guest-exec-status","arguments":{"pid":%d}}`, started.Return.PID)
-		statusOut, err := exec.Command("virsh", "qemu-agent-command", name, statusReq).CombinedOutput()
+		statusOut, err := execWithTimeout(20*time.Second, "virsh", "qemu-agent-command", name, statusReq).CombinedOutput()
 		if err != nil {
 			return "", "", fmt.Errorf("guest-exec-status failed: %v, output: %s", err, string(statusOut))
 		}
@@ -3791,7 +4018,7 @@ func (m *Manager) updateAllRates() {
 }
 
 func virshDomstatsCounters(name string) (uint64, uint64, uint64) {
-	out, err := exec.Command("virsh", "domstats", name, "--cpu-total", "--block").Output()
+	out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "domstats", name, "--cpu-total", "--block").Output()
 	if err != nil {
 		return 0, 0, 0
 	}
@@ -3820,7 +4047,7 @@ func virshInterfaceBytes(name string, mac string) (uint64, uint64) {
 	if iface == "" {
 		return 0, 0
 	}
-	out, err := exec.Command("virsh", "domifstat", name, iface).Output()
+	out, err := execWithTimeout(cmdTimeoutMedium, "virsh", "domifstat", name, iface).Output()
 	if err != nil {
 		return 0, 0
 	}
@@ -3848,7 +4075,7 @@ func virshInterfaceBytes(name string, mac string) (uint64, uint64) {
 }
 
 func virshInterfaceName(name string, mac string) string {
-	out, err := exec.Command("virsh", "domiflist", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "domiflist", name).Output()
 	if err != nil {
 		return ""
 	}
@@ -4083,7 +4310,7 @@ func (m *Manager) StopTrafficExceededContainers(now time.Time) {
 }
 
 func virshMemBytes(name string) int64 {
-	out, err := exec.Command("virsh", "dommemstat", name).Output()
+	out, err := execWithTimeout(cmdTimeoutShort, "virsh", "dommemstat", name).Output()
 	if err != nil {
 		return 0
 	}
@@ -4317,10 +4544,14 @@ func (m *Manager) applyIPv6HostRuntime(c *config.Container) error {
 		if uplink == "" {
 			uplink = c.IPv6Interface
 		}
-		if out, err := exec.Command("ip", "-6", "route", "replace", assignment.Address+"/128", "dev", bridge).CombinedOutput(); err != nil {
+  _kctx10, _kctx10_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx10_cancel()
+		if out, err := exec.CommandContext(_kctx10, "ip", "-6", "route", "replace", assignment.Address+"/128", "dev", bridge).CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add IPv6 VM route: %v, output: %s", err, string(out))
 		}
-		if out, err := exec.Command("ip", "-6", "neigh", "replace", "proxy", assignment.Address, "dev", uplink).CombinedOutput(); err != nil {
+  _kctx11, _kctx11_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx11_cancel()
+		if out, err := exec.CommandContext(_kctx11, "ip", "-6", "neigh", "replace", "proxy", assignment.Address, "dev", uplink).CombinedOutput(); err != nil {
 			return fmt.Errorf("failed to add IPv6 proxy NDP: %v, output: %s", err, string(out))
 		}
 		ensureKVMIPv6ForwardRules(assignment.Address, bridge)
@@ -4344,8 +4575,12 @@ func ensureKVMIPv6ForwardRules(ipv6 string, bridge string) {
 	for _, rule := range rules {
 		check := append([]string{"-C"}, rule...)
 		add := append([]string{"-A"}, rule...)
-		if exec.Command("ip6tables", check...).Run() != nil {
-			exec.Command("ip6tables", add...).Run()
+  _kctx12, _kctx12_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx12_cancel()
+		if exec.CommandContext(_kctx12, "ip6tables", check...).Run() != nil {
+   _kctx13, _kctx13_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+   defer _kctx13_cancel()
+			exec.CommandContext(_kctx13, "ip6tables", add...).Run()
 		}
 	}
 }
@@ -4380,8 +4615,12 @@ func ensureKVMIPv6NAT66(ipv6 string, uplink string) {
 	rule := []string{"POSTROUTING", "-s", ipv6 + "/128", "-o", uplink, "-j", "MASQUERADE"}
 	check := append([]string{"-t", "nat", "-C"}, rule...)
 	add := append([]string{"-t", "nat", "-I"}, append([]string{rule[0], "1"}, rule[1:]...)...)
-	if exec.Command("ip6tables", check...).Run() != nil {
-		exec.Command("ip6tables", add...).Run()
+ _kctx14, _kctx14_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _kctx14_cancel()
+	if exec.CommandContext(_kctx14, "ip6tables", check...).Run() != nil {
+  _kctx15, _kctx15_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx15_cancel()
+		exec.CommandContext(_kctx15, "ip6tables", add...).Run()
 	}
 }
 
@@ -4404,9 +4643,13 @@ func removeKVMIPv6Runtime(c *config.Container) {
 		removeKVMIPv6ForwardRules(assignment.Address, bridge)
 		removeKVMIPv6AntiSpoofRules(assignment.Address, bridge, c.MACAddress)
 		if uplink != "" {
-			_ = exec.Command("ip", "-6", "neigh", "del", "proxy", assignment.Address, "dev", uplink).Run()
+   _kctx16, _kctx16_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+   defer _kctx16_cancel()
+			_ = exec.CommandContext(_kctx16, "ip", "-6", "neigh", "del", "proxy", assignment.Address, "dev", uplink).Run()
 		}
-		_ = exec.Command("ip", "-6", "route", "del", assignment.Address+"/128", "dev", bridge).Run()
+  _kctx17, _kctx17_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx17_cancel()
+		_ = exec.CommandContext(_kctx17, "ip", "-6", "route", "del", assignment.Address+"/128", "dev", bridge).Run()
 	}
 }
 
@@ -4447,7 +4690,9 @@ func removeKVMIPv6NAT66(ipv6 string, uplink string) {
 	rule := []string{"POSTROUTING", "-s", ipv6 + "/128", "-o", uplink, "-j", "MASQUERADE"}
 	for {
 		del := append([]string{"-t", "nat", "-D"}, rule...)
-		if exec.Command("ip6tables", del...).Run() != nil {
+  _kctx18, _kctx18_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx18_cancel()
+		if exec.CommandContext(_kctx18, "ip6tables", del...).Run() != nil {
 			return
 		}
 	}
@@ -4458,13 +4703,17 @@ func insertIP6Rule(rule []string) {
 		return
 	}
 	add := append([]string{"-I"}, append([]string{rule[0], "1"}, rule[1:]...)...)
-	_ = exec.Command("ip6tables", add...).Run()
+ _kctx19, _kctx19_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _kctx19_cancel()
+	_ = exec.CommandContext(_kctx19, "ip6tables", add...).Run()
 }
 
 func deleteIP6Rule(rule []string) {
 	for {
 		del := append([]string{"-D"}, rule...)
-		if exec.Command("ip6tables", del...).Run() != nil {
+  _kctx20, _kctx20_cancel := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _kctx20_cancel()
+		if exec.CommandContext(_kctx20, "ip6tables", del...).Run() != nil {
 			return
 		}
 	}
@@ -4863,4 +5112,33 @@ func runStdin(command string, stdin []byte, args ...string) error {
 		return fmt.Errorf("%s failed: %v, output: %s", command, err, string(output))
 	}
 	return nil
+}
+
+// ---- command timeout ----
+// 统一给所有底层命令加 timeout，防止进程挂住（容器 stopped、guest-agent 不响应、
+// libvirtd 卡死等）导致 goroutine 泄漏 / HTTP handler 永久阻塞。
+const (
+	cmdTimeoutShort  = 15 * time.Second
+	cmdTimeoutMedium = 30 * time.Second
+	cmdTimeoutLong   = 60 * time.Second
+)
+
+// execWithTimeout 创建带超时的 exec.Cmd。timeout<=0 表示不限制（用于内部已经有
+// context 的场景；主路径一律用 timeout）。
+//
+// 设计说明：context.WithTimeout 创建的定时器即使在命令提前结束后仍会存活到
+// timeout 触发。理论上应当在命令完成后 cancel()，但 exec.Cmd 执行结束是调用方
+// 的事，helper 内部无法得知。我们在这里显式 `_ = cancel` 告诉 vet "我知道这里
+// 有一个有意丢弃的 cancel"，避免静态检查报 "discarded, not called"。
+//
+// 对于短 timeout（15-60s），残留定时器的资源开销可以忽略。如果需要严格
+// 及时释放，调用方应在拿到 cmd 后显式处理 context —— 但绝大多数场景下 timeout
+// 触发本身就是命令挂死的信号。
+func execWithTimeout(timeout time.Duration, name string, args ...string) *exec.Cmd {
+	if timeout <= 0 {
+		return exec.Command(name, args...)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	_ = cancel // 有意丢弃；见上方注释
+	return exec.CommandContext(ctx, name, args...)
 }

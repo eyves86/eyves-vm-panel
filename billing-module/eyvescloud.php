@@ -118,10 +118,13 @@ function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $ti
     $insecure = !empty($params['insecure']);
 
     $curl = curl_init();
+    // 仅使用 X-API-Key 一个鉴权头：上游 eyvescloud API 同时接受 Authorization Bearer，
+    // 但双发会让上游日志冗余、易被误读为"两个不同 key"，反而增大泄露面。
+    // 推荐签发收敛到 sub-user scope 的 API Key（不要 admin:*），避免WHMCS 单点失陷
+    // 拿到上游全局权限（详见审计报告 EVE-005）。
     $headers = [
         'Content-Type: application/json',
         'X-API-Key: ' . $apiKey,
-        'Authorization: Bearer ' . $apiKey,
     ];
     foreach ((array)$extraHeaders as $name => $value) {
         $headers[] = $name . ': ' . $value;
@@ -1255,6 +1258,7 @@ function eyvescloud_CreateAccount($params)
     $wait = eyvescloud_wait_container_ready($params);
     if (!empty($wait['container'])) {
         eyvescloud_update_host_from_container($params, $wait['container']);
+        eyvescloud_remember_container($params, $wait['container']);
     }
 
     $msg = eyvescloud_message($res, '开通成功');
@@ -1272,9 +1276,11 @@ function eyvescloud_TerminateAccount($params)
 {
     $name = eyvescloud_container_name($params);
     $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/delete', [], 'DELETE', 60);
-    return eyvescloud_success($res)
-        ? ['status' => 'success', 'msg' => eyvescloud_message($res, '删除任务已提交')]
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, '删除失败')];
+    if (eyvescloud_success($res)) {
+        eyvescloud_forget_container($params);
+        return ['status' => 'success', 'msg' => eyvescloud_message($res, '删除任务已提交')];
+    }
+    return ['status' => 'error', 'msg' => eyvescloud_message($res, '删除失败')];
 }
 
 function eyvescloud_action($params, $action, $successMsg, $timeout = 60)
@@ -1303,12 +1309,31 @@ function eyvescloud_Reboot($params)
 
 function eyvescloud_SuspendAccount($params)
 {
-    return eyvescloud_Off($params);
+    // 优先使用上游专用 /suspend 端点（设置 Suspended 标志并排入 stop 任务，
+    // 比单纯 stop 更彻底，避免客户在容器内仍可访问控制台）。端点不存在时
+    // 旧服务器会返回 404，自动 fallback 到 stop，保证向后兼容。
+    $name = eyvescloud_container_name($params);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/suspend', [], 'POST', 60);
+    if (eyvescloud_success($res)) {
+        return ['status' => 'success', 'msg' => eyvescloud_message($res, '容器已暂停')];
+    }
+    if (!empty($res['_http_code']) && (int)$res['_http_code'] === 404) {
+        return eyvescloud_Off($params);
+    }
+    return ['status' => 'error', 'msg' => eyvescloud_message($res, '暂停失败')];
 }
 
 function eyvescloud_UnsuspendAccount($params)
 {
-    return eyvescloud_On($params);
+    $name = eyvescloud_container_name($params);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/unsuspend', [], 'POST', 60);
+    if (eyvescloud_success($res)) {
+        return ['status' => 'success', 'msg' => eyvescloud_message($res, '容器已恢复')];
+    }
+    if (!empty($res['_http_code']) && (int)$res['_http_code'] === 404) {
+        return eyvescloud_On($params);
+    }
+    return ['status' => 'error', 'msg' => eyvescloud_message($res, '恢复失败')];
 }
 
 function eyvescloud_Status($params)
@@ -2298,4 +2323,137 @@ function eyvescloud_ClientAreaOutput($params, $key)
             'area_key'       => 'info',
         ],
     ];
+}
+
+// ===== WHMCS 9.0.4 / PHP 8.3 补充：LoginLink / 按钮派发 / mod_eyvescloud 表 =====
+// 原版已有 UsageUpdate / AdminButton / ClientButton / TrafficReset 等，本处只补
+// 审计中真正缺失的项：LoginLink、按钮 handler（v9 中按钮派发需对应函数）、
+// mod_eyvescloud 映射表（用于反向定位、并发安全、UsageUpdate 幂等）。
+
+/**
+ * WHMCS LoginLink — 客户端详情页"管理"按钮跳转目标，生成 sub-user access code，
+ * 重定向到上游面板的容器详情页。access code 是一次性、TTL 10 分钟。
+ * 上游无 access-link 端点时回退到普通容器详情 URL（避免点击无响应）。
+ */
+function eyvescloud_LoginLink($params)
+{
+    $name = eyvescloud_container_name($params);
+    $base = eyvescloud_base_url($params);
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/access-link', [
+        'redirect' => '/containers/' . rawurlencode($name),
+        'ttl'      => 600,
+    ], 'POST', 30);
+    if (eyvescloud_success($res) && !empty($res['data']['url'])) {
+        return ['status' => 'success', 'url' => $res['data']['url']];
+    }
+    return ['status' => 'success', 'url' => $base . '/containers/' . rawurlencode($name)];
+}
+
+/**
+ * WHMCS v8/9 按钮派发：把 AdminButton / ClientButton 返回的按钮 key
+ * 映射到对应处理函数。命令名 → 处理器；未识别命令返回 error。
+ */
+function eyvescloud_AdminCustomButton($params, $cmd)
+{
+    $name = eyvescloud_container_name($params);
+    switch ($cmd) {
+        case 'Rescue':
+            $r = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/rescue', [], 'POST', 30);
+            return eyvescloud_format_button_result($r, '已发起救援模式');
+        case 'Snapshot':
+            $r = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/snapshots',
+                ['name' => 'manual-' . date('Ymd-His')], 'POST', 30);
+            return eyvescloud_format_button_result($r, '快照任务已提交');
+        case 'RebuildISO':
+            return eyvescloud_Reinstall($params);
+        case 'ResetPassword':
+            // 8.3 推荐 random_bytes（CSPRNG）替换之前的 mt_rand 等弱随机。
+            $new = bin2hex(random_bytes(6));
+            return eyvescloud_CrackPassword($params, $new);
+        case 'OpenVNC':
+        case 'vnc':
+            return ['status' => 'info', 'msg' => '请前往容器详情页查看 VNC 链接'];
+    }
+    return ['status' => 'error', 'msg' => '未知命令: ' . $cmd];
+}
+
+function eyvescloud_format_button_result($res, $successMsg)
+{
+    return [
+        'status' => eyvescloud_success($res) ? 'success' : 'error',
+        'msg'    => eyvescloud_message($res, $successMsg),
+    ];
+}
+
+/**
+ * mod_eyvescloud 表：容器 UUID ↔ WHMCS service id 的反向映射。
+ * 用于并发安全（避免 container name 改名后无法定位）、UsageUpdate 幂等、
+ * 自定义按钮拿到容器 ID 而非容器名。
+ */
+function eyvescloud_ensure_schema()
+{
+    static $ensured = false;
+    if ($ensured) {
+        return;
+    }
+    try {
+        $exists = Db::query("SHOW TABLES LIKE 'mod_eyvescloud'");
+        if (!$exists) {
+            Db::query(<<<SQL
+CREATE TABLE IF NOT EXISTS `mod_eyvescloud` (
+    `service_id`      INT NOT NULL PRIMARY KEY,
+    `container_id`    VARCHAR(64) NOT NULL,
+    `container_uuid`  VARCHAR(64) DEFAULT NULL,
+    `container_name`  VARCHAR(128) DEFAULT NULL,
+    `expires_at`      DATE DEFAULT NULL,
+    `cached_status`   VARCHAR(32) DEFAULT NULL,
+    `cached_traffic`  DECIMAL(12,3) DEFAULT 0,
+    `cached_updated`  DATETIME DEFAULT NULL,
+    INDEX `idx_container_uuid` (`container_uuid`),
+    INDEX `idx_container_name` (`container_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+SQL);
+        }
+        $ensured = true;
+    } catch (\Throwable $e) {
+        eyvescloud_debug('ensure_schema failed', $e->getMessage());
+    }
+}
+
+function eyvescloud_remember_container($params, $container)
+{
+    if (!is_array($container) || empty($container['name'])) {
+        return;
+    }
+    $hostId = eyvescloud_host_id($params);
+    if ($hostId <= 0) {
+        return;
+    }
+    eyvescloud_ensure_schema();
+    try {
+        Db::name('mod_eyvescloud')->replace([
+            'service_id'     => $hostId,
+            'container_id'   => (string)($container['id'] ?? $container['name']),
+            'container_uuid' => (string)($container['uuid'] ?? ''),
+            'container_name' => (string)$container['name'],
+            'cached_status'  => (string)($container['status'] ?? ''),
+            'cached_updated' => date('Y-m-d H:i:s'),
+        ]);
+    } catch (\Throwable $e) {
+        eyvescloud_debug('remember_container failed', $e->getMessage());
+    }
+}
+
+function eyvescloud_forget_container($params)
+{
+    $hostId = eyvescloud_host_id($params);
+    if ($hostId <= 0) {
+        return;
+    }
+    eyvescloud_ensure_schema();
+    try {
+        Db::name('mod_eyvescloud')->where('service_id', $hostId)->delete();
+    } catch (\Throwable $e) {
+        eyvescloud_debug('forget_container failed', $e->getMessage());
+    }
 }

@@ -418,7 +418,9 @@ func getDiskInfo() DiskInfo {
 
 	{
 		// Try command-based fallback
-		cmd := exec.Command("df", "-BG", "/")
+  _ctx0, _cancel0 := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _cancel0()
+		cmd := exec.CommandContext(_ctx0, "df", "-BG", "/")
 		output, err := cmd.Output()
 		if err == nil {
 			lines := strings.Split(string(output), "\n")

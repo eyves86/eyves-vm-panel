@@ -252,9 +252,87 @@ function eyvescloud_Off(array $params)
     return eyvescloud_account_action($params, 'stop', '关机任务已提交');
 }
 
+/**
+ * 硬关机：libvirt destroy / lxc-stop -k。不 guest-agent / acpi，直接 kill。
+ * 适合 soft stop 超时或卡死场景。
+ */
+function eyvescloud_HardOff(array $params)
+{
+    return eyvescloud_account_action($params, 'destroy', '硬关机任务已提交（强制 kill）', 90);
+}
+
+/**
+ * KVM Rescue Mode：挂载救援 ISO 并从 ISO 冷启动。
+ * 请求体 image 可选（ISO 文件名或 ID），空时用面板默认救援 ISO。
+ */
+function eyvescloud_RescueMode(array $params)
+{
+    $isoId = $_POST['iso_id'] ?? $_GET['iso_id'] ?? $_POST['image'] ?? $_GET['image'] ?? '';
+    $cid = eyvescloud_host_id($params);
+    if ($cid <= 0) {
+        return '无法解析实例编号';
+    }
+    $payload = ['enabled' => true];
+    if ($isoId !== '') {
+        $payload['iso_id'] = $isoId;
+    }
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', $payload, 'POST', 120);
+    if (!eyvescloud_success($res)) {
+        return eyvescloud_message($res, '进入救援模式失败（仅 KVM 支持）');
+    }
+    return 'success';
+}
+
+/**
+ * 退出 KVM Rescue Mode：卸载 rescue ISO，恢复 HDD 启动优先级，冷启动。
+ */
+function eyvescloud_RescueExit(array $params)
+{
+    $cid = eyvescloud_host_id($params);
+    if ($cid <= 0) {
+        return '无法解析实例编号';
+    }
+    $res = eyvescloud_request($params, '/api/v1/containers/' . $cid . '?action=rescue', ['enabled' => false], 'POST', 120);
+    if (!eyvescloud_success($res)) {
+        return eyvescloud_message($res, '退出救援模式失败');
+    }
+    return 'success';
+}
+
 function eyvescloud_Reboot(array $params)
 {
     return eyvescloud_account_action($params, 'restart', '重启任务已提交');
+}
+
+/**
+ * VNC 控制台（KVM 专属）。拿到 ticket 后 WHMCS 可直接 iframe 打开。
+ * 返回 "success" 或可读错误消息（WHMCS 约定）。
+ */
+function eyvescloud_VNC(array $params)
+{
+    $res = eyvescloud_vnc_ticket($params);
+    if (($res['status'] ?? '') === 'success') {
+        return 'success';
+    }
+    return $res['msg'] ?? 'VNC 票据创建失败（仅 KVM 支持）';
+}
+
+/**
+ * ISO 挂载（KVM 专属）。请求体 iso_id 可从 $_POST/$_GET 取。
+ */
+function eyvescloud_ISOAttach(array $params)
+{
+    $res = eyvescloud_isoAttach($params);
+    return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? 'ISO 挂载失败');
+}
+
+/**
+ * ISO 卸载。
+ */
+function eyvescloud_ISODetach(array $params)
+{
+    $res = eyvescloud_isoDetach($params);
+    return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? 'ISO 卸载失败');
 }
 
 /* -------------------------------------------------------------------------
@@ -379,11 +457,17 @@ function eyvescloud_ClientArea(array $params)
 function eyvescloud_ClientAreaAllowedFunctions()
 {
     return [
-        '开机'     => 'On',
-        '关机'     => 'Off',
-        '重启'     => 'Reboot',
-        '同步状态' => 'Sync',
-        '重置流量' => 'TrafficReset',
+        '开机'          => 'On',
+        '关机'          => 'Off',
+        '重启'          => 'Reboot',
+        '硬关机(强制)'  => 'HardOff',
+        'KVM 救援模式'  => 'RescueMode',
+        '退出救援模式'  => 'RescueExit',
+        'ISO 挂载'      => 'ISOAttach',
+        'ISO 卸载'      => 'ISODetach',
+        'VNC 控制台'    => 'VNC',
+        '同步状态'      => 'Sync',
+        '重置流量'      => 'TrafficReset',
     ];
 }
 
@@ -463,14 +547,44 @@ function eyvescloud_AdminServicesTabFields(array $params)
         ? '<a href="' . htmlspecialchars($panelUrl, ENT_QUOTES, 'UTF-8') . '" target="_blank" rel="noopener noreferrer">打开面板控制台</a>'
         : '-';
 
-    return [
+    $virt = strtolower(trim((string)($container['virtualization'] ?? ($container['type'] ?? 'lxc'))));
+    $isKVM = $virt === 'kvm';
+
+    // KVM 专属状态字段
+    $rows = [
         '实例名称' => htmlspecialchars((string)($container['name'] ?? eyvescloud_container_name($params)), ENT_QUOTES, 'UTF-8'),
+        '虚拟化类型' => htmlspecialchars(strtoupper($virt), ENT_QUOTES, 'UTF-8'),
         '运行状态' => htmlspecialchars($statusText, ENT_QUOTES, 'UTF-8'),
         'SSH 地址' => htmlspecialchars(eyvescloud_public_host($params, $container, true), ENT_QUOTES, 'UTF-8'),
         'SSH 端口' => htmlspecialchars((string)($container['ssh_port'] ?? '-'), ENT_QUOTES, 'UTF-8'),
         '到期时间' => htmlspecialchars((string)($container['expires_at'] ?? '-'), ENT_QUOTES, 'UTF-8'),
         '面板入口' => $panelLink,
     ];
+
+    if ($isKVM) {
+        // Rescue 模式状态
+        $rescueEnabled = !empty($container['rescue_enabled']);
+        $rescueIsoId = trim((string)($container['rescue_iso_id'] ?? ''));
+        if ($rescueEnabled) {
+            $rows['救援模式'] = '<span style="color:#b45309;font-weight:600">已启用</span> ' . htmlspecialchars($rescueIsoId ?: '(默认救援 ISO)', ENT_QUOTES, 'UTF-8');
+        } else {
+            $rows['救援模式'] = '<span style="color:#16a34a">未启用</span>';
+        }
+
+        // 可选 ISO 挂载状态（AttachISO 单独挂载的 CD-ROM，与 Rescue 独立）
+        $optIsoId = trim((string)($container['optional_iso_id'] ?? ''));
+        if ($optIsoId !== '') {
+            $rows['挂载 ISO'] = htmlspecialchars($optIsoId, ENT_QUOTES, 'UTF-8');
+        } else {
+            $rows['挂载 ISO'] = '<span style="color:#6b7280">未挂载</span>';
+        }
+
+        // VNC 端口
+        $vncPort = (int)($container['vnc_port'] ?? 0);
+        $rows['VNC 端口'] = $vncPort > 0 ? (string)$vncPort : '<span style="color:#6b7280">-</span>';
+    }
+
+    return $rows;
 }
 
 /**
@@ -481,8 +595,14 @@ function eyvescloud_AdminServicesTabFields(array $params)
 function eyvescloud_AdminCustomButtonArray()
 {
     return [
-        '同步状态' => 'Sync',
-        '重置流量' => 'TrafficReset',
+        '同步状态'     => 'Sync',
+        '重置流量'     => 'TrafficReset',
+        '硬关机(强制)' => 'HardOff',
+        'KVM 救援模式' => 'RescueMode',
+        '退出救援模式' => 'RescueExit',
+        'ISO 挂载'     => 'ISOAttach',
+        'ISO 卸载'     => 'ISODetach',
+        'VNC 控制台'   => 'VNC',
     ];
 }
 

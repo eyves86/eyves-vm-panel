@@ -253,6 +253,8 @@ func ensureSchema() error {
 			rescue_enabled INTEGER NOT NULL DEFAULT 0,
 			rescue_iso_id TEXT,
 			rescue_iso_path TEXT,
+			optional_iso_id TEXT,
+			optional_iso_path TEXT,
 			suspended INTEGER NOT NULL DEFAULT 0,
 			suspended_at TEXT,
 			suspended_reason TEXT
@@ -591,6 +593,8 @@ func ensureSchemaMigrations() error {
 		{"containers", "rescue_enabled", "INTEGER NOT NULL DEFAULT 0"},
 		{"containers", "rescue_iso_id", "TEXT"},
 		{"containers", "rescue_iso_path", "TEXT"},
+		{"containers", "optional_iso_id", "TEXT"},
+		{"containers", "optional_iso_path", "TEXT"},
 		// P0-1 存储抽象层：容器与卷解耦（旧数据为空 = 直连路径模式，不迁移）。
 		{"containers", "root_volume_id", "TEXT"},
 		{"containers", "data_volume_ids", "TEXT"},
@@ -1027,9 +1031,9 @@ func saveContainers(tx *sql.Tx) error {
 			policy_blocked, policy_blocked_reason, policy_blocked_at,
 			firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 			tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
-			rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids,
+			rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
 			suspended, suspended_at, suspended_reason
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
 			c.ID, c.UUID, c.Name, c.Virtualization, c.LXCName, c.KVMName, c.DiskImage, c.StoragePoolID, c.StoragePath, c.MACAddress, c.Template,
 			c.VCPU, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
 			c.MonthlyTrafficGB, c.TrafficMode, c.TrafficInGB,
@@ -1044,6 +1048,7 @@ func saveContainers(tx *sql.Tx) error {
 			boolInt(c.FirewallEnabled), normalizeFirewallDefaultAction(c.FirewallDefaultAction), marshalFirewallRules(c.FirewallRules), allowedImageIDs, boolInt(c.ImageLimitConfigured),
 			c.Tenant, c.CloudInitUserData, c.DataDiskGB, c.DataDiskMountPath,
 			boolInt(c.RescueEnabled), c.RescueISOID, c.RescueISOPath,
+			c.OptionalISOID, c.OptionalISOPath,
 			c.RootVolumeID, encodeStringSlice(c.DataVolumeIDs),
 			boolInt(c.Suspended), c.SuspendedAt, c.SuspendedReason,
 		); err != nil {
@@ -1405,7 +1410,7 @@ func loadContainers() ([]Container, error) {
 		policy_blocked, policy_blocked_reason, policy_blocked_at,
 		firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 		tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
-		rescue_enabled, rescue_iso_id, rescue_iso_path, root_volume_id, data_volume_ids,
+		rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
 		suspended, suspended_at, suspended_reason
 		FROM containers ORDER BY id`)
 	if err != nil {
@@ -1428,6 +1433,7 @@ func loadContainers() ([]Container, error) {
 		var dataDiskMountPath sql.NullString
 		var rescueEnabled int
 		var rescueISOID, rescueISOPath sql.NullString
+		var optionalISOID, optionalISOPath sql.NullString
 		var rootVolumeID, dataVolumeIDs sql.NullString
 		var suspended int
 		var suspendedAt, suspendedReason sql.NullString
@@ -1446,6 +1452,7 @@ func loadContainers() ([]Container, error) {
 			&firewallEnabled, &firewallDefaultAction, &firewallRulesJSON, &allowedImageIDs, &imageLimitConfigured,
 			&tenant, &cloudInitUserData, &c.DataDiskGB, &dataDiskMountPath,
 			&rescueEnabled, &rescueISOID, &rescueISOPath,
+			&optionalISOID, &optionalISOPath,
 			&rootVolumeID, &dataVolumeIDs,
 			&suspended, &suspendedAt, &suspendedReason,
 		); err != nil {
@@ -1456,6 +1463,8 @@ func loadContainers() ([]Container, error) {
 		c.RescueEnabled = rescueEnabled != 0
 		c.RescueISOID = rescueISOID.String
 		c.RescueISOPath = rescueISOPath.String
+		c.OptionalISOID = optionalISOID.String
+		c.OptionalISOPath = optionalISOPath.String
 		c.RootVolumeID = rootVolumeID.String
 		c.DataVolumeIDs = decodeStringSlice(dataVolumeIDs.String)
 		c.Suspended = suspended != 0

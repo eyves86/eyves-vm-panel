@@ -660,6 +660,8 @@ func subUserAllowedContainers(r *http.Request) (subUserAccess, bool) {
 
 func requestAllowedContainers(r *http.Request) (subUserAccess, bool) {
 	if ctx, ok := authContextFromRequest(r); ok {
+		// H3 设计：未绑定容器（container_uuids 为空）的 API Key 不做容器级限制，
+		// 访问控制交由 scope 完成。返回 restricted=false 即放行全部容器。
 		if ctx.Type == authTypeAPIKey && len(ctx.ContainerUUIDs) == 0 {
 			return subUserAccess{}, false
 		}

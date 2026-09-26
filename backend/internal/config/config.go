@@ -173,6 +173,13 @@ type Container struct {
 	SSHPort                       int                    `json:"ssh_port"`
 	SSHPassword                   string                 `json:"ssh_password"`
 	SSHHostKey                    string                 `json:"ssh_host_key,omitempty"`
+	// HVM 设置（KVM 容器）：启动盘顺序 / 网卡驱动 / VNC 键位 / 硬件加速 / TUN PPP
+	HVMBootOrder                  string                 `json:"hvm_boot_order,omitempty"`
+	HVMNicDriver                  string                 `json:"hvm_nic_driver,omitempty"`
+	HVMVNCKeyMap                  string                 `json:"hvm_vnc_keymap,omitempty"`
+	HVMAcceleration               string                 `json:"hvm_acceleration,omitempty"`
+	HVMEnableTuntap               bool                   `json:"hvm_enable_tuntap,omitempty"`
+	HVMEnablePPP                  bool                   `json:"hvm_enable_ppp,omitempty"`
 	PortMappings                  []PortMapping          `json:"port_mappings"`
 	PortMappingLimit              int                    `json:"port_mapping_limit"`
 	FirewallEnabled               bool                   `json:"firewall_enabled"`
@@ -198,6 +205,12 @@ type Container struct {
 	RescueEnabled                 bool                   `json:"rescue_enabled,omitempty"`  // 是否处于救援模式（KVM 从救援 ISO 引导）
 	RescueISOID                   string                 `json:"rescue_iso_id,omitempty"`   // 当前使用的救援 ISO 目录条目 ID
 	RescueISOPath                 string                 `json:"rescue_iso_path,omitempty"` // 救援 ISO 的本地绝对路径
+	// OptionalISOID/OptionalISOPath: 通过单独 AttachISO 挂到 KVM CD-ROM (sdb) 的 ISO。
+	// 与 Rescue 模式两条独立路径——Rescue 会 redefine + reboot，而 AttachISO 只是
+	// 加 CD-ROM 设备，不改变启动盘顺序（Windows 安装/LiveCD 工具）。
+	// DetachISO 会清空这两个字段；ExitRescue 不清空（可能同时有 rescue ISO + 可选 ISO）。
+	OptionalISOID   string `json:"optional_iso_id,omitempty"`
+	OptionalISOPath string `json:"optional_iso_path,omitempty"`
 	// RootVolumeID 根卷 ID（P0-1 存储抽象层）：新容器在 dir 后端池上创建的根目录卷。
 	// 为空表示旧数据直连路径模式（沿用 StoragePath，读路径完全向后兼容，不做迁移）。
 	RootVolumeID string `json:"root_volume_id,omitempty"`
@@ -1293,6 +1306,8 @@ type Node struct {
 	Address        string  `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
 	Token          string  `json:"token,omitempty"`
 	InstallKey     string  `json:"install_key,omitempty"`
+	InstallKeyCreatedAt string `json:"install_key_created_at,omitempty"`
+	InstallKeyIP        string `json:"install_key_ip,omitempty"`
 	Status         string  `json:"status"` // online / offline / pending
 	LastSeen       string  `json:"last_seen,omitempty"`
 	Version        string  `json:"version,omitempty"`
@@ -1455,6 +1470,29 @@ type EyvescloudConfig struct {
 	// Webhooks 事件订阅端点（企业集成：容器状态变更回调，类比 AWS EventBridge / GitHub Webhooks）。
 	// 每次容器状态变化（running/stopped）会向订阅 URL POST 签名 JSON 载荷。
 	Webhooks []WebhookSubscription `json:"webhooks,omitempty"`
+
+	// ScheduledActions 容器级定时启停任务（对齐 Virtualizor act=self_shutdown）。
+	// 由主控定时巡检：ExecuteAt 到达且 Enabled=true 时调用容器启/停/重启/硬关机。
+	// 每容器最多 10 条，由创建者在请求接口按 container:power scope 写入。
+	ScheduledActions []ScheduledAction `json:"scheduled_actions,omitempty"`
+}
+
+// ScheduledAction 容器级定时任务（与 Virtualizor act=self_shutdown 对齐）。
+type ScheduledAction struct {
+	ID            string `json:"id"`
+	ContainerID   int    `json:"container_id"`
+	ContainerName string `json:"container_name,omitempty"`
+	// Type 任务类型：start/stop/restart/poweroff
+	Type   string `json:"type"`
+	Repeat string `json:"repeat,omitempty"` // none/daily/weekly/monthly
+	// ExecuteAt 下次执行时间（RFC3339）。Repeat=weekly 时仅用于首次；
+	// repeat=daily/weekly/monthly 时由主控 cron 计算下次。
+	ExecuteAt string `json:"execute_at"`
+	// LastRunAt 最近一次执行时间，omitempty
+	LastRunAt string `json:"last_run_at,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	CreatedAt string `json:"created_at,omitempty"`
+	CreatedBy string `json:"created_by,omitempty"`
 }
 
 // WebhookSubscription 是一个事件订阅端点。
@@ -1475,6 +1513,12 @@ type WebhookSubscription struct {
 	LastDeliveryStatus  string   `json:"last_delivery_status,omitempty"` // ok / error: xxx
 	AutoDisabledReason  string   `json:"auto_disabled_reason,omitempty"`
 	CreatedAt           string   `json:"created_at"`
+	// OwnerSubject 标记该订阅由哪个主体创建：admin 登录创建时为空（全局可见，
+	// 仅 admin 可改/删），sub-user 或受限 API Key 创建时填入 Actor 标识，仅
+	// 创建者本人或 admin 可读/改/删，防止越权修改他人的回调订阅。
+	OwnerSubject string `json:"owner_subject,omitempty"`
+	// OwnerType 标记创建者的认证类型：admin / sub-user / api-key，便于审计。
+	OwnerType string `json:"owner_type,omitempty"`
 }
 
 // KSMTuningConfig 控制 Linux KSM（Kernel Samepage Merging）调优，用于在内存超售
@@ -2618,6 +2662,75 @@ func MutateGlobal(fn func(*EyvescloudConfig)) error {
 	defer AppConfigMu.Unlock()
 	fn(AppConfig)
 	return saveConfigToDB()
+}
+
+// UpdateContainer 整体替换容器配置（按 ID 匹配），写回 DB。
+// 用于 HVM 设置等元数据持久化。
+func UpdateContainer(c *Container) error {
+	if c == nil {
+		return fmt.Errorf("container is nil")
+	}
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID == c.ID {
+				cfg.Containers[i] = *c
+				return
+			}
+		}
+	})
+}
+
+// ListScheduledActions 列出某容器的定时任务。
+func ListScheduledActions(containerID int) []ScheduledAction {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	out := make([]ScheduledAction, 0)
+	for _, a := range AppConfig.ScheduledActions {
+		if a.ContainerID == containerID {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// ListAllScheduledActions 列出全部定时任务（不区分容器），用于后台调度器扫描。
+func ListAllScheduledActions() []ScheduledAction {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	out := make([]ScheduledAction, len(AppConfig.ScheduledActions))
+	copy(out, AppConfig.ScheduledActions)
+	return out
+}
+
+// SaveScheduledAction 保存（upsert）定时任务。
+func SaveScheduledAction(a ScheduledAction) error {
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		found := false
+		for i := range cfg.ScheduledActions {
+			if cfg.ScheduledActions[i].ID == a.ID {
+				cfg.ScheduledActions[i] = a
+				found = true
+				break
+			}
+		}
+		if !found {
+			cfg.ScheduledActions = append(cfg.ScheduledActions, a)
+		}
+	})
+}
+
+// DeleteScheduledAction 删除某容器的某条定时任务。
+func DeleteScheduledAction(containerID int, actionID string) error {
+	return MutateGlobal(func(cfg *EyvescloudConfig) {
+		out := cfg.ScheduledActions[:0]
+		for _, a := range cfg.ScheduledActions {
+			if a.ContainerID == containerID && a.ID == actionID {
+				continue
+			}
+			out = append(out, a)
+		}
+		cfg.ScheduledActions = out
+	})
 }
 
 // BackupDirectory returns the fixed, safe backup directory under the data dir.

@@ -5,7 +5,8 @@ import (
 	"math"
 	"os"
 	"os/exec"
-	"path/filepath"
+	"time"
+	"context"
 	"strings"
 
 	"eyvescloud/internal/config"
@@ -147,6 +148,22 @@ func exitRescueByRuntime(id int) error {
 	return fmt.Errorf("rescue mode is only supported for KVM VMs")
 }
 
+func attachISOByRuntime(id int, isoPath string) error {
+	c := config.FindContainer(id)
+	if c != nil && c.IsKVM() {
+		return kvmManager.AttachISO(id, isoPath)
+	}
+	return fmt.Errorf("ISO attach is only supported for KVM VMs")
+}
+
+func detachISOByRuntime(id int) error {
+	c := config.FindContainer(id)
+	if c != nil && c.IsKVM() {
+		return kvmManager.DetachISO(id)
+	}
+	return fmt.Errorf("ISO detach is only supported for KVM VMs")
+}
+
 func reinstallByRuntime(id int, templateID string, authConfig ...lxc.ContainerConfig) error {
 	c := config.FindContainer(id)
 	if c != nil && c.IsKVM() {
@@ -224,7 +241,8 @@ hostname %s
 echo %s > /etc/hostname
 sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t%s/' /etc/hosts 2>/dev/null || true
 `, hostname, hostname, hostname)
-	cmd := exec.Command("lxc-attach", "-n", lxcName, "--", "sh", "-c", script)
+	cmd, cancel := execLXCAttachWithTimeout(lxcName, "sh", "-c", script)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("lxc-attach hostname: %v: %s", err, strings.TrimSpace(string(out)))
@@ -233,7 +251,8 @@ sed -i 's/^127\.0\.1\.1.*/127.0.1.1\t%s/' /etc/hosts 2>/dev/null || true
 }
 
 func kvmSetHostnameVirsh(domain, hostname string) error {
-	cmd := exec.Command("virsh", "set-hostname", domain, hostname)
+	cmd, cancel := execWithTimeout("virsh", "set-hostname", domain, hostname)
+	defer cancel()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("virsh set-hostname: %v: %s", err, strings.TrimSpace(string(out)))
@@ -353,7 +372,7 @@ func resizeDiskByRuntime(c *config.Container, newDiskGB float64) error {
 	if c.IsKVM() {
 		return growKVMQcow2Disk(c, newDiskGB)
 	}
-	return growLXCRootfsDisk(c, newDiskGB)
+	return lxcManager.GrowLXCRootfsDisk(c, newDiskGB)
 }
 
 func growKVMQcow2Disk(c *config.Container, newDiskGB float64) error {
@@ -367,59 +386,13 @@ func growKVMQcow2Disk(c *config.Container, newDiskGB float64) error {
 	if diskMB < 128 {
 		diskMB = 128
 	}
-	out, err := exec.Command("qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB)).CombinedOutput()
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _cancel0()
+	out, err := exec.CommandContext(_ctx0, "qemu-img", "resize", c.DiskImage, fmt.Sprintf("%dM", diskMB)).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("qemu-img resize failed: %v, output: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
-}
-
-// growLXCRootfsDisk 扩大 LXC loopback rootfs.img 并在线扩展文件系统。
-// 仅当 rootfs.img 确实存在时才操作；不存在的容器目录（例如池抽取后无 loopback
-// 镜像）直接跳过。文件系统在线 resize2fs 失败视为扩容失败并返回错误。
-func growLXCRootfsDisk(c *config.Container, newDiskGB float64) error {
-	imagePath := filepath.Join(lxcManager.LxcPath, c.LxcName(), "rootfs.img")
-	if _, err := os.Stat(imagePath); err != nil {
-		return nil
-	}
-	diskMB := int64(math.Round(newDiskGB * 1024))
-	if diskMB < 128 {
-		diskMB = 128
-	}
-	out, err := exec.Command("truncate", "-s", fmt.Sprintf("%dM", diskMB), imagePath).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("grow rootfs image failed: %v, output: %s", err, strings.TrimSpace(string(out)))
-	}
-	device := loopDeviceForImage(imagePath)
-	if device == "" {
-		// 未挂载则无法在线扩文件系统；文件已扩到目标容量，重启或下次挂载时由
-		// 文件系统自愈（resize2fs 幂等）。此处不报错，避免阻塞配置提交。
-		return nil
-	}
-	out, err = exec.Command("resize2fs", device).CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("resize2fs failed on %s: %v, output: %s", device, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-// loopDeviceForImage 解析 rootfs.img 对应已挂载的 loop 设备（如 /dev/loop0）。
-func loopDeviceForImage(imagePath string) string {
-	out, err := exec.Command("losetup", "-j", imagePath).Output()
-	if err != nil {
-		return ""
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		device := strings.TrimSuffix(strings.SplitN(line, ":", 2)[0], ":")
-		if device != "" {
-			return device
-		}
-	}
-	return ""
 }
 
 func validateRuntimeResourceRequest(runtime string, templateID string, vcpu float64, ramMB int, diskGB float64) error {

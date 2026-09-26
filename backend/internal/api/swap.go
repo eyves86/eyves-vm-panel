@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"time"
+	"context"
 	"strconv"
 	"strings"
 )
@@ -152,12 +154,16 @@ func createSwap(sizeMB int) error {
 	// Check if swap file already exists
 	if _, err := os.Stat(swapFile); err == nil {
 		// Remove old swap file
-		exec.Command("swapoff", swapFile).Run()
+  _ctx0, _cancel0 := context.WithTimeout(context.Background(), 10*time.Second)
+  defer _cancel0()
+		exec.CommandContext(_ctx0, "swapoff", swapFile).Run()
 		os.Remove(swapFile)
 	}
 
 	// Create swap file
-	cmd := exec.Command("dd", "if=/dev/zero", "of="+swapFile, "bs=1M", "count="+strconv.Itoa(sizeMB))
+ _ctx1, _cancel1 := context.WithTimeout(context.Background(), 60*time.Second)
+ defer _cancel1()
+	cmd := exec.CommandContext(_ctx1, "dd", "if=/dev/zero", "of="+swapFile, "bs=1M", "count="+strconv.Itoa(sizeMB))
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("创建 swap 文件失败: %v, %s", err, string(output))
@@ -167,7 +173,9 @@ func createSwap(sizeMB int) error {
 	os.Chmod(swapFile, 0600)
 
 	// Make swap
-	cmd = exec.Command("mkswap", swapFile)
+ _ctx2, _cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
+ defer _cancel2()
+	cmd = exec.CommandContext(_ctx2, "mkswap", swapFile)
 	output, err = cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("mkswap 失败: %v, %s", err, string(output))
@@ -186,7 +194,9 @@ func enableSwap() error {
 		return fmt.Errorf("swap 文件不存在，请先创建")
 	}
 
-	cmd := exec.Command("swapon", swapFile)
+ _ctx3, _cancel3 := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _cancel3()
+	cmd := exec.CommandContext(_ctx3, "swapon", swapFile)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Check if already enabled
@@ -200,7 +210,9 @@ func enableSwap() error {
 
 func disableSwap() error {
 	swapFile := "/swapfile"
-	cmd := exec.Command("swapoff", swapFile)
+ _ctx4, _cancel4 := context.WithTimeout(context.Background(), 10*time.Second)
+ defer _cancel4()
+	cmd := exec.CommandContext(_ctx4, "swapoff", swapFile)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if strings.Contains(string(output), "No such") || strings.Contains(string(output), "Invalid argument") {

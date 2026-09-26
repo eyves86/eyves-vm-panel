@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,14 @@ import (
 	"eyvescloud/internal/notify"
 	"eyvescloud/internal/version"
 )
+
+// containerNameRegex 容器名允许字符：首字符字母数字，后续允许字母数字 - _ .，
+// 整体 1-64 字符。覆盖 LXC 与 KVM 内部命名 / cgroup 子系统 / cloud-init 主机名要求。
+var containerNameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
+func validContainerName(name string) bool {
+	return containerNameRegex.MatchString(name)
+}
 
 var lxcManager = lxc.NewManager()
 
@@ -240,6 +249,14 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updateContainerTags(w, r, id)
+	case action == "resize" && r.Method == http.MethodPost:
+		if !requireScope(w, r, "container:resize") {
+			return
+		}
+		if routeToAgent("resize", r.Body) {
+			return
+		}
+		handleContainerResize(w, r, id, c)
 	case action == "tenant" && r.Method == http.MethodPut:
 		if !requireScope(w, r, "container:resize") {
 			return
@@ -552,6 +569,70 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updateReverseDNS(w, r, id)
+	// === Virtualizor 风格客户端容器自服务端点（v1.9.x） ===
+	case action == "stats" && r.Method == http.MethodGet:
+		// 一站式监控：CPU/RAM/Disk/Inodes/Uptime（Virtualizor act=monitor）。
+		handleContainerStats(w, r, c)
+	case action == "bandwidth" && r.Method == http.MethodGet:
+		// 流量明细（Virtualizor act=bandwidth）。
+		handleContainerBandwidth(w, r, c)
+	case action == "processes" && r.Method == http.MethodGet:
+		// 进程列表（Virtualizor act=processes）。
+		handleContainerProcesses(w, r, c)
+	case action == "processes/kill" && r.Method == http.MethodPost:
+		// 批量终止进程（Virtualizor act=processes + sel_proc[]）。
+		handleContainerProcessKill(w, r, c)
+	case action == "services" && r.Method == http.MethodGet:
+		// 服务列表（Virtualizor act=services）。
+		handleContainerServices(w, r, c)
+	case action == "services" && r.Method == http.MethodPost:
+		// 服务启停重启（Virtualizor act=services + start_x/stop_x）。
+		handleContainerServiceAction(w, r, c)
+	case action == "hvm-settings" && r.Method == http.MethodGet:
+		// KVM HVM 设置读取（Virtualizor act=hvmsettings）。
+		handleContainerHVMSettingsGet(w, r, c)
+	case action == "hvm-settings" && r.Method == http.MethodPut:
+		// KVM HVM 设置写入。
+		handleContainerHVMSettingsPut(w, r, c)
+	case action == "scheduled-actions" && r.Method == http.MethodGet:
+		// 定时任务列表（Virtualizor act=self_shutdown）。
+		handleScheduledActionsList(w, r, c)
+	case action == "scheduled-actions" && r.Method == http.MethodPost:
+		// 创建定时任务。
+		handleScheduledActionCreate(w, r, c)
+	case strings.HasPrefix(action, "scheduled-actions/") && r.Method == http.MethodDelete:
+		// 取消定时任务。scheduled-actions/ 子路径在 action 中以 `scheduled-actions/{id}` 形式传入。
+		handleScheduledActionDelete(w, r, c, strings.TrimPrefix(action, "scheduled-actions/"))
+	case action == "rescue" && r.Method == http.MethodPost:
+		// KVM 救援模式进入/退出（Virtualizor Rescue Mode）。
+		// 请求体：{"enabled": true/false, "iso_id": "..."}
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		handleContainerRescuePost(w, r, c)
+	case action == "iso" && r.Method == http.MethodPost:
+		// KVM ISO 挂载/卸载（Virtualizor Enduser ISO）。
+		// 请求体：{"iso_id": "...", "attach": true/false}
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		handleContainerISOActionPost(w, r, c)
+	case action == "vnc-ticket" && r.Method == http.MethodPost:
+		// KVM VNC 控制台票据（Virtualizor VNC Console）。
+		// 请求体：{}（不需要参数，票据绑定当前容器）
+		// 权限：terminal:vnc（和顶层 /api/vnc-ticket 一致）。
+		if !requireScope(w, r, "terminal:vnc") {
+			return
+		}
+		handleContainerVNCTicketPost(w, r, c)
+	case action == "recipes/execute" && r.Method == http.MethodPost:
+		// 在当前容器上执行 Recipe（Virtualizor Startup Script）。
+		// 请求体：{"recipe_id": "recipe-xxx", "timeout": 120}
+		// 权限：container:power（执行脚本会改容器内文件）。
+		if !requireScope(w, r, "container:power") {
+			return
+		}
+		handleContainerRecipeExecutePost(w, r, c)
 	case r.Method == http.MethodGet:
 		if !requireScope(w, r, "container:read") {
 			return
@@ -647,6 +728,35 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 	if cfg.Name == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Container name is required"})
 		return
+	}
+	// 容器名约束：首字符必须为字母/数字，后续允许字母数字 - _ . ，
+	// 长度上限 64，与 LXC/KVM 内部命名空间与 cgroup 子系统兼容。
+	if len(cfg.Name) > 64 || !validContainerName(cfg.Name) {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Container name must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ and be ≤64 chars",
+		})
+		return
+	}
+	// SSH 公钥直接注入场景（cfg.SSHPublicKeys 中内联公钥字符串）：
+	// 限制单把公钥最大 16 KB（OpenSSH 默认上限），总数不超过 16 把，
+	// 防止恶意大字符串攻击底层 lxc-attach / cloud-init 写入路径。
+	const maxSSHKeyBytes = 16 * 1024
+	if len(cfg.SSHPublicKeys) > 16 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Too many SSH public keys (max 16)",
+		})
+		return
+	}
+	for i, k := range cfg.SSHPublicKeys {
+		if len(k) > maxSSHKeyBytes {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("SSH public key #%d exceeds 16 KB", i+1),
+			})
+			return
+		}
 	}
 	cfg.Virtualization = runtimeFromRequest(cfg.Virtualization)
 	if cfg.TemplateID == "" {
@@ -1813,6 +1923,91 @@ func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
 			"lxc_name":  newLxcName,
 			"vnc_port":  newVNCPort,
 			"ssh_port":  newSSHPort,
+		},
+	})
+}
+
+// handleContainerResize 处理容器规格变更（CPU/RAM/Disk）。
+// LXC 支持在线/离线调整 CPU 和 RAM；Disk 扩容可在线（loopback rootfs），
+// 缩容需要停机。KVM 的 CPU/RAM 调整需要停机后通过 virsh setvcpus/setmem
+// 修改 domain XML，再 start；Disk 通过 qemu-img resize。
+func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *config.Container) {
+	var req struct {
+		VCPU   int     `json:"vcpu"`
+		RAMMB  int     `json:"ram_mb"`
+		DiskGB float64 `json:"disk_gb"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	if req.VCPU <= 0 && req.RAMMB <= 0 && req.DiskGB <= 0 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "At least one of vcpu, ram_mb, disk_gb must be > 0"})
+		return
+	}
+	if req.VCPU < 0 || req.RAMMB < 0 || req.DiskGB < 0 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Resource values must be non-negative"})
+		return
+	}
+	if req.VCPU > 0 && req.VCPU > 256 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "vcpu exceeds maximum allowed (256)"})
+		return
+	}
+	if req.RAMMB > 0 && req.RAMMB > 1024*1024 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "ram_mb exceeds maximum allowed (1TB)"})
+		return
+	}
+	if req.DiskGB > 0 && req.DiskGB > 10240 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "disk_gb exceeds maximum allowed (10TB)"})
+		return
+	}
+
+	c = config.FindContainer(id)
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+
+	var err error
+	if c.IsKVM() {
+		err = kvmManager.ResizeContainer(id, req.VCPU, req.RAMMB, req.DiskGB)
+	} else {
+		err = lxcManager.ResizeContainer(id, req.VCPU, req.RAMMB, req.DiskGB)
+	}
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+
+	// 更新 config 中的规格（runtime 层已更新，这里同步持久化）
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if cfg.Containers[i].ID != id {
+				continue
+			}
+			if req.VCPU > 0 {
+				cfg.Containers[i].VCPU = float64(req.VCPU)
+			}
+			if req.RAMMB > 0 {
+				cfg.Containers[i].RAMMB = req.RAMMB
+			}
+			if req.DiskGB > 0 {
+				cfg.Containers[i].DiskGB = req.DiskGB
+			}
+			break
+		}
+	})
+	_ = config.SaveConfig()
+
+	detail := fmt.Sprintf("vcpu=%d ram_mb=%d disk_gb=%.1f", req.VCPU, req.RAMMB, req.DiskGB)
+	auditRequest(r, "container.resize", c.Name, detail, true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Message: "Container resized successfully",
+		Data: map[string]interface{}{
+			"vcpu":    c.VCPU,
+			"ram_mb":  c.RAMMB,
+			"disk_gb": c.DiskGB,
 		},
 	})
 }

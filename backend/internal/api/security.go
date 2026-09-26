@@ -448,7 +448,9 @@ func containerConntrackNetnsPID(c config.Container) string {
 	if c.IsKVM() || !c.UsesLANIPv4() {
 		return ""
 	}
-	out, err := exec.Command("lxc-info", "-n", c.LxcName(), "-pH").Output()
+ _ctx0, _cancel0 := context.WithTimeout(context.Background(), 15*time.Second)
+ defer _cancel0()
+	out, err := exec.CommandContext(_ctx0, "lxc-info", "-n", c.LxcName(), "-pH").Output()
 	if err != nil {
 		return ""
 	}

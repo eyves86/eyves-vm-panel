@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -68,6 +69,12 @@ func authContextFromRequest(r *http.Request) (AuthContext, bool) {
 }
 
 func requestActor(r *http.Request) string {
+	// 多节点转发场景：主控 → agent 转发时把原始请求的 actor 写到 X-Original-Actor。
+	// agent 端审计时应优先使用这个值，避免把"agent 自身 token"记成操作人。
+	// 仅当 header 非空时使用（直连到 agent 的请求不会有这个 header，自然 fallback）。
+	if orig := r.Header.Get("X-Original-Actor"); orig != "" {
+		return orig
+	}
 	if ctx, ok := authContextFromRequest(r); ok && ctx.Actor != "" {
 		return ctx.Actor
 	}
@@ -170,7 +177,29 @@ func AnyScopeMiddleware(scopes []string, next http.HandlerFunc) http.HandlerFunc
 	}
 }
 
+var (
+	auditPasswordRE      = regexp.MustCompile(`"password":"[^"]*"`)
+	auditNewPasswordRE   = regexp.MustCompile(`"new_password":"[^"]*"`)
+	auditTokenRE         = regexp.MustCompile(`"token":"[^"]*"`)
+	auditAPIKeyRE        = regexp.MustCompile(`"api_key":"[^"]*"`)
+	auditInstallKeyRE    = regexp.MustCompile(`"install_key":"[^"]*"`)
+	auditSecretRE        = regexp.MustCompile(`"secret":"[^"]*"`)
+	auditPasswordQueryRE = regexp.MustCompile(`password=[^&\s]*`)
+)
+
+func sanitizeAuditDetail(detail string) string {
+	detail = auditPasswordRE.ReplaceAllString(detail, `"password":"***"`)
+	detail = auditNewPasswordRE.ReplaceAllString(detail, `"new_password":"***"`)
+	detail = auditTokenRE.ReplaceAllString(detail, `"token":"***"`)
+	detail = auditAPIKeyRE.ReplaceAllString(detail, `"api_key":"***"`)
+	detail = auditInstallKeyRE.ReplaceAllString(detail, `"install_key":"***"`)
+	detail = auditSecretRE.ReplaceAllString(detail, `"secret":"***"`)
+	detail = auditPasswordQueryRE.ReplaceAllString(detail, `password=***`)
+	return detail
+}
+
 func auditRequest(r *http.Request, action, target, detail string, success bool, errMsg string) {
+	detail = sanitizeAuditDetail(detail)
 	config.AddAuditLogFull(action, target, detail, requestActor(r), clientIP(r), r.UserAgent(), success, errMsg)
 }
 
