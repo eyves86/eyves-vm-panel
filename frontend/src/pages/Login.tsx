@@ -1,23 +1,16 @@
 import { FormEvent, useState } from 'react'
 import { Lock, Smartphone, User } from 'lucide-react'
-import AppIcon from '../components/AppIcon'
+import AuthLayout from '../components/AuthLayout'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import AutoTranslate from '../components/AutoTranslate'
 import BrowserDialogTranslator from '../components/BrowserDialogTranslator'
 
-function LanguageIcon({ className = '' }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 1024 1024" version="1.1" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <path d="M213.333333 640v85.333333a85.333333 85.333333 0 0 0 78.933334 85.12L298.666667 810.666667h128v85.333333H298.666667a170.666667 170.666667 0 0 1-170.666667-170.666667v-85.333333h85.333333z m554.666667-213.333333l187.733333 469.333333h-91.946666l-51.242667-128h-174.506667l-51.157333 128h-91.904L682.666667 426.666667h85.333333z m-42.666667 123.093333L672.128 682.666667h106.325333L725.333333 549.76zM341.333333 85.333333v85.333334h170.666667v298.666666H341.333333v128H256v-128H85.333333V170.666667h170.666667V85.333333h85.333333z m384 42.666667a170.666667 170.666667 0 0 1 170.666667 170.666667v85.333333h-85.333333V298.666667a85.333333 85.333333 0 0 0-85.333334-85.333334h-128V128h128zM256 256H170.666667v128h85.333333V256z m170.666667 0H341.333333v128h85.333334V256z" fill="currentColor" />
-    </svg>
-  )
-}
-
-// Login 是**管理员入口**（/login）。用户入口在 /user/login。
+// Login 是**管理员入口**。用户入口在 /user/login。
+// 布局采用参考站的分屏门面：左表单 + 右品牌面板（见 AuthLayout）。
 export default function Login() {
   const { adminLogin, adminLoginWith2FA } = useAuth()
-  const { language, toggleLanguage, t } = useLanguage()
+  const { t } = useLanguage()
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [twoFACode, setTwoFACode] = useState('')
@@ -64,129 +57,116 @@ export default function Login() {
     setError('')
   }
 
+  const inputClass =
+    'block w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 transition-colors focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-900'
+
   return (
-    <div className="hero-bg relative min-h-screen flex items-center justify-center px-4">
+    <AuthLayout
+      greeting="很高兴，再次见到你"
+      title="欢迎回来"
+      subtitle="登录管理员控制台，管理你的云基础设施。"
+      slogan="从这里连接，向更多可能出发。"
+      sloganSub="容器、节点、网络与安全策略，统一在一块面板里从容调度。"
+    >
       <AutoTranslate />
       <BrowserDialogTranslator />
-      <div className="hero-grid" aria-hidden="true" />
-      <button
-        type="button"
-        onClick={() => { void toggleLanguage() }}
-        className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm backdrop-blur hover:bg-white hover:text-brand-700"
-      >
-        <LanguageIcon className="h-3.5 w-3.5" />
-        {language === 'en' ? '中文' : 'English'}
-      </button>
-      <div className="hero-card relative z-10 w-full max-w-md">
-        <div className="bg-white/95 backdrop-blur rounded-xl border border-gray-200 p-8 dark:bg-gray-900/95 dark:border-gray-700">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-16 h-16 flex items-center justify-center mb-4">
-              <AppIcon className="w-10 h-10" />
-            </div>
-            <h1 className="text-2xl font-bold text-brand-600">EyvesCloud</h1>
-            <p className="text-gray-500 mt-1 text-sm">{t('管理员控制台')}</p>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-400">
+            {error}
           </div>
+        )}
 
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-md text-sm">
-                {error}
+        {!twoFARequired && (
+          <div>
+            <label className="mb-1.5 block text-[13px] font-medium text-gray-900 dark:text-gray-200">
+              {t('管理员用户名')}
+            </label>
+            <div className="relative">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                <User className="h-4 w-4 text-gray-400" />
               </div>
-            )}
-
-            {!twoFARequired && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  {t('管理员用户名')}
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <User className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(event) => setUsername(event.target.value)}
-                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
-                    placeholder={t('输入管理员用户名')}
-                    required
-                    autoComplete="username"
-                  />
-                </div>
-              </div>
-            )}
-
-            {twoFARequired && (
-              <div className="rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-800">
-                <div className="flex items-center gap-1.5 font-medium">
-                  <Smartphone className="h-3.5 w-3.5" />{t('两步验证')}
-                </div>
-                <div className="mt-1">{t('请输入身份验证器中的 6 位动态口令，或一次性备份码')}</div>
-              </div>
-            )}
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                {t('密码')}
-              </label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-4 w-4 text-gray-400" />
-                </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(event) => setPassword(event.target.value)}
-                  className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm"
-                  placeholder={t('输入密码')}
-                  required
-                  autoComplete="current-password"
-                />
-              </div>
+              <input
+                type="text"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                className={inputClass}
+                placeholder={t('输入管理员用户名')}
+                required
+                autoComplete="username"
+              />
             </div>
+          </div>
+        )}
 
-            {twoFARequired && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1.5">
-                  {t('动态口令 / 备份码')}
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Smartphone className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={twoFACode}
-                    onChange={(event) => setTwoFACode(event.target.value.replace(/\s+/g, ''))}
-                    className="block w-full pl-10 pr-3 py-2.5 border border-gray-300 rounded-md text-black bg-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500 text-sm tracking-widest"
-                    placeholder={t('6 位动态口令或备份码')}
-                    required
-                    maxLength={32}
-                    autoComplete="one-time-code"
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleBackToCredentials}
-                  className="mt-1.5 text-xs text-gray-500 hover:text-black underline"
-                >
-                  {t('返回重新输入密码')}
-                </button>
-              </div>
-            )}
+        {twoFARequired && (
+          <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-800 dark:border-green-900/60 dark:bg-green-900/30 dark:text-green-400">
+            <div className="flex items-center gap-1.5 font-medium">
+              <Smartphone className="h-3.5 w-3.5" />{t('两步验证')}
+            </div>
+            <div className="mt-1">{t('请输入身份验证器中的 6 位动态口令，或一次性备份码')}</div>
+          </div>
+        )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-brand-600 text-white py-2.5 rounded-md hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm font-medium"
-            >
-              {loading ? t('登录中...') : t('登录管理员控制台')}
-            </button>
-          </form>
+        <div>
+          <label className="mb-1.5 block text-[13px] font-medium text-gray-900 dark:text-gray-200">
+            {t('密码')}
+          </label>
+          <div className="relative">
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+              <Lock className="h-4 w-4 text-gray-400" />
+            </div>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className={inputClass}
+              placeholder={t('输入密码')}
+              required
+              autoComplete="current-password"
+            />
+          </div>
         </div>
 
-        <p className="text-center text-xs text-gray-400 mt-6">EyvesCloud v1.2.0</p>
-      </div>
-    </div>
+        {twoFARequired && (
+          <div>
+            <label className="mb-1.5 block text-[13px] font-medium text-gray-900 dark:text-gray-200">
+              {t('动态口令 / 备份码')}
+            </label>
+            <div className="relative">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                <Smartphone className="h-4 w-4 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                value={twoFACode}
+                onChange={(event) => setTwoFACode(event.target.value.replace(/\s+/g, ''))}
+                className={`${inputClass} tracking-widest`}
+                placeholder={t('6 位动态口令或备份码')}
+                required
+                maxLength={32}
+                autoComplete="one-time-code"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleBackToCredentials}
+              className="mt-1.5 text-xs text-gray-500 underline transition-colors hover:text-black dark:hover:text-white"
+            >
+              {t('返回重新输入密码')}
+            </button>
+          </div>
+        )}
+
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-medium text-white transition-all hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-gray-950"
+        >
+          {loading ? t('登录中...') : t('登录管理员控制台')}
+        </button>
+      </form>
+    </AuthLayout>
   )
 }

@@ -329,6 +329,24 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     }
   })
 
+  // 导航到某分组下的页面时强制展开该分组：清除历史折叠标记，
+  // 避免「当前页所在分组被折叠」导致用户在侧边栏里找不到自己所在的位置。
+  useEffect(() => {
+    if (!activeGroupId) return
+    setOpenGroups((prev) => {
+      if (prev[activeGroupId] === false) {
+        const next = { ...prev, [activeGroupId]: true }
+        try {
+          localStorage.setItem(NAV_GROUP_STATE_KEY, JSON.stringify(next))
+        } catch {
+          /* 忽略存储失败（隐私模式等），仅影响记忆能力 */
+        }
+        return next
+      }
+      return prev
+    })
+  }, [activeGroupId])
+
   const isGroupOpen = (id: string) => openGroups[id] ?? id === activeGroupId
 
   const toggleGroup = (id: string) => {
@@ -423,14 +441,15 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
           const open = isGroupOpen(group.id)
           const hasHeader = expanded && !!group.label
           return (
-            <div key={group.id} className={hasHeader ? 'pt-2' : 'pt-1'}>
-              {/* 分组标题：展开态显示且可折叠；折叠态仅以分隔线体现分组。 */}
+            <div key={group.id} className={hasHeader ? 'pt-3' : 'pt-1'}>
+              {/* 分组标题：展开态显示且可折叠；折叠态仅以分隔线体现分组。
+                  中文标题不使用 uppercase/字距（那是西文排版习惯，中文会显得松散难读）。 */}
               {hasHeader ? (
                 <button
                   type="button"
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={open}
-                  className="mb-0.5 flex w-full items-center justify-between rounded-md px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+                  className="mb-1 flex w-full items-center justify-between rounded-md px-3 py-1.5 text-xs font-medium text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
                 >
                   <span>{group.label}</span>
                   <ChevronDown
@@ -465,31 +484,29 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         })}
       </nav>
 
-      <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 p-2 space-y-1">
-        {/* Theme Toggle */}
-        <div className={expanded ? 'flex items-center gap-1' : 'space-y-1'}>
-          <button
-            onClick={toggleTheme}
-            className={`${expanded ? 'flex-1' : 'w-full justify-center'} flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800`}
-            title={t(theme === 'dark' ? '切换亮色模式' : '切换暗黑模式')}
-          >
-            {theme === 'dark' ? (
-              <Sun className="w-4 h-4" />
-            ) : (
-              <Moon className="w-4 h-4" />
-            )}
-            {expanded && <span>{theme === 'dark' ? '亮色模式' : '暗黑模式'}</span>}
-          </button>
+      <div className="shrink-0 border-t border-gray-200 dark:border-gray-700 p-2 space-y-0.5">
+        {/* 底部工具区：统一为全宽行布局（与导航项一致），避免两个按钮并排挤压导致中文换行错位。 */}
+        <button
+          onClick={toggleTheme}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+          title={t(theme === 'dark' ? '切换亮色模式' : '切换暗黑模式')}
+        >
+          {theme === 'dark' ? (
+            <Sun className="w-4 h-4 shrink-0" />
+          ) : (
+            <Moon className="w-4 h-4 shrink-0" />
+          )}
+          {expanded && <span>{theme === 'dark' ? '亮色模式' : '暗黑模式'}</span>}
+        </button>
 
-          <button
-            onClick={() => { void toggleLanguage() }}
-            className={`${expanded ? 'flex-1 justify-center' : 'w-full justify-center'} flex items-center gap-2 rounded-md px-3 py-2.5 text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800`}
-            title="Language"
-          >
-            <LanguageIcon className="h-4 w-4 shrink-0" />
-            {expanded && <span>Language</span>}
-          </button>
-        </div>
+        <button
+          onClick={() => { void toggleLanguage() }}
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
+          title="Language"
+        >
+          <LanguageIcon className="h-4 w-4 shrink-0" />
+          {expanded && <span>Language</span>}
+        </button>
 
         {/* Version */}
         {version && (
@@ -537,9 +554,9 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
         {/* Logout */}
         <button
           onClick={logout}
-          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-md text-sm text-gray-600 hover:bg-gray-100 transition-colors dark:text-gray-400 dark:hover:bg-gray-800"
+          className="flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-sm text-gray-600 transition-colors hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-800"
         >
-          <LogOut className="w-4 h-4" />
+          <LogOut className="w-4 h-4 shrink-0" />
           {expanded && <span>退出登录</span>}
         </button>
       </div>

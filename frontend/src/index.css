@@ -155,50 +155,14 @@ textarea {
   color-scheme: light;
 }
 
-/* ============ Hero 背景（参考站登录/门面风格） ============ */
+/* ============ 登录页分屏门面（参考站 /login） ============ */
 
-/* 紫色径向渐变 + 顶部柔光（参考站 .hero 背景） */
-.hero-bg {
-  position: relative;
-  background:
-    radial-gradient(ellipse at 76% 30%, #ede5ff 0, transparent 50%),
-    radial-gradient(ellipse at 12% 85%, #f1ebff 0, transparent 45%),
-    linear-gradient(180deg, #faf8ff, #fdfcff 70%, var(--surface));
-}
-.dark .hero-bg {
-  background:
-    radial-gradient(ellipse at 76% 30%, #33245c 0, transparent 52%),
-    radial-gradient(ellipse at 12% 85%, #2a2145 0, transparent 45%),
-    linear-gradient(180deg, #1d1828, #191622 70%);
-}
-
-/* 网格线叠加（参考站 .hero-grid，52px 方格 + 向下淡出遮罩） */
-.hero-grid {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: .5;
-  background-image:
-    linear-gradient(rgba(217, 209, 237, 0.45) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(217, 209, 237, 0.45) 1px, transparent 1px);
-  background-size: 52px 52px;
-  -webkit-mask-image: linear-gradient(180deg, #000, transparent 85%);
-  mask-image: linear-gradient(180deg, #000, transparent 85%);
-}
-.dark .hero-grid {
-  opacity: .35;
-  background-image:
-    linear-gradient(rgba(87, 60, 145, 0.35) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(87, 60, 145, 0.35) 1px, transparent 1px);
-}
-
-/* 门面卡片：柔光阴影 + 入场动画 */
-.hero-card {
-  animation: fade-up .6s cubic-bezier(.22, 1, .36, 1) both;
-  box-shadow: 0 15px 35px rgba(75, 52, 112, 0.1);
-}
-.dark .hero-card {
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.4);
+/* 品牌面板点阵网格：白点低透明度平铺，营造精致质感 */
+.auth-dot-grid {
+  background-image: radial-gradient(rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+  background-size: 22px 22px;
+  -webkit-mask-image: linear-gradient(115deg, transparent 30%, #000 75%);
+  mask-image: linear-gradient(115deg, transparent 30%, #000 75%);
 }
 
 /* ============ DARK MODE OVERRIDES ============ */

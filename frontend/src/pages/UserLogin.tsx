@@ -1,11 +1,12 @@
 import { FormEvent, useState } from 'react'
 import { KeyRound, Lock, User } from 'lucide-react'
-import AppIcon from '../components/AppIcon'
+import AuthLayout from '../components/AuthLayout'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
-// UserLogin 是**用户入口**（/user/login）：账号密码登录，或使用管理员发放的访问码。
+// UserLogin 是**用户入口**：账号密码登录，或使用管理员发放的访问码。
 // 管理员入口使用随机化路径，不在本页暴露。
+// 布局采用参考站的分屏门面：左表单 + 右品牌面板（见 AuthLayout）。
 export default function UserLogin() {
   const { userLogin, accessCodeLogin } = useAuth()
   const { t } = useLanguage()
@@ -48,111 +49,114 @@ export default function UserLogin() {
     setError('')
   }
 
+  const inputClass =
+    'block w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 transition-colors focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-900'
+
   return (
-    <div className="hero-bg relative flex min-h-screen items-center justify-center px-4">
-      <div className="hero-grid" aria-hidden="true" />
-      <div className="hero-card relative z-10 w-full max-w-md">
-        <div className="rounded-xl border border-gray-200 bg-white/95 p-8 backdrop-blur dark:border-gray-800 dark:bg-gray-900/95">
-          <div className="mb-8 flex flex-col items-center">
-            <div className="mb-4 flex h-16 w-16 items-center justify-center">
-              <AppIcon className="h-10 w-10" />
-            </div>
-            <h1 className="text-2xl font-bold text-brand-600">EyvesCloud</h1>
-            <p className="mt-1 text-sm text-gray-500">{t('用户中心登录')}</p>
+    <AuthLayout
+      greeting="欢迎加入 EyvesCloud"
+      title="用户中心登录"
+      subtitle="使用账号或管理员发放的访问码，进入你的云服务器。"
+      slogan="你的云端旅程，从这里开始。"
+      sloganSub="轻量、稳定的容器化云服务器，按需创建，随时扩展。"
+    >
+      {/* 登录方式切换：下划线 tab（参考站样式） */}
+      <div className="mb-6 flex gap-6 border-b border-gray-200 dark:border-gray-700">
+        {(['account', 'code'] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            onClick={() => switchMode(m)}
+            className={`-mb-px border-b-2 pb-2.5 text-sm transition-colors ${
+              mode === m
+                ? 'border-brand-600 font-medium text-gray-900 dark:border-brand-400 dark:text-white'
+                : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+            }`}
+          >
+            {t(m === 'account' ? '账号登录' : '访问码登录')}
+          </button>
+        ))}
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-5">
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-400">
+            {error}
           </div>
+        )}
 
-          <div className="mb-5 grid grid-cols-2 gap-2 rounded-md bg-gray-100 p-1 text-sm dark:bg-gray-800">
-            <button
-              type="button"
-              onClick={() => switchMode('account')}
-              className={`rounded px-3 py-1.5 font-medium transition-colors ${mode === 'account' ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500 dark:text-white' : 'text-gray-500 hover:text-brand-700 dark:hover:text-brand-300'}`}
-            >
-              {t('账号登录')}
-            </button>
-            <button
-              type="button"
-              onClick={() => switchMode('code')}
-              className={`rounded px-3 py-1.5 font-medium transition-colors ${mode === 'code' ? 'bg-brand-600 text-white shadow-sm dark:bg-brand-500 dark:text-white' : 'text-gray-500 hover:text-brand-700 dark:hover:text-brand-300'}`}
-            >
-              {t('访问码登录')}
-            </button>
-          </div>
-
-          <form onSubmit={handleSubmit} className="space-y-5">
-            {error && (
-              <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>
-            )}
-
-            {mode === 'account' ? (
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('用户名')}</label>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <User className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                    placeholder={t('输入用户名')}
-                    required
-                    autoComplete="username"
-                  />
-                </div>
+        {mode === 'account' ? (
+          <div>
+            <label className="mb-1.5 block text-[13px] font-medium text-gray-900 dark:text-gray-200">
+              {t('用户名')}
+            </label>
+            <div className="relative">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                <User className="h-4 w-4 text-gray-400" />
               </div>
-            ) : (
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('访问码')}</label>
-                <div className="relative">
-                  <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                    <KeyRound className="h-4 w-4 text-gray-400" />
-                  </div>
-                  <input
-                    type="text"
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    disabled={!!urlCode}
-                    className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 disabled:bg-gray-100 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                    placeholder={t('输入访问码')}
-                    required
-                    autoComplete="off"
-                  />
-                </div>
-                <p className="mt-1.5 text-xs text-gray-400">{t('访问码由管理员在「管理链接」中提供')}</p>
-              </div>
-            )}
-
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-gray-700 dark:text-gray-300">{t('密码')}</label>
-              <div className="relative">
-                <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
-                  <Lock className="h-4 w-4 text-gray-400" />
-                </div>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="block w-full rounded-md border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500 dark:border-gray-700 dark:bg-gray-800 dark:text-white"
-                  placeholder={t('输入密码')}
-                  required
-                  autoComplete="current-password"
-                />
-              </div>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                className={inputClass}
+                placeholder={t('输入用户名')}
+                required
+                autoComplete="username"
+              />
             </div>
+          </div>
+        ) : (
+          <div>
+            <label className="mb-1.5 block text-[13px] font-medium text-gray-900 dark:text-gray-200">
+              {t('访问码')}
+            </label>
+            <div className="relative">
+              <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+                <KeyRound className="h-4 w-4 text-gray-400" />
+              </div>
+              <input
+                type="text"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                disabled={!!urlCode}
+                className={`${inputClass} disabled:bg-gray-100 dark:disabled:bg-gray-800/60`}
+                placeholder={t('输入访问码')}
+                required
+                autoComplete="off"
+              />
+            </div>
+            <p className="mt-1.5 text-xs text-gray-400">{t('访问码由管理员在「管理链接」中提供')}</p>
+          </div>
+        )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full rounded-md bg-brand-600 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {loading ? t('登录中...') : t('登录')}
-            </button>
-          </form>
+        <div>
+          <label className="mb-1.5 block text-[13px] font-medium text-gray-900 dark:text-gray-200">
+            {t('密码')}
+          </label>
+          <div className="relative">
+            <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3">
+              <Lock className="h-4 w-4 text-gray-400" />
+            </div>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className={inputClass}
+              placeholder={t('输入密码')}
+              required
+              autoComplete="current-password"
+            />
+          </div>
         </div>
 
-        <p className="mt-6 text-center text-xs text-gray-400">EyvesCloud v1.2.0</p>
-      </div>
-    </div>
+        <button
+          type="submit"
+          disabled={loading}
+          className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-medium text-white transition-all hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-gray-950"
+        >
+          {loading ? t('登录中...') : t('登录')}
+        </button>
+      </form>
+    </AuthLayout>
   )
 }
