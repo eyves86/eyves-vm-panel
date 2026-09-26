@@ -47,10 +47,12 @@ func HandleNodes(w http.ResponseWriter, r *http.Request) {
 		config.AppConfigMu.RLock()
 		nodes := append([]config.Node(nil), config.AppConfig.Nodes...)
 		config.AppConfigMu.RUnlock()
-		if nodes == nil {
-			nodes = []config.Node{}
+		// 脱敏下发：列表绝不携带 agent Token / InstallKey（密钥最小化）。
+		safe := make([]map[string]any, 0, len(nodes))
+		for _, n := range nodes {
+			safe = append(safe, sanitizeNode(n))
 		}
-		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: nodes})
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: safe})
 	case http.MethodPost:
 		if !requireScope(w, r, "node:write") {
 			return
@@ -81,6 +83,9 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeDrain(w, r, nodeID) })(w, r)
 	case rest == "install-script":
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScript(w, r, nodeID) })(w, r)
+	case rest == "install-command":
+		// 一行安装命令（curl | sudo bash）：面板只展示命令，不展示脚本正文。
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallCommand(w, r, nodeID) })(w, r)
 	case rest == "install-script/sha256":
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScriptSHA256(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodGet:
@@ -307,6 +312,10 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name    string `json:"name"`
 		Address string `json:"address"`
+		// BindIP 可选：把一次性 install_key 绑定到「被控节点出口 IP」，
+		// 注册时校验来源 IP 一致（同 /24 前缀亦通过）。留空 = 不绑 IP，
+		// 仅保留一次性 + 24h TTL 防护（适合被控出口 IP 未知/多线的场景）。
+		BindIP string `json:"bind_ip"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -323,6 +332,17 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// IP 绑定只接受显式指定的被控出口 IP；不再默认绑定「发起请求的管理员 IP」——
+	// 管理员与被控机通常不在同一网段，默认绑定会导致 agent 注册必然 IP mismatch。
+	bindIP := ""
+	if raw := strings.TrimSpace(req.BindIP); raw != "" {
+		ip := net.ParseIP(raw)
+		if ip == nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "无效的绑定 IP"})
+			return
+		}
+		bindIP = ip.String()
+	}
 	node := config.Node{
 		ID:                  newNodeID(),
 		Name:                name,
@@ -330,7 +350,7 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 		Token:               randomNodeSecret(32),
 		InstallKey:          randomNodeSecret(32),
 		InstallKeyCreatedAt: time.Now().UTC().Format(time.RFC3339),
-		InstallKeyIP:        clientIP(r),
+		InstallKeyIP:        bindIP,
 		Status:              "pending",
 		CreatedAt:           time.Now().Format("2006-01-02 15:04:05"),
 	}
@@ -338,8 +358,120 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	auditRequest(r, "node.create", node.Name, "创建被控节点", true, "")
-	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: node})
+	auditRequest(r, "node.create", node.Name, "创建被控节点（install_key 绑定 IP: "+bindIPOrNone(bindIP)+"）", true, "")
+	// 响应不下发 agent Token（密钥最小化）：仅返回节点信息 + 一次性 install_key
+	// 供面板拼接一行安装命令；key 注册成功即焚，TTL 24h。
+	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: map[string]any{
+		"node":              sanitizeNode(node),
+		"install_key":       node.InstallKey,
+		"install_key_ttl":   "24h",
+		"install_key_bound": bindIP,
+	}})
+}
+
+// bindIPOrNone 审计日志友好输出。
+func bindIPOrNone(ip string) string {
+	if ip == "" {
+		return "无"
+	}
+	return ip
+}
+
+// nodeInstallCommand 返回一行式安装命令所需的材料。
+type nodeInstallCommand struct {
+	Command   string `json:"command"`
+	Key       string `json:"install_key"`
+	ExpiresAt string `json:"expires_at"`
+	BoundIP   string `json:"bound_ip"`
+	SHA256    string `json:"sha256"`
+}
+
+// handleNodeInstallCommand 生成「一行安装命令」（管理员面板用）。
+// 面板不再展示/复制完整 bash 脚本正文，只下发：
+//
+//	curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
+//
+// key 特性：一次性（注册即焚）、24h TTL、可选绑定被控出口 IP；
+// 经 X-Install-Key 请求头传输，不进 URL/反代日志/浏览器历史（F4）。
+// 脚本正文由 install-script 端点动态生成（动态端点传参，无静态硬编码密钥）。
+func handleNodeInstallCommand(w http.ResponseWriter, r *http.Request, nodeID string) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	node, ok := config.FindNode(nodeID)
+	if !ok {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
+		return
+	}
+	// key 已被消费（注册成功即焚）或从未生成：自动换发新 key 供重装/换机。
+	installKey := node.InstallKey
+	if installKey == "" {
+		installKey = randomNodeSecret(32)
+		expiry := time.Now().UTC().Format(time.RFC3339)
+		// 换发时保留节点原有的显式 IP 绑定；不再回填「管理员 IP」（那不是被控出口）。
+		config.UpdateNode(node.ID, func(n *config.Node) {
+			n.InstallKey = installKey
+			n.InstallKeyCreatedAt = expiry
+		})
+		node, _ = config.FindNode(nodeID)
+		auditRequest(r, "node.install_command", node.Name, "换发一次性 install_key（指纹 "+installKeyFingerprint(installKey)+"）", true, "")
+	}
+	script := buildAgentInstallScript("", installKey, node.Name, "")
+	hashBytes := sha256.Sum256([]byte(script))
+	scheme := "https"
+	if r.TLS == nil {
+		scheme = "http"
+	}
+	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script", scheme, r.Host, nodeID)
+	command := fmt.Sprintf("curl -fsSL -H \"X-Install-Key: %s\" %s | sudo bash", installKey, curlURL)
+	expiresAt := ""
+	if node.InstallKeyCreatedAt != "" {
+		if created, err := time.Parse(time.RFC3339, node.InstallKeyCreatedAt); err == nil {
+			expiresAt = created.Add(24 * time.Hour).UTC().Format(time.RFC3339)
+		}
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: nodeInstallCommand{
+		Command:   command,
+		Key:       installKey,
+		ExpiresAt: expiresAt,
+		BoundIP:   node.InstallKeyIP,
+		SHA256:    hex.EncodeToString(hashBytes[:]),
+	}})
+}
+
+// installKeyFingerprint 审计日志脱敏：只保留 key 前 8 位指纹。
+func installKeyFingerprint(key string) string {
+	if len(key) > 8 {
+		return key[:8] + "..."
+	}
+	return key
+}
+
+// sanitizeNode 剥离凭据字段：agent Token / InstallKey 永不出现在
+// 节点列表与详情响应中（密钥最小化，防止 node:read 权限账号横向控制被控机）。
+func sanitizeNode(n config.Node) map[string]any {
+	return map[string]any{
+		"id":               n.ID,
+		"name":             n.Name,
+		"address":          n.Address,
+		"status":           n.Status,
+		"last_seen":        n.LastSeen,
+		"version":          n.Version,
+		"os_name":          n.OSName,
+		"cpu_count":        n.CPUCount,
+		"ram_total_mb":     n.RAMTotalMB,
+		"ram_used_mb":      n.RAMUsedMB,
+		"disk_total_gb":    n.DiskTotalGB,
+		"disk_used_gb":     n.DiskUsedGB,
+		"container_count":  n.ContainerCount,
+		"region_id":        n.RegionID,
+		"node_group_id":    n.NodeGroupID,
+		"cluster_id":       n.ClusterID,
+		"virt_types":       n.VirtTypes,
+		"created_at":       n.CreatedAt,
+		"maintenance_mode": n.MaintenanceMode,
+	}
 }
 
 func handleNodeItem(w http.ResponseWriter, r *http.Request, nodeID string) {
@@ -353,7 +485,8 @@ func handleNodeItem(w http.ResponseWriter, r *http.Request, nodeID string) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 			return
 		}
-		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: node})
+		// 脱敏下发：不携带 Token / InstallKey。
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: sanitizeNode(node)})
 	case http.MethodDelete:
 		if !requireScope(w, r, "node:write") {
 			return
@@ -628,7 +761,8 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 		config.UpdateNode(node.ID, func(n *config.Node) {
 			n.InstallKey = installKey
 			n.InstallKeyCreatedAt = time.Now().UTC().Format(time.RFC3339)
-			n.InstallKeyIP = clientIP(r)
+			// 不回填 IP：clientIP(r) 是管理员 IP 而非被控出口 IP，
+			// 错误绑定会导致 agent 注册必然 IP mismatch；绑定仅由 bind_ip 显式指定。
 		})
 	}
 	// 不再硬编码 controller —— 脚本运行时自动探测
@@ -648,12 +782,15 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 	// F4：install_key 走请求头，不进 URL（避免落入访问日志/历史/Referer）。
 	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script", scheme, r.Host, nodeID)
 
-	comments := fmt.Sprintf(`# 推荐安装方式（校验完整性；X-Install-Key 头携带密钥，不写入 URL）：
+	comments := fmt.Sprintf(`# 一行安装（推荐；X-Install-Key 头携带密钥，不写入 URL）：
+# curl -fsSL -H "X-Install-Key: %s" %s | sudo bash
+#
+# 先校验再安装（离线审计场景）：
 # curl -fsSL -H "X-Install-Key: %s" %s -o install.sh
 # echo "%s  install.sh" | sha256sum -c
 # sudo bash install.sh
 #
-`, installKey, curlURL, hash)
+`, installKey, curlURL, installKey, curlURL, hash)
 
 	_, _ = w.Write([]byte(comments + script))
 }
@@ -683,7 +820,7 @@ func handleNodeInstallScriptSHA256(w http.ResponseWriter, r *http.Request, nodeI
 		config.UpdateNode(node.ID, func(n *config.Node) {
 			n.InstallKey = installKey
 			n.InstallKeyCreatedAt = time.Now().UTC().Format(time.RFC3339)
-			n.InstallKeyIP = clientIP(r)
+			// 不回填管理员 IP；绑定仅由 bind_ip 显式指定（见 handleNodeInstallCommand 注释）。
 		})
 	}
 	script := buildAgentInstallScript("", installKey, node.Name, "")

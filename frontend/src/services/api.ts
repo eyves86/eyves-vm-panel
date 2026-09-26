@@ -1136,14 +1136,35 @@ export interface ManagedNode {
 export const getNodes = () =>
   api.get<APIResponse<ManagedNode[]>>('/nodes')
 
-export const createNode = (name?: string, address?: string) =>
-  api.post<APIResponse<ManagedNode>>('/nodes', { name, address })
+// 创建被控节点：bindIP 可选（把一次性 install_key 绑定到被控出口 IP）。
+// 响应包含 node（脱敏）+ install_key（一次性，注册即焚，TTL 24h）。
+export interface CreateNodeResult {
+  node: ManagedNode
+  install_key: string
+  install_key_ttl: string
+  install_key_bound: string
+}
+
+export const createNode = (name?: string, address?: string, bindIP?: string) =>
+  api.post<APIResponse<CreateNodeResult>>('/nodes', { name, address, bind_ip: bindIP })
 
 export const deleteNode = (id: string) =>
   api.delete<APIResponse>(`/nodes/${id}`)
 
 export const getNodeInstallScript = (id: string) =>
   api.get<string>(`/nodes/${id}/install-script`, { responseType: 'text' })
+
+// 一行安装命令（curl | sudo bash）：面板只展示命令，不展示脚本正文。
+export interface NodeInstallCommand {
+  command: string
+  install_key: string
+  expires_at: string
+  bound_ip: string
+  sha256: string
+}
+
+export const getNodeInstallCommand = (id: string) =>
+  api.get<APIResponse<NodeInstallCommand>>(`/nodes/${id}/install-command`)
 
 export const getNodeContainers = (nodeId: string) =>
   api.get<APIResponse<Container[]>>(`/nodes/${nodeId}/containers`)

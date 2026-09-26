@@ -31,7 +31,7 @@ import {
   getEnabledImages,
   getNodeContainers,
   getNodeImages,
-  getNodeInstallScript,
+  getNodeInstallCommand,
   getNodes,
   getRegions,
   listClusters,
@@ -42,6 +42,7 @@ import {
   updateCluster,
   updateNodeGroup,
   type Cluster,
+  type NodeInstallCommand,
   type Container,
   type CreateContainerRequest,
   type ManagedNode,
@@ -92,12 +93,16 @@ export default function NodeManagement() {
   const [nodes, setNodes] = useState<ManagedNode[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址信息）
+  const [createMode, setCreateMode] = useState<'quick' | 'manual'>('quick')
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
+  const [newBindIP, setNewBindIP] = useState('')
   const [creating, setCreating] = useState(false)
-  const [scriptNode, setScriptNode] = useState<ManagedNode | null>(null)
-  const [scriptText, setScriptText] = useState('')
-  const [scriptLoading, setScriptLoading] = useState(false)
+  // 一行安装命令（curl | sudo bash）：只展示命令，不展示脚本正文
+  const [cmdNode, setCmdNode] = useState<ManagedNode | null>(null)
+  const [cmdInfo, setCmdInfo] = useState<NodeInstallCommand | null>(null)
+  const [cmdLoading, setCmdLoading] = useState(false)
   const [detailNode, setDetailNode] = useState<ManagedNode | null>(null)
   const [nodeContainers, setNodeContainers] = useState<Container[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
@@ -171,22 +176,62 @@ export default function NodeManagement() {
   const handleCreate = async () => {
     const name = newName.trim()
     const address = newAddress.trim()
+    const bindIP = newBindIP.trim()
     if (!name && !address) {
       await alert(t('提示'), t('请填写节点名称或地址'))
       return
     }
     setCreating(true)
     try {
-      await createNode(name || undefined, address)
-      await alert(t('完成'), t('节点已创建，可查看一键安装脚本并在被控服务器上执行'))
+      const res = await createNode(name || undefined, address || undefined, bindIP || undefined)
+      const created = res.data.data
       setShowCreate(false)
       setNewName('')
       setNewAddress('')
+      setNewBindIP('')
       refresh()
+      // 创建成功后直接展示一行安装命令（不展示脚本正文）
+      if (created?.node) {
+        await loadInstallCommand(created.node)
+      }
     } catch (e: any) {
       await alert(t('创建失败'), e?.response?.data?.message || String(e))
     } finally {
       setCreating(false)
+    }
+  }
+
+  // loadInstallCommand 拉取一行安装命令（curl | sudo bash）。
+  // 面板不展示/复制完整 bash 脚本正文，只下发命令与 key 元信息。
+  const loadInstallCommand = async (node: ManagedNode) => {
+    setCmdNode(node)
+    setCmdInfo(null)
+    setCmdLoading(true)
+    try {
+      const res = await getNodeInstallCommand(node.id)
+      setCmdInfo(res.data.data ?? null)
+    } catch (e: any) {
+      await alert(t('获取安装命令失败'), e?.response?.data?.message || String(e))
+      setCmdNode(null)
+    } finally {
+      setCmdLoading(false)
+    }
+  }
+
+  const copyCommand = async () => {
+    if (!cmdInfo) return
+    const text = cmdInfo.command
+    try {
+      await navigator.clipboard.writeText(text)
+      await alert(t('已复制'), t('安装命令已复制，请在被控服务器上执行'))
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      await alert(t('已复制'), t('安装命令已复制，请在被控服务器上执行'))
     }
   }
 
@@ -199,35 +244,6 @@ export default function NodeManagement() {
       refresh()
     } catch (e: any) {
       await alert(t('删除失败'), e?.response?.data?.message || String(e))
-    }
-  }
-
-  const loadScript = async (node: ManagedNode) => {
-    setScriptNode(node)
-    setScriptText('')
-    setScriptLoading(true)
-    try {
-      const res = await getNodeInstallScript(node.id)
-      setScriptText(res.data as unknown as string)
-    } catch (e: any) {
-      await alert(t('获取脚本失败'), e?.response?.data?.message || String(e))
-    } finally {
-      setScriptLoading(false)
-    }
-  }
-
-  const copyScript = async () => {
-    try {
-      await navigator.clipboard.writeText(scriptText)
-      await alert(t('已复制'), t('安装脚本已复制到剪贴板'))
-    } catch {
-      const ta = document.createElement('textarea')
-      ta.value = scriptText
-      document.body.appendChild(ta)
-      ta.select()
-      document.execCommand('copy')
-      document.body.removeChild(ta)
-      await alert(t('已复制'), t('安装脚本已复制到剪贴板'))
     }
   }
 
@@ -651,11 +667,11 @@ export default function NodeManagement() {
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1">
                         <button
-                          onClick={() => loadScript(node)}
+                          onClick={() => loadInstallCommand(node)}
                           className="rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                          title={t('一键安装脚本')}
+                          title={t('一行安装命令')}
                         >
-                          {t('安装脚本')}
+                          {t('安装命令')}
                         </button>
                         <button
                           onClick={() => loadDetail(node)}
@@ -819,7 +835,7 @@ export default function NodeManagement() {
         )}
       </div>
 
-      {/* 添加节点 */}
+      {/* 添加节点：一键添加 / 手动添加 */}
       {showCreate && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
           <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
@@ -829,6 +845,25 @@ export default function NodeManagement() {
                 <X className="h-4 w-4" />
               </button>
             </div>
+
+            {/* 模式切换：下划线 tab */}
+            <div className="flex gap-6 border-b border-gray-200 px-5 dark:border-gray-700">
+              {([['quick', t('一键添加')], ['manual', t('手动添加')]] as const).map(([mode, label]) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setCreateMode(mode)}
+                  className={`-mb-px border-b-2 pb-2.5 pt-1 text-sm transition-colors ${
+                    createMode === mode
+                      ? 'border-brand-600 font-medium text-gray-900 dark:border-brand-400 dark:text-white'
+                      : 'border-transparent text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
             <div className="space-y-4 px-5 py-4">
               <div>
                 <label className="mb-1.5 block text-xs text-gray-500">{t('节点名称')}</label>
@@ -839,16 +874,41 @@ export default function NodeManagement() {
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
+
+              {createMode === 'manual' && (
+                <div>
+                  <label className="mb-1.5 block text-xs text-gray-500">{t('被控面板地址（可选）')}</label>
+                  <input
+                    value={newAddress}
+                    onChange={(e) => setNewAddress(e.target.value)}
+                    placeholder="http://1.2.3.4:8999"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  />
+                </div>
+              )}
+
               <div>
-                <label className="mb-1.5 block text-xs text-gray-500">{t('被控面板地址（可选）')}</label>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('绑定被控出口 IP（可选）')}</label>
                 <input
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                  placeholder="http://1.2.3.4:8999"
+                  value={newBindIP}
+                  onChange={(e) => setNewBindIP(e.target.value)}
+                  placeholder="203.0.113.10"
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
+                <p className="mt-1.5 text-xs text-gray-400">
+                  {t('填写后安装密钥仅允许该 IP 的机器注册（同 /24 网段亦可）；留空则不限制来源 IP，仅保留一次性与 24 小时时效')}
+                </p>
               </div>
-              <p className="text-xs text-gray-400">{t('地址留空时，可在 Agent 安装脚本中通过第二个参数指定')}</p>
+
+              {createMode === 'quick' ? (
+                <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+                  {t('创建后将生成一行安装命令，在被控服务器上以 root 执行即可自动安装并接入主控。')}
+                </p>
+              ) : (
+                <p className="text-xs text-gray-400">
+                  {t('手动模式适合先录入节点信息再安装 Agent；创建后同样会提供安装命令。')}
+                </p>
+              )}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button
@@ -863,49 +923,79 @@ export default function NodeManagement() {
                 className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-                {t('创建')}
+                {createMode === 'quick' ? t('生成安装命令') : t('创建')}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 一键安装脚本 */}
-      {scriptNode && (
+      {/* 一行安装命令（curl | sudo bash）：只展示命令，不展示脚本正文 */}
+      {cmdNode && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
           <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
-                {t('一键安装脚本')} · {scriptNode.name}
+                {t('一键安装命令')} · {cmdNode.name}
               </h3>
-              <button onClick={() => setScriptNode(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
+              <button onClick={() => setCmdNode(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
               <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
-                {t('在被控服务器（root 权限）上执行以下脚本即可接入主控。可选参数：脚本名称 [节点名称] [被控面板地址]。')}
+                {t('在被控服务器（root 权限）上执行以下命令即可安装并接入主控。密钥经 HTTPS 请求头传输，不会出现在 URL 中。')}
               </p>
-              {scriptLoading ? (
+              {cmdLoading ? (
                 <div className="flex items-center justify-center py-10">
                   <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
                 </div>
-              ) : (
-                <pre className="overflow-x-auto rounded-md bg-gray-950 p-4 text-xs leading-relaxed text-gray-100">
-                  <code>{scriptText}</code>
-                </pre>
-              )}
+              ) : cmdInfo ? (
+                <>
+                  <pre className="overflow-x-auto rounded-md bg-gray-950 p-4 text-xs leading-relaxed text-gray-100">
+                    <code className="break-all">{cmdInfo.command}</code>
+                  </pre>
+                  <div className="mt-3 grid grid-cols-1 gap-2 text-xs sm:grid-cols-3">
+                    <div className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+                      <div className="text-gray-400">{t('密钥时效')}</div>
+                      <div className="mt-0.5 font-medium text-black dark:text-white">{t('24 小时 / 一次性')}</div>
+                    </div>
+                    <div className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+                      <div className="text-gray-400">{t('绑定 IP')}</div>
+                      <div className="mt-0.5 font-medium text-black dark:text-white">{cmdInfo.bound_ip || t('未绑定')}</div>
+                    </div>
+                    <div className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700">
+                      <div className="text-gray-400">{t('脚本 SHA256')}</div>
+                      <div className="mt-0.5 truncate font-mono text-[11px] text-gray-600 dark:text-gray-300" title={cmdInfo.sha256}>
+                        {cmdInfo.sha256.slice(0, 16)}…
+                      </div>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-xs text-amber-600 dark:text-amber-400">
+                    {t('注意：密钥注册成功后立即失效；节点重装或换机时可重新生成新命令。')}
+                  </p>
+                </>
+              ) : null}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button
-                onClick={copyScript}
-                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+                onClick={() => { void loadInstallCommand(cmdNode) }}
+                disabled={cmdLoading}
+                className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:text-gray-300 dark:hover:bg-gray-700"
               >
-                <Copy className="h-4 w-4" />
-                {t('复制脚本')}
+                <RefreshCw className="h-4 w-4" />
+                {t('重新生成')}
               </button>
               <button
-                onClick={() => setScriptNode(null)}
+                onClick={copyCommand}
+                disabled={!cmdInfo}
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+              >
+                <Copy className="h-4 w-4" />
+                {t('复制命令')}
+              </button>
+              <button
+                onClick={() => setCmdNode(null)}
                 className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 {t('关闭')}
