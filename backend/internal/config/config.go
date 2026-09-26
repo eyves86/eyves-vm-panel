@@ -1327,6 +1327,12 @@ type Node struct {
 	// 已有容器不受影响，配合 drain 列表手动迁移。
 	MaintenanceMode  bool   `json:"maintenance_mode,omitempty"`
 	MaintenanceSince string `json:"maintenance_since,omitempty"`
+	// TLSSkipVerify 允许主控→被控方向跳过 TLS 证书校验（被控自签证书场景）。
+	// 默认 false = 严格校验。开启会降低中间人防护，创建时落审计。
+	TLSSkipVerify bool `json:"tls_skip_verify,omitempty"`
+	// AllowPrivateAddr 记录该节点地址被显式豁免 SSRF 私网/环回拦截（内网部署场景）。
+	// 链路本地（169.254.0.0/16 含云元数据、fe80::/10）永远拒绝，无豁免。
+	AllowPrivateAddr bool `json:"allow_private_addr,omitempty"`
 }
 
 // NodeGroup 是一个逻辑节点分组（迁移池 / 策略池）：Virtualizor 叫 Server Group，

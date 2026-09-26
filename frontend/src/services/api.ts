@@ -1137,16 +1137,37 @@ export const getNodes = () =>
   api.get<APIResponse<ManagedNode[]>>('/nodes')
 
 // 创建被控节点：bindIP 可选（把一次性 install_key 绑定到被控出口 IP）。
-// 响应包含 node（脱敏）+ install_key（一次性，注册即焚，TTL 24h）。
+// quick 模式响应包含 node（脱敏）+ install_key（一次性，注册即焚，TTL 24h）。
 export interface CreateNodeResult {
   node: ManagedNode
-  install_key: string
-  install_key_ttl: string
-  install_key_bound: string
+  install_key?: string
+  install_key_ttl?: string
+  install_key_bound?: string
+  // manual 模式：手工接入材料（agent.json 预置配置，免 install_key 注册）。
+  manual_bootstrap?: ManualBootstrap
 }
 
-export const createNode = (name?: string, address?: string, bindIP?: string) =>
-  api.post<APIResponse<CreateNodeResult>>('/nodes', { name, address, bind_ip: bindIP })
+// 手动添加节点返回的接入材料：写入被控机 <data_dir>/agent.json 后
+// 运行 eyvescloud agent 即可接入（无需安装密钥）。token 仅此一次明文下发。
+export interface ManualBootstrap {
+  controller_url: string
+  node_id: string
+  token: string
+  agent_config: string
+  deploy_hint: string
+}
+
+export interface CreateNodePayload {
+  name?: string
+  address?: string
+  bind_ip?: string
+  mode?: 'quick' | 'manual'
+  tls_skip_verify?: boolean
+  allow_private?: boolean
+}
+
+export const createNode = (payload: CreateNodePayload) =>
+  api.post<APIResponse<CreateNodeResult>>('/nodes', payload)
 
 export const deleteNode = (id: string) =>
   api.delete<APIResponse>(`/nodes/${id}`)

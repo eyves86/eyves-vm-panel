@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -262,7 +263,10 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	address := normalizeNodeAddress(req.Address)
 	if address != "" {
-		if err := validateNodeAddress(address); err != nil {
+		// agent 自报地址（已持一次性 install_key，属部署信任链）：链路本地
+		// 仍硬拒（元数据防泄漏），环回/私网放行——LXC/NAT 环境下 agent
+		// 自报内网地址是常态，若照搬管理员录入的严格策略会阻断一键注册。
+		if err := validateNodeAddress(address, true); err != nil {
 			auditRequest(r, "node.register", name, "install_key 指纹 "+keyFingerprint(req.InstallKey), false, err.Error())
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 			return
@@ -316,50 +320,115 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 		// 注册时校验来源 IP 一致（同 /24 前缀亦通过）。留空 = 不绑 IP，
 		// 仅保留一次性 + 24h TTL 防护（适合被控出口 IP 未知/多线的场景）。
 		BindIP string `json:"bind_ip"`
+		// Mode 添加模式：quick=一键添加（默认，生成一行安装命令走 register 流程）；
+		// manual=手动添加（被控机手工部署 agent，面板下发 agent.json 预置配置，免 install_key）。
+		Mode string `json:"mode"`
+		// TLSSkipVerify 允许主控→被控跳过 TLS 证书校验（被控自签证书场景），落审计。
+		TLSSkipVerify bool `json:"tls_skip_verify"`
+		// AllowPrivate 显式豁免 SSRF 环回/私网拦截（内网部署场景），落审计；
+		// 链路本地（169.254.0.0/16 含云元数据、fe80::/10）无豁免永远拒绝。
+		AllowPrivate bool `json:"allow_private"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = "quick"
+	}
+	if mode != "quick" && mode != "manual" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "mode 必须为 quick 或 manual"})
 		return
 	}
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "node-" + randomNodeSecret(4)
 	}
+	// 手动添加：地址必填（主控要主动连被控 agent API）；一键添加：可选（通常由 agent 注册时自报）。
 	address := normalizeNodeAddress(req.Address)
-	if address != "" {
-		if err := validateNodeAddress(address); err != nil {
+	if address != "" || mode == "manual" {
+		if address == "" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "手动添加需要填写被控面板地址"})
+			return
+		}
+		// 管理员录入路径执行完整 SSRF 检查：链路本地硬拒 + 环回/私网默认拒（可显式豁免）。
+		if err := validateNodeAddress(address, req.AllowPrivate); err != nil {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 			return
 		}
 	}
 	// IP 绑定只接受显式指定的被控出口 IP；不再默认绑定「发起请求的管理员 IP」——
 	// 管理员与被控机通常不在同一网段，默认绑定会导致 agent 注册必然 IP mismatch。
+	// 手动添加不走 install_key 注册流程，绑定无意义，强制忽略。
 	bindIP := ""
-	if raw := strings.TrimSpace(req.BindIP); raw != "" {
-		ip := net.ParseIP(raw)
-		if ip == nil {
-			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "无效的绑定 IP"})
-			return
+	if mode == "quick" {
+		if raw := strings.TrimSpace(req.BindIP); raw != "" {
+			ip := net.ParseIP(raw)
+			if ip == nil {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "无效的绑定 IP"})
+				return
+			}
+			bindIP = ip.String()
 		}
-		bindIP = ip.String()
+	}
+	// 手动模式不生成 install_key（无 register 流程，agent.json 预置配置直接启动）；
+	// 后续若想改走一键安装，install-command/install-script 端点会按需换发新 key。
+	installKey := ""
+	if mode == "quick" {
+		installKey = randomNodeSecret(32)
 	}
 	node := config.Node{
 		ID:                  newNodeID(),
 		Name:                name,
 		Address:             address,
 		Token:               randomNodeSecret(32),
-		InstallKey:          randomNodeSecret(32),
+		InstallKey:          installKey,
 		InstallKeyCreatedAt: time.Now().UTC().Format(time.RFC3339),
 		InstallKeyIP:        bindIP,
 		Status:              "pending",
 		CreatedAt:           time.Now().Format("2006-01-02 15:04:05"),
+		TLSSkipVerify:       req.TLSSkipVerify,
+		AllowPrivateAddr:    req.AllowPrivate,
 	}
 	if err := config.AddNode(node); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	auditRequest(r, "node.create", node.Name, "创建被控节点（install_key 绑定 IP: "+bindIPOrNone(bindIP)+"）", true, "")
-	// 响应不下发 agent Token（密钥最小化）：仅返回节点信息 + 一次性 install_key
+	auditDetail := fmt.Sprintf("创建被控节点（模式 %s，install_key 绑定 IP: %s，TLS 校验: %s，内网豁免: %s）",
+		mode, bindIPOrNone(bindIP), tlsVerifyLabel(req.TLSSkipVerify), boolLabel(req.AllowPrivate))
+	auditRequest(r, "node.create", node.Name, auditDetail, true, "")
+
+	// 手动添加：下发 agent.json 预置配置。管理员把它写到被控机 <data_dir>/agent.json
+	// 后直接运行 eyvescloud agent，无需 install_key/register（agent.go needRegister=false 路径）。
+	if mode == "manual" {
+		scheme := "https"
+		if r.TLS == nil {
+			scheme = "http"
+		}
+		controllerURL := fmt.Sprintf("%s://%s", scheme, r.Host)
+		agentConfigJSON, _ := json.MarshalIndent(map[string]any{
+			"controller": controllerURL,
+			"node_id":    node.ID,
+			"token":      node.Token,
+			"name":       node.Name,
+			"address":    address,
+		}, "", "  ")
+		// 响应不下发 install_key（手动模式无）；agent Token 仅此一次明文展示，
+		// 落库即 AES-GCM 密文（store_sqlite.go F7/P2-11）。
+		jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: map[string]any{
+			"node": sanitizeNode(node),
+			"manual_bootstrap": map[string]string{
+				"controller_url": controllerURL,
+				"node_id":        node.ID,
+				"token":          node.Token,
+				"agent_config":   string(agentConfigJSON),
+				"deploy_hint":    "将被控程序部署到被控服务器后，把 agent_config 内容写入其数据目录 agent.json，运行 eyvescloud agent 即可接入（无需安装密钥）。",
+			},
+		}})
+		return
+	}
+	// 一键添加：响应不下发 agent Token（密钥最小化）：仅返回节点信息 + 一次性 install_key
 	// 供面板拼接一行安装命令；key 注册成功即焚，TTL 24h。
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: map[string]any{
 		"node":              sanitizeNode(node),
@@ -367,6 +436,21 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 		"install_key_ttl":   "24h",
 		"install_key_bound": bindIP,
 	}})
+}
+
+// tlsVerifyLabel / boolLabel 审计日志友好输出。
+func tlsVerifyLabel(skip bool) string {
+	if skip {
+		return "跳过（已豁免）"
+	}
+	return "严格校验"
+}
+
+func boolLabel(b bool) string {
+	if b {
+		return "是"
+	}
+	return "否"
 }
 
 // bindIPOrNone 审计日志友好输出。
@@ -1401,8 +1485,7 @@ func proxyNodeRequest(r *http.Request, node config.Node, method, path string, bo
 		}
 	}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := nodeHTTPClient(node, 15*time.Second).Do(req)
 	if err != nil {
 		return nil, http.StatusBadGateway, err
 	}
@@ -1412,6 +1495,18 @@ func proxyNodeRequest(r *http.Request, node config.Node, method, path string, bo
 		return nil, resp.StatusCode, err
 	}
 	return data, resp.StatusCode, nil
+}
+
+// nodeHTTPClient 返回主控→被控方向的 HTTP 客户端，按节点 TLS 配置生效：
+// 默认严格校验证书；节点创建时显式勾选 TLSSkipVerify（被控自签证书场景，
+// 已落审计）才跳过校验。所有直连 node.Address 的路径统一走这里，避免
+// 出现「探活严格、代理宽松」之类的配置漂移。
+func nodeHTTPClient(node config.Node, timeout time.Duration) *http.Client {
+	transport := &http.Transport{}
+	if node.TLSSkipVerify {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // 管理员显式豁免，创建节点时已落审计
+	}
+	return &http.Client{Timeout: timeout, Transport: transport}
 }
 
 // normalizeNodeAddress 规范化节点面板地址。
@@ -1429,13 +1524,44 @@ func normalizeNodeAddress(value string) string {
 	return strings.TrimSuffix(value, "/")
 }
 
-func validateNodeAddress(value string) error {
+// validateNodeAddress 校验节点面板地址（含 SSRF 防护）。
+// SSRF 策略：
+//   - 链路本地（169.254.0.0/16 含云元数据 169.254.169.254、fe80::/10）：永远拒绝，
+//     无豁免——这是 SSRF 攻击的核心目标（凭据窃取）。
+//   - 环回 + RFC1918/ULA 私网：默认拒绝，allowPrivate=true 时显式豁免（内网部署场景，
+//     需管理员在添加表单知情勾选并落审计）。
+//   - 域名主机：解析全部 A/AAAA 记录后逐一校验（尽力防 DNS 名称指向内网；
+//     解析失败按拒绝处理，避免 DNS 故障时静默放行）。
+func validateNodeAddress(value string, allowPrivate bool) error {
 	u, err := url.Parse(value)
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("无效的节点地址: %s", value)
 	}
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("节点地址 scheme 必须为 http 或 https")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("无效的节点地址: %s", value)
+	}
+	ips := []net.IP{nil}
+	if ip := net.ParseIP(host); ip != nil {
+		ips = []net.IP{ip}
+	} else if resolved, rerr := net.LookupIP(host); rerr == nil && len(resolved) > 0 {
+		ips = resolved
+	} else {
+		return fmt.Errorf("节点地址主机名无法解析: %s", host)
+	}
+	for _, ip := range ips {
+		if ip == nil {
+			continue
+		}
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return fmt.Errorf("节点地址不允许使用链路本地地址（含云元数据端点）")
+		}
+		if !allowPrivate && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified()) {
+			return fmt.Errorf("节点地址为环回/内网地址，如确需内网部署请勾选「允许内网地址」豁免")
+		}
 	}
 	return nil
 }
@@ -1476,13 +1602,12 @@ func probeNode(n config.Node) bool {
 	if n.Address == "" {
 		return false
 	}
-	client := &http.Client{Timeout: healthProbeTimeout}
 	req, err := http.NewRequest(http.MethodGet, strings.TrimSuffix(n.Address, "/")+"/api/agent/containers", nil)
 	if err != nil {
 		return false
 	}
 	req.Header.Set("Authorization", "Bearer "+n.Token)
-	resp, err := client.Do(req)
+	resp, err := nodeHTTPClient(n, healthProbeTimeout).Do(req)
 	if err != nil {
 		return false
 	}

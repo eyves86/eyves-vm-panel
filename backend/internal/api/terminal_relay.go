@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -70,7 +71,7 @@ func relayTerminalToNode(w http.ResponseWriter, r *http.Request, c config.Contai
 		// SSH 票据走 subprotocol（webSSHTicketFromRequest 只认子协议）
 		dialHeader.Set("Sec-WebSocket-Protocol", "eyvescloud-ticket."+out.Data.Ticket)
 	}
-	agentWS, _, err := relayDialer.Dial(agentURL, dialHeader)
+	agentWS, _, err := relayDialerFor(node).Dial(agentURL, dialHeader)
 	if err != nil {
 		log.Printf("terminal relay: dial agent %s failed: %v", agentURL, err)
 		http.Error(w, "连接被控节点控制台失败: "+err.Error(), http.StatusBadGateway)
@@ -145,5 +146,17 @@ func nodeForContainer(c *config.Container) (config.Node, bool) {
 // relayDialTimeout 是主控拨 agent WS 的超时（与 HTTP 代理一致量级）。
 const relayDialTimeout = 15 * time.Second
 
-// relayDialer 是主控拨 agent 控制台的 WS 客户端。
+// relayDialer 是主控拨 agent 控制台的 WS 客户端（严格校验 TLS，供默认路径复用）。
 var relayDialer = &websocket.Dialer{HandshakeTimeout: relayDialTimeout}
+
+// relayDialerFor 按节点 TLS 配置返回拨号器：节点创建时显式勾选 TLSSkipVerify
+// （被控自签证书场景，已落审计）才跳过证书校验，与 nodeHTTPClient 保持一致。
+func relayDialerFor(node config.Node) *websocket.Dialer {
+	if !node.TLSSkipVerify {
+		return relayDialer
+	}
+	return &websocket.Dialer{
+		HandshakeTimeout: relayDialTimeout,
+		TLSClientConfig:  &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // 管理员显式豁免，创建节点时已落审计
+	}
+}

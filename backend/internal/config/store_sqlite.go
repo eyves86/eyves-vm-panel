@@ -825,9 +825,10 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["nodes"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Nodes)
 	}
-	// F7/P2-11：读取时把 enc:v1: 密文还原为明文 Token（内存态保持明文）。
+	// F7/P2-11：读取时把 enc:v1: 密文还原为明文 Token / InstallKey（内存态保持明文）。
 	// 存量明文值（无前缀）原样通过；解密失败不阻断启动，但该节点 Token
 	// 置空使其失效，等待重新注册——宁可断连也不能拿密文当凭据误用。
+	// install_key 解密失败同样置空（key 换发即可恢复，无需断连节点）。
 	for i := range cfg.Nodes {
 		plain, err := DecryptNodeToken(cfg.Nodes[i].Token)
 		if err != nil {
@@ -835,6 +836,13 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 			continue
 		}
 		cfg.Nodes[i].Token = plain
+		plainKey, err := DecryptNodeToken(cfg.Nodes[i].InstallKey)
+		if err != nil {
+			cfg.Nodes[i].InstallKey = ""
+			cfg.Nodes[i].InstallKeyCreatedAt = ""
+		} else {
+			cfg.Nodes[i].InstallKey = plainKey
+		}
 	}
 	if cfg.Nodes == nil {
 		cfg.Nodes = []Node{}
@@ -950,7 +958,8 @@ func saveMeta(tx *sql.Tx) error {
 	policyHistoryJSON, _ := json.Marshal(AppConfig.PolicyHistory)
 	// F7/P2-11：落库前对节点 Token 副本做 AES-GCM 加密（内存态不改动，
 	// 业务层心跳校验/agent 转发仍用明文）。加密失败时拒绝落库——静默
-	// 落明文等于关掉该保护。
+	// 落明文等于关掉该保护。install_key 同为密钥（一次性、24h TTL），
+	// 一并加密：短时效降低了泄露窗口，但落库明文仍是不必要的暴露面。
 	nodesForDisk := make([]Node, len(AppConfig.Nodes))
 	for i, n := range AppConfig.Nodes {
 		nodesForDisk[i] = n
@@ -959,6 +968,11 @@ func saveMeta(tx *sql.Tx) error {
 			return fmt.Errorf("加密节点 %s Token 失败: %w", n.ID, err)
 		}
 		nodesForDisk[i].Token = enc
+		encKey, err := EncryptNodeToken(n.InstallKey)
+		if err != nil {
+			return fmt.Errorf("加密节点 %s install_key 失败: %w", n.ID, err)
+		}
+		nodesForDisk[i].InstallKey = encKey
 	}
 	nodesJSON, _ := json.Marshal(nodesForDisk)
 	regionsJSON, _ := json.Marshal(AppConfig.Regions)

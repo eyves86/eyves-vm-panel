@@ -42,6 +42,7 @@ import {
   updateCluster,
   updateNodeGroup,
   type Cluster,
+  type ManualBootstrap,
   type NodeInstallCommand,
   type Container,
   type CreateContainerRequest,
@@ -93,16 +94,21 @@ export default function NodeManagement() {
   const [nodes, setNodes] = useState<ManagedNode[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
-  // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址信息）
+  // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址 + agent.json 预置配置手工接入）
   const [createMode, setCreateMode] = useState<'quick' | 'manual'>('quick')
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
   const [newBindIP, setNewBindIP] = useState('')
+  // 手动模式选项：TLS 严格校验（默认开）与 SSRF 内网地址豁免（默认关）
+  const [newTLSSkipVerify, setNewTLSSkipVerify] = useState(false)
+  const [newAllowPrivate, setNewAllowPrivate] = useState(false)
   const [creating, setCreating] = useState(false)
   // 一行安装命令（curl | sudo bash）：只展示命令，不展示脚本正文
   const [cmdNode, setCmdNode] = useState<ManagedNode | null>(null)
   const [cmdInfo, setCmdInfo] = useState<NodeInstallCommand | null>(null)
   const [cmdLoading, setCmdLoading] = useState(false)
+  // 手动添加成功后的手工接入材料（agent.json 预置配置）
+  const [manualInfo, setManualInfo] = useState<ManualBootstrap | null>(null)
   const [detailNode, setDetailNode] = useState<ManagedNode | null>(null)
   const [nodeContainers, setNodeContainers] = useState<Container[]>([])
   const [detailLoading, setDetailLoading] = useState(false)
@@ -177,21 +183,40 @@ export default function NodeManagement() {
     const name = newName.trim()
     const address = newAddress.trim()
     const bindIP = newBindIP.trim()
-    if (!name && !address) {
+    if (createMode === 'manual') {
+      // 手动添加：地址必填（主控要主动连接被控 agent API）
+      if (!address) {
+        await alert(t('提示'), t('手动添加需要填写被控面板地址'))
+        return
+      }
+    } else if (!name && !address) {
       await alert(t('提示'), t('请填写节点名称或地址'))
       return
     }
     setCreating(true)
     try {
-      const res = await createNode(name || undefined, address || undefined, bindIP || undefined)
+      const res = await createNode({
+        name: name || undefined,
+        address: address || undefined,
+        bind_ip: createMode === 'quick' ? bindIP || undefined : undefined,
+        mode: createMode,
+        tls_skip_verify: createMode === 'manual' ? newTLSSkipVerify : undefined,
+        allow_private: createMode === 'manual' ? newAllowPrivate : undefined,
+      })
       const created = res.data.data
       setShowCreate(false)
       setNewName('')
       setNewAddress('')
       setNewBindIP('')
+      setNewTLSSkipVerify(false)
+      setNewAllowPrivate(false)
       refresh()
-      // 创建成功后直接展示一行安装命令（不展示脚本正文）
-      if (created?.node) {
+      if (!created?.node) return
+      if (createMode === 'manual' && created.manual_bootstrap) {
+        // 手动添加：展示 agent.json 预置配置（token 仅此一次明文下发）
+        setManualInfo(created.manual_bootstrap)
+      } else {
+        // 一键添加：创建成功后直接展示一行安装命令（不展示脚本正文）
         await loadInstallCommand(created.node)
       }
     } catch (e: any) {
@@ -232,6 +257,24 @@ export default function NodeManagement() {
       document.execCommand('copy')
       document.body.removeChild(ta)
       await alert(t('已复制'), t('安装命令已复制，请在被控服务器上执行'))
+    }
+  }
+
+  // copyAgentConfig 复制手动模式的 agent.json 预置配置。
+  const copyAgentConfig = async () => {
+    if (!manualInfo) return
+    const text = manualInfo.agent_config
+    try {
+      await navigator.clipboard.writeText(text)
+      await alert(t('已复制'), t('配置已复制，请写入被控服务器数据目录的 agent.json'))
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      await alert(t('已复制'), t('配置已复制，请写入被控服务器数据目录的 agent.json'))
     }
   }
 
@@ -876,37 +919,89 @@ export default function NodeManagement() {
               </div>
 
               {createMode === 'manual' && (
-                <div>
-                  <label className="mb-1.5 block text-xs text-gray-500">{t('被控面板地址（可选）')}</label>
-                  <input
-                    value={newAddress}
-                    onChange={(e) => setNewAddress(e.target.value)}
-                    placeholder="http://1.2.3.4:8999"
-                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
-                  />
-                </div>
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-gray-500">
+                      {t('被控面板地址')}<span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={newAddress}
+                      onChange={(e) => setNewAddress(e.target.value)}
+                      placeholder="https://1.2.3.4:8999"
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    />
+                    <p className="mt-1.5 text-xs text-gray-400">
+                      {t('被控 agent API 地址，主控将主动连接该地址；内网/环回地址需勾选下方豁免')}
+                    </p>
+                  </div>
+
+                  {/* 认证方式：当前架构主控↔被控仅支持 Bearer Token（agent.json 预置），如实展示 */}
+                  <div>
+                    <label className="mb-1.5 block text-xs text-gray-500">{t('认证方式')}</label>
+                    <div className="flex items-center gap-2 rounded-md border border-gray-300 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-950">
+                      <KeyRound className="h-4 w-4 text-gray-400" />
+                      <span className="text-sm text-gray-700 dark:text-gray-300">Bearer Token</span>
+                      <span className="ml-auto rounded bg-gray-200 px-1.5 py-0.5 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                        {t('由主控生成，创建后下发')}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <label className="flex cursor-pointer items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={!newTLSSkipVerify}
+                        onChange={(e) => setNewTLSSkipVerify(!e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-950"
+                      />
+                      <span className="text-xs text-gray-600 dark:text-gray-300">
+                        {t('严格校验 TLS 证书（推荐）')}
+                        <span className="block text-gray-400">
+                          {t('被控使用自签证书时取消勾选以跳过校验；跳过会降低中间人防护，操作将记入审计日志')}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex cursor-pointer items-start gap-2.5">
+                      <input
+                        type="checkbox"
+                        checked={newAllowPrivate}
+                        onChange={(e) => setNewAllowPrivate(e.target.checked)}
+                        className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-950"
+                      />
+                      <span className="text-xs text-gray-600 dark:text-gray-300">
+                        {t('允许内网 / 环回地址')}
+                        <span className="block text-gray-400">
+                          {t('主控与被控同内网部署时勾选（SSRF 防护豁免，记入审计）；链路本地 / 云元数据地址始终拒绝')}
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </>
               )}
 
-              <div>
-                <label className="mb-1.5 block text-xs text-gray-500">{t('绑定被控出口 IP（可选）')}</label>
-                <input
-                  value={newBindIP}
-                  onChange={(e) => setNewBindIP(e.target.value)}
-                  placeholder="203.0.113.10"
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
-                />
-                <p className="mt-1.5 text-xs text-gray-400">
-                  {t('填写后安装密钥仅允许该 IP 的机器注册（同 /24 网段亦可）；留空则不限制来源 IP，仅保留一次性与 24 小时时效')}
-                </p>
-              </div>
+              {createMode === 'quick' && (
+                <div>
+                  <label className="mb-1.5 block text-xs text-gray-500">{t('绑定被控出口 IP（可选）')}</label>
+                  <input
+                    value={newBindIP}
+                    onChange={(e) => setNewBindIP(e.target.value)}
+                    placeholder="203.0.113.10"
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                  />
+                  <p className="mt-1.5 text-xs text-gray-400">
+                    {t('填写后安装密钥仅允许该 IP 的机器注册（同 /24 网段亦可）；留空则不限制来源 IP，仅保留一次性与 24 小时时效')}
+                  </p>
+                </div>
+              )}
 
               {createMode === 'quick' ? (
                 <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
                   {t('创建后将生成一行安装命令，在被控服务器上以 root 执行即可自动安装并接入主控。')}
                 </p>
               ) : (
-                <p className="text-xs text-gray-400">
-                  {t('手动模式适合先录入节点信息再安装 Agent；创建后同样会提供安装命令。')}
+                <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+                  {t('适合无法出网拉取安装脚本的机器：创建后将生成 agent.json 预置配置，手工部署到被控服务器即可接入（无需安装密钥）。')}
                 </p>
               )}
             </div>
@@ -999,6 +1094,48 @@ export default function NodeManagement() {
                 className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
               >
                 {t('关闭')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 手动添加：agent.json 预置配置（免安装密钥，token 仅此一次明文下发） */}
+      {manualInfo && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-black dark:text-white">
+                {t('手工接入配置')} · {manualInfo.node_id}
+              </h3>
+              <button onClick={() => setManualInfo(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-auto px-5 py-4">
+              <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                {t('在无法出网拉取安装脚本的被控服务器上手工部署：把以下内容写入被控数据目录的 agent.json，运行 eyvescloud agent 即可接入主控（无需安装密钥）。')}
+              </p>
+              <pre className="overflow-x-auto rounded-md bg-gray-950 p-4 text-xs leading-relaxed text-gray-100">
+                <code className="break-all">{manualInfo.agent_config}</code>
+              </pre>
+              <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
+                {t('安全提示：接入 Token 仅此一次完整展示（落库为 AES-GCM 密文）；请立即配置，关闭弹窗后需删除节点重建才能重新获取。')}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <button
+                onClick={copyAgentConfig}
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+              >
+                <Copy className="h-4 w-4" />
+                {t('复制配置')}
+              </button>
+              <button
+                onClick={() => setManualInfo(null)}
+                className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {t('我已完成配置')}
               </button>
             </div>
           </div>
