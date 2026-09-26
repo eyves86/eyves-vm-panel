@@ -83,12 +83,16 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 	case rest == "drain" && r.Method == http.MethodGet:
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeDrain(w, r, nodeID) })(w, r)
 	case rest == "install-script":
-		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScript(w, r, nodeID) })(w, r)
+		// 注意：**不要**套 AdminMiddleware —— 外部服务器 curl 拉脚本时只有 X-Install-Key，
+		// 没有管理员 token。handler 内部已实现双重认证（X-Install-Key 或 admin scope）。
+		handleNodeInstallScript(w, r, nodeID)
 	case rest == "install-command":
 		// 一行安装命令（curl | sudo bash）：面板只展示命令，不展示脚本正文。
+		// 仅管理员可见（在面板内），所以保持 AdminMiddleware。
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallCommand(w, r, nodeID) })(w, r)
 	case rest == "install-script/sha256":
-		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeInstallScriptSHA256(w, r, nodeID) })(w, r)
+		// 同上，外部离线审计/Hash 校验用，handler 内部自己验 X-Install-Key。
+		handleNodeInstallScriptSHA256(w, r, nodeID)
 	case rest == "containers" && r.Method == http.MethodGet:
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeContainers(w, r, nodeID) })(w, r)
 	case rest == "containers" && r.Method == http.MethodPost:
