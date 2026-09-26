@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Activity, FileText, Power, RefreshCw, ShieldAlert, ShieldCheck, X } from 'lucide-react'
-import { getAbuseSummary, getSecurityAlerts, getSecurityLogs, getSecuritySettings, getSecuritySummary, AbuseSummary, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
+import { Activity, FileText, Power, RefreshCw, SearchCheck, ShieldAlert, ShieldCheck, X } from 'lucide-react'
+import { checkContainerSecurity, getAbuseSummary, getContainers, getSecurityAlerts, getSecurityLogs, getSecuritySettings, getSecuritySummary, AbuseSummary, Container, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
 
 const typeLabels: Record<string, string> = {
   port_scan: '端口扫描',
@@ -43,6 +43,16 @@ export default function Security() {
   const [logAlert, setLogAlert] = useState<SecurityAlert | null>(null)
   const [logs, setLogs] = useState<SecurityLog[]>([])
   const [logsLoading, setLogsLoading] = useState(false)
+
+  // 单容器安全检查
+  const [checkOpen, setCheckOpen] = useState(false)
+  const [checkContainers, setCheckContainers] = useState<Container[]>([])
+  const [checkContainersLoading, setCheckContainersLoading] = useState(false)
+  const [checkLoadError, setCheckLoadError] = useState('')
+  const [checkTarget, setCheckTarget] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [checkResult, setCheckResult] = useState<{ ok: boolean; message: string } | null>(null)
+  const [checkAlerts, setCheckAlerts] = useState<SecurityAlert[] | null>(null)
 
   const fetchData = useCallback(async () => {
     try {
@@ -149,6 +159,51 @@ export default function Security() {
     }
   }
 
+  // 打开单容器安全检查弹窗：只列运行中的容器（后端只支持对运行中的容器检查）
+  const openCheck = async () => {
+    setCheckOpen(true)
+    setCheckTarget('')
+    setCheckResult(null)
+    setCheckAlerts(null)
+    setCheckLoadError('')
+    setCheckContainers([])
+    setCheckContainersLoading(true)
+    try {
+      const res = await getContainers()
+      setCheckContainers((res.data.data || []).filter((c) => c.status === 'running'))
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setCheckLoadError(error.response?.data?.message || '获取容器列表失败')
+    } finally {
+      setCheckContainersLoading(false)
+    }
+  }
+
+  const runCheck = async () => {
+    if (!checkTarget || checking) return
+    setChecking(true)
+    setCheckResult(null)
+    setCheckAlerts(null)
+    try {
+      const res = await checkContainerSecurity(checkTarget)
+      setCheckResult({ ok: !!res.data.success, message: res.data.message || (res.data.success ? '安全检查已完成' : '安全检查失败') })
+      // 检查后刷新该容器的风险项与页面告警列表
+      try {
+        const [alertRes] = await Promise.all([getSecurityAlerts()])
+        setCheckAlerts((alertRes.data.data || []).filter((a) => a.container_name === checkTarget))
+      } catch (err) {
+        console.error(err)
+        setCheckAlerts([])
+      }
+      void fetchData()
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      setCheckResult({ ok: false, message: error.response?.data?.message || '安全检查失败，请稍后重试' })
+    } finally {
+      setChecking(false)
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -225,6 +280,13 @@ export default function Security() {
           >
             <ShieldAlert className="w-4 h-4" />
             <span>{ipAntiSpoof ? 'IP防盗已开' : 'IP防盗已关'}</span>
+          </button>
+          <button
+            onClick={() => { void openCheck() }}
+            className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
+          >
+            <SearchCheck className="w-4 h-4" />
+            容器安全检查
           </button>
           <button
             onClick={fetchData}
@@ -415,6 +477,95 @@ export default function Security() {
                     ))}
                   </tbody>
                 </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {checkOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+            <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-black">容器安全检查</h3>
+                <p className="mt-1 text-xs text-gray-500">选择运行中的容器，立即执行一次滥用行为检测并查看风险项</p>
+              </div>
+              <button
+                onClick={() => setCheckOpen(false)}
+                className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black"
+                title="关闭"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="max-h-[70vh] space-y-4 overflow-auto p-4">
+              {checkLoadError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{checkLoadError}</div>
+              )}
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="min-w-[240px] flex-1">
+                  <label className="mb-1 block text-xs font-medium text-gray-500">容器</label>
+                  <select
+                    value={checkTarget}
+                    onChange={(e) => setCheckTarget(e.target.value)}
+                    disabled={checking || checkContainersLoading}
+                    className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black focus:outline-none focus:ring-1 focus:ring-black disabled:opacity-50"
+                  >
+                    <option value="">{checkContainersLoading ? '加载容器中...' : '请选择容器'}</option>
+                    {checkContainers.map((c) => (
+                      <option key={c.id} value={c.name}>{c.name}（运行中）</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => { void runCheck() }}
+                  disabled={!checkTarget || checking}
+                  className="inline-flex items-center gap-2 rounded-md bg-black px-3 py-2 text-sm text-white hover:bg-gray-800 disabled:opacity-50"
+                >
+                  {checking ? <RefreshCw className="h-4 w-4 animate-spin" /> : <SearchCheck className="h-4 w-4" />}
+                  {checking ? '检查中...' : '立即检查'}
+                </button>
+              </div>
+              {checkContainers.length === 0 && !checkContainersLoading && !checkLoadError && (
+                <div className="rounded-md border border-gray-200 px-3 py-6 text-center text-sm text-gray-500">暂无运行中的容器</div>
+              )}
+              {checkResult && (
+                <div className={`rounded-md border px-3 py-2 text-sm ${checkResult.ok ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+                  {checkResult.message}
+                </div>
+              )}
+              {checkAlerts !== null && (
+                <div>
+                  <div className="mb-2 text-xs font-medium text-gray-500">该容器当前风险项（{checkAlerts.length}）</div>
+                  {checkAlerts.length === 0 ? (
+                    <div className="rounded-md border border-gray-200 px-3 py-6 text-center text-sm text-gray-500">未发现风险项</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium text-gray-500">
+                            <th className="px-3 py-2 whitespace-nowrap">等级</th>
+                            <th className="px-3 py-2 whitespace-nowrap">类型</th>
+                            <th className="px-3 py-2">详情</th>
+                            <th className="px-3 py-2 whitespace-nowrap">时间</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {checkAlerts.map((alert) => (
+                            <tr key={alert.id} className="hover:bg-gray-50">
+                              <td className="px-3 py-2 whitespace-nowrap"><SeverityBadge severity={alert.severity} /></td>
+                              <td className="px-3 py-2 text-gray-800 whitespace-nowrap">{typeLabels[alert.type] || alert.type}</td>
+                              <td className="px-3 py-2 text-gray-600">{alert.detail}</td>
+                              <td className="px-3 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">{alert.timestamp}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
