@@ -26,6 +26,15 @@
 
 **修复状态**：P0 全部 2 项 ✅、P1 全部 7 项 ✅、P2 全部 8 项 ✅（F6/F7/F8/F9/F11 + P2-15 容器 ID 持久化 + P2-16 快照/备份/防火墙挂客户区 + P2-17 Additional Disk/弹性 IP 计费项）——审计路线图全部闭环。详见第九节路线图。
 
+**生产就绪判定（2026-09-26 终审）**：✅ **代码层面生产就绪**。
+
+- **构建/测试**：`go build` / `go vet` clean、`go test ./...` 40 packages 全过（含 -race）、`php -l` 全过、前端 `tsc --noEmit` 零错误、构建产物已嵌入后端（新功能字符串抽查命中）；
+- **WHMCS 对接**：8 个生命周期函数 + UsageUpdate + 客户区/管理区扩展齐备；CreateAccount 带幂等键（防重复开通）+ 异步轮询 + 主机表写回 + 容器 ID 持久化 + 弹性 IP 同步；ChangePackage 步骤化执行（资源→流量→到期→弹性 IP）+ 失败补偿提示；客户区 AJAX 四重校验（Origin 同源 / CSRF hash_equals / 服务归属 / Suspended 白名单）；
+- **LXC/KVM 开通**：`runtime.go` 双分支全覆盖（创建/启停/销毁/克隆/重装/改密/快照/备份/扩容/IPv4/IPv6/用量/流量）；LXC 走 `lxcManager.CreateContainer`（lxc.go:554，网桥检查→模板→SSH 凭据→NAT 预留→rootfs），KVM 走 `kvmManager.CreateContainer`（kvm.go:387，镜像→存储池→NAT 预留→VM 定义）；多节点由 `agentCreateContainer`（agent_api.go:535）在被控发机；
+- **API 已更新**：自服务新端点（processes / processes/kill / services / services/action / hvm-settings / scheduled-actions / v1/usage）在主控与 agent 代理路径双端挂载，OpenAPI 契约（openapi_paths.go）同步；
+- **已知能力边界**（非缺陷，返回明确错误）：KVM 进程终止需 qemu-guest-agent；Rescue/ISO 仅 KVM；VNC 仅 KVM（LXC 用 WebSSH）；
+- **上线前待办**（运维侧，不阻塞代码发布）：3 项真机端到端验证（§10.5：CSRF 端到端 / install_key 抓包 / 降级套餐预检）+ 生产配置（主控↔agent TLS、`EYVESCLOUD_NODE_TOKEN_KEY` 环境变量、面板 HTTPS）。
+
 ---
 
 ## 二、信息缺口清单与假设
