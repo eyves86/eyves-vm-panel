@@ -1,6 +1,5 @@
 import { FormEvent, useState } from 'react'
 import { Lock, Smartphone, User } from 'lucide-react'
-import { Link } from 'react-router'
 import AppIcon from '../components/AppIcon'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
@@ -183,13 +182,6 @@ export default function Login() {
             >
               {loading ? t('登录中...') : t('登录管理员控制台')}
             </button>
-
-            <Link
-              to="/user/login"
-              className="block w-full text-center text-xs text-gray-500 hover:text-black underline"
-            >
-              {t('我是用户，前往用户入口登录')}
-            </Link>
           </form>
         </div>
 

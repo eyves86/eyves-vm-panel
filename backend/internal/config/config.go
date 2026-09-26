@@ -1638,6 +1638,26 @@ func generateRandomString(length int) string {
 	return hex.EncodeToString(b)[:length]
 }
 
+// randomAlnum 生成 length 位随机小写字母+数字（字母表 36 字符，比 hex 更难枚举）。
+func randomAlnum(length int) string {
+	const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+	b := make([]byte, length)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand 失败极罕见；退回 hex 保证可用性。
+		return hex.EncodeToString(b)[:length]
+	}
+	for i := range b {
+		b[i] = alphabet[int(b[i])%len(alphabet)]
+	}
+	return string(b)
+}
+
+// GenerateRandomAdminPath 返回随机化管理员入口路径（/admin- + 12 位字母数字）。
+// 默认不占用 /、/admin、/login 等可猜测路径，管理入口无法被枚举发现。
+func GenerateRandomAdminPath() string {
+	return "/admin-" + randomAlnum(12)
+}
+
 // randomShortID 返回一个 6 字符的小写十六进制短 ID，用于 NodeGroup / Cluster 等内部标识。
 func randomShortID() string {
 	return generateRandomString(6)
@@ -1744,6 +1764,8 @@ func InitConfig() (*EyvescloudConfig, error) {
 	adminUser := "admin"
 	adminPass := generateRandomString(16)
 	jwtSecret := generateRandomString(32)
+	// 管理员入口默认随机化（/admin- + 12 位字母数字），避免被枚举。
+	adminPath := GenerateRandomAdminPath()
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPass), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %v", err)
@@ -1753,6 +1775,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 		AdminUser:            adminUser,
 		AdminPassHash:        string(hash),
 		JWTSecret:            jwtSecret,
+		AdminPath:            adminPath,
 		Port:                 8999,
 		DataDir:              dataDir,
 		Containers:           []Container{},
@@ -1812,8 +1835,8 @@ func InitConfig() (*EyvescloudConfig, error) {
 	// 手动查看并立即删除。
 	firstBootCreds := filepath.Join(dataDir, FirstBootCredsFile)
 	if err := os.WriteFile(firstBootCreds, []byte(fmt.Sprintf(
-		"# EyvesCloud initial admin credentials - DELETE after first login\nUsername: %s\nPassword: %s\nChangedAt: \n",
-		adminUser, adminPass)), 0600); err == nil {
+		"# EyvesCloud initial admin credentials - DELETE after first login\nUsername: %s\nPassword: %s\nAdmin login path: %s\nChangedAt: \n",
+		adminUser, adminPass, adminPath)), 0600); err == nil {
 		// 目录已经是 0700；额外 chmod 一道以防 umask 意外放开。
 		_ = os.Chmod(firstBootCreds, 0600)
 		fmt.Println("\n========================================")
@@ -1821,7 +1844,8 @@ func InitConfig() (*EyvescloudConfig, error) {
 		fmt.Println("========================================")
 		fmt.Printf("  Credentials file: %s (mode 0600)\n", firstBootCreds)
 		fmt.Println("  Read it once, then delete the file.")
-		fmt.Println("  Log in at: http://0.0.0.0:8999")
+		fmt.Printf("  Admin login path: %s (randomized, see credentials file)\n", adminPath)
+		fmt.Println("  User portal: http://0.0.0.0:8999/user/login")
 		fmt.Println("  AND change the password / enable 2FA immediately.")
 		fmt.Println("========================================")
 		fmt.Println()
@@ -1835,6 +1859,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 		fmt.Println("  and change it on first login.")
 		fmt.Printf("  Username: %s\n", adminUser)
 		fmt.Printf("  Password: %s\n", adminPass)
+		fmt.Printf("  Admin login path: %s\n", adminPath)
 		fmt.Println("========================================")
 		fmt.Println()
 	}
@@ -1844,6 +1869,24 @@ func InitConfig() (*EyvescloudConfig, error) {
 
 func normalizeConfigDefaults(dataDir string) bool {
 	changed := false
+	// 存量部署升级：admin_path 为空或为旧默认值 "/"（挂在根路径）时自动随机化，
+	// 并把新入口写入凭据文件 + 启动日志，避免管理员被锁在门外。
+	// 管理员如需自定义入口，登录后在「设置」里改为其它路径即可。
+	if p := strings.TrimSpace(AppConfig.AdminPath); p == "" || p == "/" {
+		AppConfig.AdminPath = GenerateRandomAdminPath()
+		changed = true
+		noticePath := filepath.Join(dataDir, FirstBootCredsFile)
+		if dataDir != "" {
+			if err := os.WriteFile(noticePath, []byte(fmt.Sprintf(
+				"# EyvesCloud admin login path (upgraded) - DELETE after reading\nAdmin login path: %s\nUser portal: /user/login\n",
+				AppConfig.AdminPath)), 0600); err == nil {
+				_ = os.Chmod(noticePath, 0600)
+				fmt.Printf("[security] admin login path randomized on upgrade: %s (saved to %s)\n", AppConfig.AdminPath, noticePath)
+			} else {
+				fmt.Printf("[security] admin login path randomized on upgrade: %s (could not write notice file)\n", AppConfig.AdminPath)
+			}
+		}
+	}
 	if AppConfig.Port == 0 {
 		AppConfig.Port = 8999
 		changed = true

@@ -1,12 +1,11 @@
 import { FormEvent, useState } from 'react'
 import { KeyRound, Lock, User } from 'lucide-react'
-import { Link } from 'react-router'
 import AppIcon from '../components/AppIcon'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
 // UserLogin 是**用户入口**（/user/login）：账号密码登录，或使用管理员发放的访问码。
-// 管理员入口在 /login。
+// 管理员入口使用随机化路径，不在本页暴露。
 export default function UserLogin() {
   const { userLogin, accessCodeLogin } = useAuth()
   const { t } = useLanguage()
@@ -149,10 +148,6 @@ export default function UserLogin() {
             >
               {loading ? t('登录中...') : t('登录')}
             </button>
-
-            <Link to="/login" className="block w-full text-center text-xs text-gray-500 underline hover:text-black">
-              {t('我是管理员，前往管理入口')}
-            </Link>
           </form>
         </div>
 
