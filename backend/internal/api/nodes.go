@@ -217,14 +217,24 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "install_key required"})
 		return
 	}
+	// F3：install_key 是一次性凭据，消费事件必须全程留痕。key 只记指纹前
+	// 8 位（完整值由 auth.go 的脱敏正则兜底），来源 IP/UA 由 auditRequest 记录。
+	keyFingerprint := func(key string) string {
+		if len(key) > 8 {
+			return key[:8] + "..."
+		}
+		return key
+	}
 	node, ok := config.FindNodeByInstallKey(strings.TrimSpace(req.InstallKey))
 	if !ok || node.Token == "" {
+		auditRequest(r, "node.register", "unknown", "install_key 指纹 "+keyFingerprint(strings.TrimSpace(req.InstallKey)), false, "invalid install key")
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid install key"})
 		return
 	}
 	if node.InstallKeyCreatedAt != "" {
 		createdAt, err := time.Parse(time.RFC3339, node.InstallKeyCreatedAt)
 		if err == nil && time.Since(createdAt) > 24*time.Hour {
+			auditRequest(r, "node.register", node.Name, "install_key 指纹 "+keyFingerprint(req.InstallKey), false, "install key expired")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "install key expired"})
@@ -234,6 +244,7 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 	if node.InstallKeyIP != "" {
 		reqIP := clientIP(r)
 		if reqIP != node.InstallKeyIP && !sameIPv4Prefix24(reqIP, node.InstallKeyIP) {
+			auditRequest(r, "node.register", node.Name, "install_key 指纹 "+keyFingerprint(req.InstallKey), false, "install key IP mismatch")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "install key IP mismatch"})
@@ -247,6 +258,7 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 	address := normalizeNodeAddress(req.Address)
 	if address != "" {
 		if err := validateNodeAddress(address); err != nil {
+			auditRequest(r, "node.register", name, "install_key 指纹 "+keyFingerprint(req.InstallKey), false, err.Error())
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 			return
 		}
@@ -264,9 +276,11 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	if !ok {
+		auditRequest(r, "node.register", name, "install_key 指纹 "+keyFingerprint(req.InstallKey), false, "node update failed")
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 		return
 	}
+	auditRequest(r, "node.register", name, "节点注册成功（install_key 已消费并清空）", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
 		"node_id": node.ID,
 		"token":   node.Token,
@@ -580,9 +594,10 @@ func appendAgentMetricPoint(s heartbeatContainerSummary) {
 // 这样主控 IP 为 4.4.4.4 时，被控脚本自动填入 4.4.4.4；纯 IPv6 环境自动走 IPv6。
 //
 // 也支持网络脚本一行命令（类似 Virtualizor / SolusVM 风格）：
-//   curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash
+//   curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
 // 认证支持两条路径：
-//   1) query 携带有效 install_key 且属于该节点（供 curl | bash，与 binary 端点一致）
+//   1) X-Install-Key 请求头携带有效 install_key 且属于该节点
+//      （F4：key 走 header 而非 URL query，避免落入反代访问日志/浏览器历史/Referer）
 //   2) 管理员 node:write scope（面板下载）
 func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if r.Method != http.MethodGet {
@@ -594,10 +609,10 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 		return
 	}
-	// 认证路径 1：query install_key（且必须属于本节点，防止拿 A 节点的 key 拉 B 节点的脚本）
+	// 认证路径 1：X-Install-Key 头（且必须属于本节点，防止拿 A 节点的 key 拉 B 节点的脚本）
 	authedByKey := false
-	if qk := strings.TrimSpace(r.URL.Query().Get("install_key")); qk != "" {
-		if kn, found := config.FindNodeByInstallKey(qk); found && kn.ID == nodeID {
+	if hk := strings.TrimSpace(r.Header.Get("X-Install-Key")); hk != "" {
+		if kn, found := config.FindNodeByInstallKey(hk); found && kn.ID == nodeID {
 			authedByKey = true
 		}
 	}
@@ -630,14 +645,15 @@ func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID stri
 	if r.TLS == nil {
 		scheme = "http"
 	}
-	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script?install_key=%s", scheme, r.Host, nodeID, url.QueryEscape(installKey))
+	// F4：install_key 走请求头，不进 URL（避免落入访问日志/历史/Referer）。
+	curlURL := fmt.Sprintf("%s://%s/api/nodes/%s/install-script", scheme, r.Host, nodeID)
 
-	comments := fmt.Sprintf(`# 推荐安装方式（校验完整性）：
-# curl -fsSL %s -o install.sh
+	comments := fmt.Sprintf(`# 推荐安装方式（校验完整性；X-Install-Key 头携带密钥，不写入 URL）：
+# curl -fsSL -H "X-Install-Key: %s" %s -o install.sh
 # echo "%s  install.sh" | sha256sum -c
 # sudo bash install.sh
 #
-`, curlURL, hash)
+`, installKey, curlURL, hash)
 
 	_, _ = w.Write([]byte(comments + script))
 }
@@ -653,8 +669,8 @@ func handleNodeInstallScriptSHA256(w http.ResponseWriter, r *http.Request, nodeI
 		return
 	}
 	authedByKey := false
-	if qk := strings.TrimSpace(r.URL.Query().Get("install_key")); qk != "" {
-		if kn, found := config.FindNodeByInstallKey(qk); found && kn.ID == nodeID {
+	if hk := strings.TrimSpace(r.Header.Get("X-Install-Key")); hk != "" {
+		if kn, found := config.FindNodeByInstallKey(hk); found && kn.ID == nodeID {
 			authedByKey = true
 		}
 	}
@@ -686,7 +702,7 @@ func buildAgentInstallScript(controller, installKey, nodeName, defaultAddr strin
 # EyvesCloud 被控节点一键安装脚本
 # 用法:
 #   bash eyvescloud-agent.sh [--controller URL] [--name 名称] [--addr 被控面板地址]
-#   curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash
+#   curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
 #
 # 主控地址自动探测优先级：
 #   1) --controller 参数显式指定
@@ -710,7 +726,7 @@ while [ $# -gt 0 ]; do
     --allow-insecure-http) insecure_arg="--allow-insecure-http"; shift ;;
     -h|--help)
       echo "用法: $0 [--controller URL] [--name 名称] [--addr 面板地址]"
-      echo "      curl -fsSL https://<主控>/api/nodes/<id>/install-script?install_key=<key> | sudo bash"
+      echo "      curl -fsSL -H 'X-Install-Key: <key>' https://<主控>/api/nodes/<id>/install-script | sudo bash"
       exit 0
       ;;
     *) echo "未知参数: $1"; exit 1 ;;
@@ -819,10 +835,30 @@ case "$ARCH" in
 esac
 
 echo "==> [1/3] 下载 EyvesCloud 二进制"
-if ! curl -fsSL -o /usr/local/bin/eyvescloud \
-  "$CONTROLLER/api/nodes/binary?install_key=$INSTALL_KEY&arch=$ARCH_NORM"; then
+HDR_FILE="$(mktemp)"
+trap 'rm -f "$HDR_FILE"' EXIT
+# F4：install_key 走 X-Install-Key 头，不进 URL（避免落入反代访问日志/Referer）。
+if ! curl -fsSL -o /usr/local/bin/eyvescloud -D "$HDR_FILE" \
+  -H "X-Install-Key: $INSTALL_KEY" \
+  "$CONTROLLER/api/nodes/binary?arch=$ARCH_NORM"; then
   echo "下载失败，请检查：主控地址是否正确、install_key 是否有效、网络是否可达"
   exit 1
+fi
+
+# G4（P1-7）：SHA256 完整性校验——主控在 X-Binary-SHA256 响应头中附带摘要，
+# 此处强制比对，防止传输损坏/被篡改的产物被安装。校验失败即删除并中止。
+# 注：Go 侧 Header.Set 输出为规范化的 X-Binary-Sha256，此处用 tolower 匹配保持可移植。
+EXPECTED_SHA="$(awk 'tolower($1)=="x-binary-sha256:" {gsub(/\r/,""); print $2}' "$HDR_FILE")"
+if [ -n "$EXPECTED_SHA" ]; then
+  ACTUAL_SHA="$(sha256sum /usr/local/bin/eyvescloud 2>/dev/null | awk '{print $1}')"
+  if [ -z "$ACTUAL_SHA" ] || [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+    echo "二进制 SHA256 校验失败（期望 $EXPECTED_SHA，实际 ${ACTUAL_SHA:-无法计算}），已删除"
+    rm -f /usr/local/bin/eyvescloud
+    exit 1
+  fi
+  echo "SHA256 校验通过: $ACTUAL_SHA"
+else
+  echo "警告：主控未返回 X-Binary-SHA256，跳过完整性校验（建议升级主控）" >&2
 fi
 chmod +x /usr/local/bin/eyvescloud
 
@@ -906,13 +942,17 @@ func normalizeArch(raw string) string {
 // HandleNodeBinary serves the EyvesCloud binary to a worker node.
 //
 // Security & correctness:
-//   - Requires a valid `install_key` query parameter so that arbitrary hosts
+//   - Requires a valid `X-Install-Key` request header so that arbitrary hosts
 //     cannot download the controller binary. The key is the same install key
-//     the worker was created with and uses for registration.
+//     the worker was created with and uses for registration.（F4：header 传参，
+//     不再接受 URL query，避免 key 落入访问日志/Referer）
 //   - Honors an optional `arch` query parameter. When supplied and it does not
 //     match the controller's own architecture, the request is rejected with a
 //     clear error instead of handing out a binary that cannot run on the
 //     worker (avoids silently installing a mismatched-build).
+//   - Attaches an `X-Binary-SHA256` response header (G4/P1-7) so the worker
+//     install script can verify the downloaded artifact's integrity before
+//     installing it; the hash is cached by path/size/mtime.
 func HandleNodeBinary(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -920,9 +960,9 @@ func HandleNodeBinary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authenticate using the worker's install key.
-	installKey := strings.TrimSpace(r.URL.Query().Get("install_key"))
+	installKey := strings.TrimSpace(r.Header.Get("X-Install-Key"))
 	if installKey == "" {
-		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "install_key query parameter required"})
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "X-Install-Key header required"})
 		return
 	}
 	if _, ok := config.FindNodeByInstallKey(installKey); !ok {
@@ -973,7 +1013,53 @@ func HandleNodeBinary(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename=eyvescloud`)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+	// G4（P1-7）：附带二进制 SHA256，安装脚本下载后强制比对，
+	// 防止传输损坏/被篡改的产物仅靠 --version 自检蒙混过关。
+	if hash, herr := executableSHA256(exe); herr == nil {
+		w.Header().Set("X-Binary-SHA256", hash)
+	}
 	_, _ = io.Copy(w, f)
+}
+
+// binaryHashCache 缓存主控二进制的 SHA256（按 路径+大小+mtime 失效），
+// 避免每次 /api/nodes/binary 请求都全量读一遍自身二进制。
+var binaryHashCache struct {
+	mu    sync.Mutex
+	path  string
+	size  int64
+	mtime time.Time
+	hash  string
+}
+
+// executableSHA256 返回指定可执行文件的 SHA256 十六进制摘要（带缓存）。
+func executableSHA256(exe string) (string, error) {
+	info, err := os.Stat(exe)
+	if err != nil {
+		return "", err
+	}
+	binaryHashCache.mu.Lock()
+	defer binaryHashCache.mu.Unlock()
+	if binaryHashCache.path == exe &&
+		binaryHashCache.size == info.Size() &&
+		binaryHashCache.mtime.Equal(info.ModTime()) &&
+		binaryHashCache.hash != "" {
+		return binaryHashCache.hash, nil
+	}
+	f, err := os.Open(exe)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	hash := hex.EncodeToString(h.Sum(nil))
+	binaryHashCache.path = exe
+	binaryHashCache.size = info.Size()
+	binaryHashCache.mtime = info.ModTime()
+	binaryHashCache.hash = hash
+	return hash, nil
 }
 
 func canonicalArchLabel(arch string) string {

@@ -208,6 +208,26 @@ if ($adminId <= 0 && $ownerId !== $uid) {
     ]);
 }
 
+// F1a WHMCS 侧收口：服务非 Active（Suspended/Terminated/Expired/...）时
+// 拒绝状态变更类操作，查询类放行。防止欠费客户经 WHMCS 客户区按钮
+// 绕过面板侧的 Suspended 拦截。管理员会话豁免（与 TC-03 设计一致）。
+if ($adminId <= 0) {
+    $domainStatus = strtoupper(trim((string)($params['domainstatus'] ?? '')));
+    if ($domainStatus !== 'ACTIVE' && !in_array($action, [
+        // 查询/只读操作白名单
+        'info', 'infoData', 'infoajax', 'status',
+        'natList', 'natData', 'firewallList', 'snapshotList', 'backupList',
+        'isoList', 'reinstallTemplates', 'randomPort', 'random-port',
+        'sync',
+    ], true)) {
+        eyvescloud_api_respond(403, [
+            'success' => false,
+            'message' => '当前服务状态（' . $domainStatus . '）不允许此操作，请续费或联系客服',
+            'data'    => [],
+        ]);
+    }
+}
+
 // 把请求体并入 $_POST，保证 helpers 内的取值函数都能读到业务字段。
 foreach ($input as $key => $value) {
     if (!isset($_POST[$key])) {

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bytes"
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"eyvescloud/internal/config"
-	"net/url"
+	"eyvescloud/internal/safehttp"
 )
 
 // 事件订阅（Webhook）端点：企业集成方订阅容器状态变更回调。
@@ -361,25 +361,23 @@ func webhookDeliveryOnce(wh config.WebhookSubscription, evt webhookEvent, delive
 	if err != nil {
 		return err
 	}
-	parsed, err := url.ParseRequestURI(wh.URL)
-	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.Fragment != "" {
-		return fmt.Errorf("invalid webhook URL")
+	headers := map[string]string{
+		"Content-Type":          "application/json",
+		"User-Agent":            "EyvesCloud-Webhook/1.0",
+		"X-EyvesCloud-Event":    evt.EventType,
+		"X-EyvesCloud-Delivery": deliveryID,
 	}
-	req, err := http.NewRequest(http.MethodPost, wh.URL, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "EyvesCloud-Webhook/1.0")
-	req.Header.Set("X-EyvesCloud-Event", evt.EventType)
-	req.Header.Set("X-EyvesCloud-Delivery", deliveryID)
 	if wh.Secret != "" {
 		mac := hmac.New(sha256.New, []byte(wh.Secret))
 		mac.Write(body)
-		req.Header.Set("X-EyvesCloud-Signature", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		headers["X-EyvesCloud-Signature"] = "sha256=" + hex.EncodeToString(mac.Sum(nil))
 	}
-	client := &http.Client{Timeout: webhookHTTPTimeout}
-	resp, err := client.Do(req)
+	// F2：投递改走 safehttp——DNS 解析期 + 拨号期二次校验（覆盖注册后
+	// DNS rebinding 指向元数据/链路本地等受限地址的场景）+ 重定向逐跳校验。
+	// 回环目标保留（自托管接收端设计取舍），链路本地/元数据/保留段始终拒绝。
+	ctx, cancel := context.WithTimeout(context.Background(), webhookHTTPTimeout)
+	defer cancel()
+	resp, err := safehttp.Post(ctx, wh.URL, headers, body, webhookHTTPTimeout, safehttp.PostConfig{AllowLoopback: true})
 	if err != nil {
 		return err
 	}

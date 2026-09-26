@@ -17,14 +17,14 @@
 | WHMCS 生命周期支撑 | ✅ 完整（Create/Suspend/Terminate/ChangePassword/ChangePackage/UsageUpdate 均已实现且有幂等保护） |
 | 鉴权体系 | ✅ JWT(HS256) + API Key(argon2 哈希 + IP 白名单 + 单 Key 限流) + token_version 三级轮换 |
 | 租户隔离 | ✅ 单容器操作/列表/任务/票据全链路归属校验；1 处遗漏（备份计划，见 F6） |
-| 欠费停机 (Suspended) 强制力 | ⚠️ 本地容器✅，**跨节点容器电源操作可绕过**（F1, High） |
+| 欠费停机 (Suspended) 强制力 | ✅ 本地/跨节点双端拦截（F1 已修复，含快照/备份/NAT/防火墙/ISO/救援/流量重置，F1a）；WHMCS 侧非 Active 服务拒绝状态变更操作 |
 | SQLi / XSS | ✅ 无风险（11 处 DB 访问全参数化；模板全 escape） |
-| CSRF | ⚠️ 模块自带 AJAX 入口无标准 token，仅 Origin/Referer 同源校验（F5） |
-| SSRF | ⚠️ 面板侧 safehttp 到位；Webhook 投递侧不复查 + DNS rebinding 无防护（F2） |
-| 节点添加 | ✅ 一键（一次性 token + 24h TTL + IP 绑定 + SHA256 + systemd）+ 手动（admin-only）；注册缺审计日志（F3） |
-| 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key；⚠️ 面板侧节点 Token 明文存 SQLite（F7，低） |
+| CSRF | ✅ 模块 AJAX 入口 session token + hash_equals（F5 已修复，待真机端到端） |
+| SSRF | ✅ 面板侧 safehttp 到位；Webhook 投递改走 safehttp.Post，DNS 解析期 + 拨号期二次校验（F2 已修复） |
+| 节点添加 | ✅ 一键（一次性 token + 24h TTL + IP 绑定 + SHA256 + systemd）+ 手动（admin-only）；注册审计日志已补（F3 已修复）；install_key 全链路走 `X-Install-Key` 头（F4 已修复） |
+| 密钥管理 | ✅ WHMCS 侧加密字段存储、日志不打印 Key、curl 不跟随重定向（F10 已修复）；⚠️ 面板侧节点 Token 明文存 SQLite（F7，低，P2） |
 
-**P0 行动项 1 个**（F1 跨节点 Suspended 绕过），P1 共 5 个，P2 共 6 个。详见第九节路线图。
+**修复状态**：P0 全部 2 项 ✅ 已修复并通过回归（含 `-race`）；P1 全部 7 项 ✅ 已修复并通过全量回归（40/40 包 + race clean + php -l，见 10.5）；P2 共 8 个规划中。详见第九节路线图。
 
 ---
 
@@ -35,7 +35,7 @@
 | G1 | WHMCS 版本、PHP 版本未提供 | AdminServicesTabFields / ClientAreaAllowedFunctions 需要 WHMCS 8+/9+ | 假设 WHMCS 8.0+（代码 APIVersion 1.1 佐证 eyvescloud.php:33） |
 | G2 | 生产环境反代是否记录 query string 未知 | 影响 F4（install_key 进 URL）的实际暴露面 | 按"会记录"保守评估 |
 | G3 | 魔方云 API 官方文档不可公开访问 | 竞品矩阵该列基于国内 IDCSystem 类系统通用能力 + 魂环/WHMCS 生态常见实现 | 标注"推断"，仅 Virtualizor/SolusVM 给官方文档来源 |
-| G4 | agent 二进制分发渠道完整性未验证 | install.sh 下载 agent 二进制仅做可执行性自检 | 建议补哈希（P1-4） |
+| G4 | agent 二进制分发渠道完整性未验证 | install.sh 下载 agent 二进制仅做可执行性自检 | ✅ 已修复（P1-7）：主控分发附带 X-Binary-SHA256 头，安装脚本强制 sha256sum 比对 |
 | G5 | 多租户 (tenant) 功能的线上使用规模未知 | F8（内存/CPU 无累计配额）严重度依赖租户数量 | 按多租户已启用评估 |
 | G6 | 面板部署拓扑（主控是否公网、agent 是否内网）未知 | F9（主控→agent 默认 http://）实际风险 | 按主控-agent 同内网保守评估为 Low |
 
@@ -377,15 +377,15 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 
 ### P1（上线后两周内）
 
-| # | 任务 | 侧 | 关联 |
-|---|------|----|------|
-| 3 | 快照/备份还原/NAT/防火墙/ISO/救援/流量重置补 Suspended 拦截 + WHMCS domainstatus 检查 | 双侧 | F1a | 面板侧 ✅ 已修复（isSuspendedBlockedManageAction）；WHMCS domainstatus 待做 |
-| 4 | Webhook 投递改 safehttp / 投递前完整复查 + rebinding 用例 | 面板 | F2 |
-| 5 | handleNodeRegister 补审计日志（成功/失败双路径） | 面板 | F3 |
-| 6 | install_key 改 header/POST 传参，移出 URL query | 面板 | F4 |
-| 7 | agent 二进制下载补 SHA256（当前仅可执行性自检） | 面板 | G4 |
-| 8 | 关闭 curl FOLLOWLOCATION | 插件 | F10 |
-| 9 | ChangePackage 前置 disk 只增预检（避免降级订单半途失败） | 插件 | §5.1 |
+| # | 任务 | 侧 | 关联 | 状态 |
+|---|------|----|------|------|
+| 3 | 快照/备份还原/NAT/防火墙/ISO/救援/流量重置补 Suspended 拦截 + WHMCS domainstatus 检查 | 双侧 | F1a | ✅ 已修复：面板侧 `isSuspendedBlockedManageAction`；WHMCS 侧 api.php 非 Active 服务拒绝状态变更类操作（查询白名单放行） |
+| 4 | Webhook 投递改 safehttp / 投递前完整复查 + rebinding 用例 | 面板 | F2 | ✅ 已修复：投递走 `safehttp.Post`（DNS 解析期 + 拨号期二次校验，AllowLoopback 受控放开）；`TestPostBlocksDNSRebindingAtDial` 覆盖 rebinding |
+| 5 | handleNodeRegister 补审计日志（成功/失败双路径） | 面板 | F3 | ✅ 已修复：成功/过期 key/IP 不匹配等路径均落 `node.register` 审计 |
+| 6 | install_key 改 header/POST 传参，移出 URL query | 面板 | F4 | ✅ 已修复：install-script / binary / 注册流程统一 `X-Install-Key` 头，key 不再出现在 URL |
+| 7 | agent 二进制下载补 SHA256（当前仅可执行性自检） | 面板 | G4 | ✅ 已修复：主控分发附带 `X-Binary-SHA256` 响应头（按 mtime+size 缓存）；安装脚本 sha256sum 强制比对，失败删产物并中止；`--version` 自检保留为第二道防线 |
+| 8 | 关闭 curl FOLLOWLOCATION | 插件 | F10 | ✅ 已修复：`CURLOPT_FOLLOWLOCATION = false`，3xx 显式报错 |
+| 9 | ChangePackage 前置 disk 只增预检（避免降级订单半途失败） | 插件 | §5.1 | ✅ 已修复：`eyvescloud_changepackage_disk_precheck` 在发起任何变更请求前拦截 disk 缩容 |
 
 ### P2（规划中）
 
@@ -449,6 +449,31 @@ php -l（模块全部 PHP 文件）              → No syntax errors
 1. `store_sqlite.go`：`saveConfigToDB` 与卷记录函数在 `dbMu` **锁外**判 `db == nil`、锁内使用——与 `CloseConfigDB`（锁内置 nil）构成 check-then-act 竞态，后台任务队列 goroutine 命中时对 nil `*sql.DB` 调 `Begin()` panic。修复：nil 检查移入锁内（`openConfigDB` 的无锁写 `db = next` 同步加锁）。
 2. `config.go`：`FindContainer`/`SaveConfig`/`SaveTasks`/`AddAuditLog`/`AddAuditLogFull` 在测试 teardown 把 `AppConfig` 还原为 nil 后被后台 goroutine 调用时解引用 nil。修复：各入口加 nil 防护，后台任务优雅失败而非崩溃。
 3. `container_virtualizor_test.go`：cleanup 裸写 `config.AppConfig = previous` 与后台 goroutine 读构成数据竞争（`-race` 必报）。修复：改持 `AppConfigMu` 恢复。
+
+### 10.5 P1 修复回归记录（2026-09-26）
+
+P0 全部 + P1 全部 7 项修复完成后的全量回归：
+
+| 命令 | 结果 |
+|------|------|
+| `go build ./...` | ✅ |
+| `go vet ./...` | ✅ clean |
+| `go test -short -count=1 ./...` | ✅ 40/40 packages ok |
+| `go test -race -count=1 ./internal/api/... ./internal/safehttp/...` | ✅ 全通过，race clean（api 包 84s） |
+| `php -l helpers.php / eyvescloud.php / handlers/api.php` | ✅ No syntax errors |
+| `go test -race ./internal/api/ -run 'TestBuildAgentInstallScript\|TestExecutableSHA256\|TestHandleNodeBinary'` | ✅ 全通过（G4 新增 3 个用例） |
+
+G4（P1-7）实现要点：
+
+- 主控 `HandleNodeBinary` 分发二进制时附带 `X-Binary-SHA256` 响应头，摘要由 `executableSHA256` 计算（按 路径+大小+mtime 缓存，避免每次请求全量读自身二进制）；
+- 安装脚本 `curl -D` 落盘响应头，`awk 'tolower($1)=="x-binary-sha256:"'` 提取摘要（mawk/gawk 可移植），对产物 `sha256sum` 强制比对，失败删除产物并以非零退出；
+- `--version` 可执行性自检保留为第二道防线（防架构错配）。
+
+**剩余待真机验证项**（无法在单测环境覆盖）：
+
+- TC-04/TC-05：WHMCS 真机 CSRF 端到端（跨站 POST 无 token → 403；客户区 11 按钮全回归）；
+- TC-09：抓包确认安装链路全程无 install_key 出现在 URL；
+- TC-11：真机下单降级套餐，确认 WHMCS 预检即报错、面板侧零请求。
 
 ---
 

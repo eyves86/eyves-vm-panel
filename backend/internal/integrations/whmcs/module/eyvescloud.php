@@ -220,6 +220,13 @@ function eyvescloud_ChangePassword(array $params)
  */
 function eyvescloud_ChangePackage(array $params)
 {
+    // 前置 disk 只增预检：降级订单在发任何修改请求前整体拒绝，
+    // 避免"CPU/内存已改、磁盘失败"的半提交状态。
+    $precheck = eyvescloud_changepackage_disk_precheck($params);
+    if (($precheck['status'] ?? '') !== 'success') {
+        return $precheck['msg'] ?? '套餐变更预检失败';
+    }
+
     $resource = eyvescloud_resource_limit($params);
     if (($resource['status'] ?? '') !== 'success') {
         return $resource['msg'] ?? '资源限制调整失败';

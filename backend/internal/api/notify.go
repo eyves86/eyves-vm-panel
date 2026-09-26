@@ -1,7 +1,7 @@
 package api
 
 import (
-	"bytes"
+	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/safehttp"
 )
 
 // notifyMu guards lastNotify (per-alert push dedupe map).
@@ -165,14 +166,14 @@ func sendWebhookNotification(url string, alert SecurityAlert) error {
 	if err != nil {
 		return err
 	}
-	client := &http.Client{Timeout: 8 * time.Second}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "EyvesCloud/1.0")
-	resp, err := client.Do(req)
+	// F2：与 webhooks.go 投递同口径的 safehttp 防护（DNS 解析期 + 拨号期
+	// 二次校验覆盖 rebinding + 重定向逐跳校验；回环保留给自托管接收端）。
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	resp, err := safehttp.Post(ctx, url, map[string]string{
+		"Content-Type": "application/json",
+		"User-Agent":   "EyvesCloud/1.0",
+	}, body, 8*time.Second, safehttp.PostConfig{AllowLoopback: true})
 	if err != nil {
 		return err
 	}

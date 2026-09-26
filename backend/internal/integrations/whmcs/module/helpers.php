@@ -585,7 +585,9 @@ function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $ti
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_TIMEOUT        => $timeout,
         CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_FOLLOWLOCATION => true,
+        // F10：禁止跟随重定向。否则 3xx 跳转到外部域时，curl 会把
+        // X-API-Key / Authorization 头原样带给第二跳目标，导致密钥泄露。
+        CURLOPT_FOLLOWLOCATION => false,
         CURLOPT_CUSTOMREQUEST  => $method,
         CURLOPT_HTTPHEADER     => $headers,
         CURLOPT_SSL_VERIFYPEER => $insecure ? false : true,
@@ -607,12 +609,24 @@ function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $ti
     $errno = curl_errno($curl);
     $error = curl_error($curl);
     $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
+    // curl_close 后句柄不可再用，重定向目标须在关闭前取。
+    $redirectUrl = (string)curl_getinfo($curl, CURLINFO_REDIRECT_URL);
     curl_close($curl);
 
     eyvescloud_debug('request', ['url' => $url, 'method' => $method, 'http_code' => $httpCode, 'errno' => $errno]);
 
     if ($errno) {
         return ['success' => false, 'message' => 'CURL ERROR: ' . $error, '_http_code' => 0];
+    }
+
+    // F10：3xx 不跟随，显式报错（面板 API 不应重定向；出现即视为配置问题），
+    // 避免把 API Key 带给重定向目标。
+    if ($httpCode >= 300 && $httpCode < 400) {
+        return [
+            'success'    => false,
+            'message'    => '面板返回重定向（HTTP ' . $httpCode . '），已拒绝跟随以保护 API Key，请检查面板地址配置: ' . $redirectUrl,
+            '_http_code' => $httpCode,
+        ];
     }
 
     $decoded = json_decode((string)$body, true);
@@ -2124,6 +2138,38 @@ function eyvescloud_reset_password($params, $newPassword)
     }
 
     return ['status' => 'success', 'msg' => eyvescloud_message($res, '密码重置成功'), 'data' => ['password' => $password]];
+}
+
+/**
+ * ChangePackage 前置 disk 只增预检（§5.1）。
+ *
+ * 面板资源调整仅支持磁盘扩容。降级订单若不做预检，会出现 CPU/内存已改、
+ * 磁盘步骤失败的"半提交"状态。这里在发出任何修改请求前，先对比当前容器
+ * 磁盘与新套餐 disk_gb，变小即整体拒绝。
+ *
+ * 容器查询失败不阻塞变更（交由后续步骤自然报错），只在能确认
+ * "新磁盘 < 当前磁盘"时拒绝。
+ */
+function eyvescloud_changepackage_disk_precheck($params)
+{
+    $options = eyvescloud_options($params);
+    $newDisk = eyvescloud_float_option($options, 'disk_gb', 0);
+    if ($newDisk <= 0) {
+        return ['status' => 'success', 'msg' => ''];
+    }
+
+    $res = eyvescloud_find_container($params);
+    if (!eyvescloud_success($res) || empty($res['data']) || !is_array($res['data'])) {
+        return ['status' => 'success', 'msg' => ''];
+    }
+    $currentDisk = isset($res['data']['disk_gb']) ? (float)$res['data']['disk_gb'] : 0.0;
+    if ($currentDisk > 0 && $newDisk < $currentDisk) {
+        return [
+            'status' => 'error',
+            'msg'    => '无法降级磁盘：当前容器磁盘为 ' . $currentDisk . ' GB，新套餐为 ' . $newDisk . ' GB。面板仅支持磁盘扩容，请选择磁盘不小于当前的套餐，或先终止后重新开通。',
+        ];
+    }
+    return ['status' => 'success', 'msg' => ''];
 }
 
 function eyvescloud_resource_limit($params)

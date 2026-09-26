@@ -1,10 +1,12 @@
 package safehttp
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"testing"
 	"time"
@@ -142,4 +144,89 @@ func privateInterfaceIPv4(t *testing.T) netip.Addr {
 	}
 	t.Skip("no private IPv4 interface is available")
 	return netip.Addr{}
+}
+
+// rebindResolver 模拟 DNS rebinding：第一次解析（URL/DNS 校验期）返回公网
+// 地址，第二次及以后（拨号期）返回受限地址。
+type rebindResolver struct {
+	blocked netip.Addr
+	calls   int
+}
+
+func (r *rebindResolver) LookupNetIP(_ context.Context, _, _ string) ([]netip.Addr, error) {
+	r.calls++
+	if r.calls == 1 {
+		return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+	}
+	return []netip.Addr{r.blocked}, nil
+}
+
+// TestPostBlocksDNSRebindingAtDial F2 回归：webhook 域名校验期解析公网地址
+// 通过，拨号期解析到云元数据地址必须被拒。注入假 resolver 驱动内部实现。
+func TestPostBlocksDNSRebindingAtDial(t *testing.T) {
+	for _, blockedIP := range []string{
+		"169.254.169.254", // 云元数据
+		"100.100.100.200", // 阿里云元数据
+		"0.0.0.0",
+	} {
+		res := &rebindResolver{blocked: netip.MustParseAddr(blockedIP)}
+		// 即使回环豁免开启（webhook 投递配置），受限地址仍必须在拨号期被拒。
+		_, err := doRequest(context.Background(), http.MethodPost, "http://rebind.example.com/hook", "",
+			map[string]string{"Content-Type": "application/json"}, bytes.NewReader([]byte(`{}`)),
+			2*time.Second, res, true)
+		if err == nil {
+			t.Fatalf("Post must reject dial to %s after DNS rebinding", blockedIP)
+		}
+	}
+}
+
+// TestPostRejectsLoopbackWhenDisallowed 严格策略（AllowLoopback=false）下
+// 回环目标必须在发起请求前被拒。
+func TestPostRejectsLoopbackWhenDisallowed(t *testing.T) {
+	if _, err := Post(context.Background(), "http://127.0.0.1:1/hook",
+		map[string]string{"Content-Type": "application/json"}, []byte(`{}`),
+		time.Second, PostConfig{}); err == nil {
+		t.Fatal("Post with strict policy must reject a loopback destination")
+	}
+}
+
+// TestPostDeliversToLoopbackReceiver 豁免策略下回环接收端（自托管 webhook /
+// httptest 场景）可正常收到带自定义头的 POST 载荷。
+func TestPostDeliversToLoopbackReceiver(t *testing.T) {
+	type received struct {
+		body    string
+		headera string
+	}
+	got := make(chan received, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		got <- received{body: string(body), headera: r.Header.Get("X-Test-Header")}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := Post(ctx, srv.URL, map[string]string{
+		"Content-Type": "application/json",
+		"X-Test-Header": "hook-value",
+	}, []byte(`{"ok":true}`), 5*time.Second, PostConfig{AllowLoopback: true})
+	if err != nil {
+		t.Fatalf("Post to loopback receiver failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	select {
+	case recv := <-got:
+		if recv.body != `{"ok":true}` {
+			t.Errorf("body = %q", recv.body)
+		}
+		if recv.headera != "hook-value" {
+			t.Errorf("X-Test-Header = %q", recv.headera)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("loopback receiver did not get the payload")
+	}
 }
