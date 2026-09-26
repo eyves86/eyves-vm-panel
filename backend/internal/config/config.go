@@ -1475,6 +1475,12 @@ type WebhookSubscription struct {
 	LastDeliveryStatus  string   `json:"last_delivery_status,omitempty"` // ok / error: xxx
 	AutoDisabledReason  string   `json:"auto_disabled_reason,omitempty"`
 	CreatedAt           string   `json:"created_at"`
+	// OwnerSubject 标记该订阅由哪个主体创建：admin 登录创建时为空（全局可见，
+	// 仅 admin 可改/删），sub-user 或受限 API Key 创建时填入 Actor 标识，仅
+	// 创建者本人或 admin 可读/改/删，防止越权修改他人的回调订阅。
+	OwnerSubject string `json:"owner_subject,omitempty"`
+	// OwnerType 标记创建者的认证类型：admin / sub-user / api-key，便于审计。
+	OwnerType string `json:"owner_type,omitempty"`
 }
 
 // KSMTuningConfig 控制 Linux KSM（Kernel Samepage Merging）调优，用于在内存超售

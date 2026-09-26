@@ -119,20 +119,54 @@ func sanitizeWebhook(wh config.WebhookSubscription) config.WebhookSubscription {
 
 // ---- CRUD ----
 
+// listWebhooks 列出当前调用者可见的订阅：管理员看全部，sub-user / 受限
+// API Key 仅看 OwnerSubject 与自身 Actor 匹配的订阅，避免泄漏他人配置。
 func listWebhooks(w http.ResponseWriter, r *http.Request) {
+	actor, isAdmin := currentActor(r)
 	config.AppConfigMu.RLock()
 	out := make([]config.WebhookSubscription, 0, len(config.AppConfig.Webhooks))
 	for _, wh := range config.AppConfig.Webhooks {
+		if !isAdmin && wh.OwnerSubject != "" && wh.OwnerSubject != actor {
+			continue
+		}
 		out = append(out, sanitizeWebhook(wh))
 	}
 	config.AppConfigMu.RUnlock()
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: out})
 }
 
+// currentActor 提取当前请求的 Actor 与是否管理员，缺省（未认证）视为非 admin。
+func currentActor(r *http.Request) (string, bool) {
+	ctx, ok := authContextFromRequest(r)
+	if !ok {
+		return "", false
+	}
+	return ctx.Actor, ctx.Type == "admin"
+}
+
+// canAccessWebhook 判断当前请求主体是否可以读/写指定 webhook：
+//   - admin 可访问全部
+//   - 拥有 OwnerSubject == actor 的订阅
+//   - 全局订阅（OwnerSubject == ""）仅 admin 可访问
+func canAccessWebhook(r *http.Request, wh config.WebhookSubscription) bool {
+	actor, isAdmin := currentActor(r)
+	if isAdmin {
+		return true
+	}
+	if wh.OwnerSubject == "" {
+		return false
+	}
+	return wh.OwnerSubject == actor
+}
+
 func getWebhook(w http.ResponseWriter, r *http.Request, id string) {
 	wh, _, ok := findWebhook(id)
 	if !ok {
 		errResponse(w, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+		return
+	}
+	if !canAccessWebhook(r, wh) {
+		errResponse(w, http.StatusForbidden, "FORBIDDEN", "Not allowed to access this webhook")
 		return
 	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: sanitizeWebhook(wh)})
@@ -178,13 +212,20 @@ func createWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wh := config.WebhookSubscription{
-		ID:         genWebhookID(),
-		Name:       req.Name,
-		URL:        strings.TrimSpace(req.URL),
-		Secret:     genWebhookSecret(),
-		EventTypes: req.EventTypes,
-		Enabled:    enabled,
-		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+		ID:           genWebhookID(),
+		Name:         req.Name,
+		URL:          strings.TrimSpace(req.URL),
+		Secret:       genWebhookSecret(),
+		EventTypes:   req.EventTypes,
+		Enabled:      enabled,
+		CreatedAt:    time.Now().UTC().Format(time.RFC3339),
+	}
+	if actor, isAdmin := currentActor(r); !isAdmin {
+		// 非管理员创建的订阅绑定 OwnerSubject：仅本人或更高权限主体可改/删。
+		wh.OwnerSubject = actor
+		if ctx, ok := authContextFromRequest(r); ok {
+			wh.OwnerType = ctx.Type
+		}
 	}
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.Webhooks = append(cfg.Webhooks, wh)
@@ -213,6 +254,10 @@ func updateWebhook(w http.ResponseWriter, r *http.Request, id string) {
 	existing, _, ok := findWebhook(id)
 	if !ok {
 		errResponse(w, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+		return
+	}
+	if !canAccessWebhook(r, existing) {
+		errResponse(w, http.StatusForbidden, "FORBIDDEN", "Not allowed to update this webhook")
 		return
 	}
 	var req struct {
@@ -277,6 +322,10 @@ func deleteWebhook(w http.ResponseWriter, r *http.Request, id string) {
 	existing, _, ok := findWebhook(id)
 	if !ok {
 		errResponse(w, http.StatusNotFound, "NOT_FOUND", "Webhook not found")
+		return
+	}
+	if !canAccessWebhook(r, existing) {
+		errResponse(w, http.StatusForbidden, "FORBIDDEN", "Not allowed to delete this webhook")
 		return
 	}
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {

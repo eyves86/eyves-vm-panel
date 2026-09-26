@@ -54,9 +54,12 @@ Hash
 
 ```text
 X-API-Key: eyvescloud_sk_xxxx
-Authorization: Bearer eyvescloud_sk_xxxx
 Content-Type: application/json
 ```
+
+> 注意：v1.8.1 起模块仅发 `X-API-Key` 一个鉴权头（之前同时携带 `Authorization: Bearer`）。
+> **强烈建议**在上游仅签发 sub-user scope 的 API Key（`container:*` / `usage:read` / `snapshot:*`），
+> 不要授予 `admin:*` / `webhook:*` / `apikey:*` 等敏感 scope，避免 WHMCS 端单点失陷带来全局风险。
 
 ## 产品配置项
 

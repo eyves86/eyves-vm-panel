@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,14 @@ import (
 	"eyvescloud/internal/notify"
 	"eyvescloud/internal/version"
 )
+
+// containerNameRegex 容器名允许字符：首字符字母数字，后续允许字母数字 - _ .，
+// 整体 1-64 字符。覆盖 LXC 与 KVM 内部命名 / cgroup 子系统 / cloud-init 主机名要求。
+var containerNameRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
+
+func validContainerName(name string) bool {
+	return containerNameRegex.MatchString(name)
+}
 
 var lxcManager = lxc.NewManager()
 
@@ -647,6 +656,35 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 	if cfg.Name == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Container name is required"})
 		return
+	}
+	// 容器名约束：首字符必须为字母/数字，后续允许字母数字 - _ . ，
+	// 长度上限 64，与 LXC/KVM 内部命名空间与 cgroup 子系统兼容。
+	if len(cfg.Name) > 64 || !validContainerName(cfg.Name) {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Container name must match ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ and be ≤64 chars",
+		})
+		return
+	}
+	// SSH 公钥直接注入场景（cfg.SSHPublicKeys 中内联公钥字符串）：
+	// 限制单把公钥最大 16 KB（OpenSSH 默认上限），总数不超过 16 把，
+	// 防止恶意大字符串攻击底层 lxc-attach / cloud-init 写入路径。
+	const maxSSHKeyBytes = 16 * 1024
+	if len(cfg.SSHPublicKeys) > 16 {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "Too many SSH public keys (max 16)",
+		})
+		return
+	}
+	for i, k := range cfg.SSHPublicKeys {
+		if len(k) > maxSSHKeyBytes {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{
+				Success: false,
+				Message: fmt.Sprintf("SSH public key #%d exceeds 16 KB", i+1),
+			})
+			return
+		}
 	}
 	cfg.Virtualization = runtimeFromRequest(cfg.Virtualization)
 	if cfg.TemplateID == "" {
