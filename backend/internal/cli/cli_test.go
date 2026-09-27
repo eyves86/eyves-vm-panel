@@ -72,3 +72,59 @@ func TestFormatSSHAccessHandlesMissingPort(t *testing.T) {
 		t.Fatalf("formatSSHAccess output = %q, want missing port message", out)
 	}
 }
+
+func TestResolveRepoSource(t *testing.T) {
+	cases := []struct {
+		name     string
+		input    string
+		platform string
+		owner    string
+		repo     string
+	}{
+		{"plain owner/repo", "FenhaoLost/eyves-vm-panel", "github", "FenhaoLost", "eyves-vm-panel"},
+		{"codeberg prefix", "codeberg:fenhaolost/eyves-vm-panel", "codeberg", "fenhaolost", "eyves-vm-panel"},
+		{"gitee short prefix", "gt:user/repo", "gitee", "user", "repo"},
+		{"gitlab prefix", "gitlab:group/subgroup/repo", "gitlab", "group", "subgroup/repo"},
+		{"codeberg URL", "https://codeberg.org/fenhaolost/eyves-vm-panel", "codeberg", "fenhaolost", "eyves-vm-panel"},
+		{"gitee URL", "https://gitee.com/user/repo", "gitee", "user", "repo"},
+		{"gitlab URL", "https://gitlab.com/group/repo", "gitlab", "group", "repo"},
+		{"github URL fallback", "https://github.com/user/repo", "github", "user", "repo"},
+		{"empty → default", "", "github", "FenhaoLost", "eyves-vm-panel"},
+		{"gh alias", "gh:user/repo", "github", "user", "repo"},
+		{"cb alias", "cb:user/repo", "codeberg", "user", "repo"},
+		{"gl alias", "gl:group/repo", "gitlab", "group", "repo"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := resolveRepoSource(c.input)
+			if src.Platform != c.platform {
+				t.Fatalf("platform: got %q, want %q", src.Platform, c.platform)
+			}
+			if src.Owner != c.owner {
+				t.Fatalf("owner: got %q, want %q", src.Owner, c.owner)
+			}
+			if src.Repo != c.repo {
+				t.Fatalf("repo: got %q, want %q", src.Repo, c.repo)
+			}
+		})
+	}
+}
+
+func TestValidateRepoSlugMultiPlatform(t *testing.T) {
+	// 扩展后应同时接受 owner/repo 和 codeberg:owner/repo 两种格式。
+	if !validateRepoSlug("FenhaoLost/eyves-vm-panel") {
+		t.Fatal("owner/repo must be valid")
+	}
+	if !validateRepoSlug("codeberg:fenhaolost/eyves-vm-panel") {
+		t.Fatal("codeberg:owner/repo must be valid")
+	}
+	if !validateRepoSlug("https://codeberg.org/fenhaolost/eyves-vm-panel") {
+		t.Fatal("full codeberg URL must be valid")
+	}
+	if !validateRepoSlug("") {
+		t.Fatal("empty must be rejected (or accepted as default, current impl accepts)")
+	}
+	if validateRepoSlug("invalid/path/extra") {
+		t.Fatal("three-segment slug must be rejected")
+	}
+}

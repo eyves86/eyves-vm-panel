@@ -60,7 +60,7 @@ import TurnstileWidget from '../components/TurnstileWidget'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 
-type SettingsSection = 'tasks' | 'account' | 'security' | 'audit' | 'backup' | 'ratelimit' | 'access' | 'webssh' | 'ssl' | 'turnstile' | 'logs' | 'notify' | 'overcommit'
+type SettingsSection = 'tasks' | 'account' | 'security' | 'audit' | 'backup' | 'ratelimit' | 'access' | 'webssh' | 'ssl' | 'turnstile' | 'logs' | 'notify' | 'overcommit' 
 
 const settingsSections = [
   { id: 'tasks', label: '任务队列', icon: ListTodo },
@@ -1345,6 +1345,7 @@ export default function Settings() {
           {activeSection === 'logs' && (
             <LoginLogCard logs={logs} logPage={logPage} pageSize={pageSize} totalPages={totalPages} setLogPage={setLogPage} />
           )}
+
 
           {activeSection === 'notify' && (
             <NotificationCard
@@ -2694,3 +2695,4 @@ function OvercommitCard(props: OvercommitCardProps) {
     </div>
   )
 }
+

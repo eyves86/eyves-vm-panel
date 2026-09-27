@@ -1386,6 +1386,49 @@ type ISOFile struct {
 }
 
 // EyvescloudConfig is the main configuration structure
+// UpdateSource 描述面板自动更新的 Git Release 源。
+// 统一适配 GitHub / Codeberg / Gitee / GitLab 四大平台的 Releases API：
+//   - platform: github | codeberg | gitee | gitlab
+//   - owner/repo: 仓库 owner 与 repo 名
+//   - branch: 可选，当 latest release 未找到时回退到此分支最新 tag；默认 main
+//   - token: 可选，私有仓库需要
+//   - asset_prefix: 可选，release 产物前缀；默认 eyvescloud
+// 留空时 initConfig 会写入 GitHub 官方仓库默认值。
+type UpdateSource struct {
+	Platform    string `json:"platform"`
+	Owner       string `json:"owner"`
+	Repo        string `json:"repo"`
+	Branch      string `json:"branch,omitempty"`
+	Token       string `json:"token,omitempty"`
+	AssetPrefix string `json:"asset_prefix,omitempty"`
+}
+
+// NormalizeUpdateSource 补齐默认值：留空 platform → github；留空 owner/repo → 官方仓库；
+// 留空 branch → main；留空 asset_prefix → eyvescloud。
+func NormalizeUpdateSource(u UpdateSource) UpdateSource {
+	u.Platform = strings.ToLower(strings.TrimSpace(u.Platform))
+	switch u.Platform {
+	case "":
+		u.Platform = "github"
+	case "github", "codeberg", "gitee", "gitlab":
+	default:
+		u.Platform = "github"
+	}
+	if strings.TrimSpace(u.Owner) == "" {
+		u.Owner = "FenhaoLost"
+	}
+	if strings.TrimSpace(u.Repo) == "" {
+		u.Repo = "eyves-vm-panel"
+	}
+	if strings.TrimSpace(u.Branch) == "" {
+		u.Branch = "main"
+	}
+	if strings.TrimSpace(u.AssetPrefix) == "" {
+		u.AssetPrefix = "eyvescloud"
+	}
+	return u
+}
+
 type EyvescloudConfig struct {
 	AdminUser            string                 `json:"admin_user"`
 	AdminPassHash        string                 `json:"admin_pass_hash"`
@@ -1457,7 +1500,13 @@ type EyvescloudConfig struct {
 	// 表单中，主控凭它调用本面板完成注册对接（方向与 install key 相反）。
 	AgentPairingKey        string `json:"agent_pairing_key,omitempty"`
 	AgentPairingKeyExpiry string `json:"agent_pairing_key_expiry,omitempty"`
-	Regions              []Region               `json:"regions,omitempty"`
+	// UpdateSource 面板自动更新源。
+	// 支持 GitHub / Codeberg / Gitee / GitLab 四大平台，填入 owner/repo + 可选 token
+	// 即可从各平台的 Releases 拉取最新版本，统一产物命名：
+	//   eyvescloud-linux-amd64.tar.gz / eyvescloud-linux-arm64.tar.gz
+	// 留空时默认从 github.com/FenhaoLost/eyves-vm-panel 检查。
+	UpdateSource UpdateSource `json:"update_source"`
+	Regions      []Region     `json:"regions,omitempty"`
 	NodeGroups           []NodeGroup            `json:"node_groups,omitempty"`
 	Clusters             []Cluster              `json:"clusters,omitempty"`
 	IPGroups             []IPGroup              `json:"ip_groups,omitempty"`
@@ -1859,6 +1908,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 		DiskOvercommitRatio:       1.0,
 		AgentPairingKey:        pairingKey,
 		AgentPairingKeyExpiry: pairingKeyExpiry,
+		UpdateSource:           NormalizeUpdateSource(UpdateSource{}),
 	}
 
 	if err := SaveConfig(); err != nil {

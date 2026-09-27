@@ -937,6 +937,8 @@ export const registerAgentController = (data: {
 export const restartAgentService = () =>
   api.post<APIResponse<{ restart_initiated: boolean }>>('/agent/restart')
 
+  api.post<APIResponse<{ new_version: string; backup: string; sha256: string }>>('/version/apply')
+
 // 主控侧「对接已有面板」：凭被控面板生成的对接密钥主动拉取注册。
 export const adoptExistingPanel = (data: {
   panel_url: string

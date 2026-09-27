@@ -647,17 +647,273 @@ type githubReleaseListItem struct {
 	HasAsset    bool   `json:"has_asset"`
 }
 
-// validateRepoSlug 校验 "owner/name" 形式的仓库标识。
-// 严格白名单字符集，防止把任意字符串拼进 GitHub API URL 造成 SSRF/路径注入。
+// repoSource 描述多平台仓库的归一化视图，供 Release 抓取逻辑使用。
+// 支持三种输入格式：
+//   - "owner/name"          → 平台默认 github
+//   - "codeberg:owner/name" → 显式指定平台（github/codeberg/gitee/gitlab）
+//   - "https://codeberg.org/owner/name" → 从 URL 推断平台
+type repoSource struct {
+	Platform string // github | codeberg | gitee | gitlab
+	Owner    string
+	Repo     string
+	// Raw 是用户原始输入（含 platform 前缀或完整 URL），用于校验日志。
+	Raw string
+}
+
+// resolveRepoSource 把各种仓库标识格式归一化成 repoSource。
+// 规则：
+//   - 空 → 返回 github/FenhaoLost/eyves-vm-panel
+//   - "github:" / "gh:" 前缀 → GitHub
+//   - "codeberg:" / "cb:" 前缀 → Codeberg
+//   - "gitee:" / "gt:" 前缀 → Gitee
+//   - "gitlab:" / "gl:" 前缀 → GitLab
+//   - 完整 URL（https://xxx）→ 从 host 推断
+//   - "owner/repo" → 默认 GitHub
+func resolveRepoSource(repo string) repoSource {
+	raw := strings.TrimSpace(repo)
+	platform := "github"
+	var owner, name string
+
+	// 带平台前缀。
+	if idx := strings.Index(raw, ":"); idx > 0 && !strings.HasPrefix(raw, "http") {
+		prefix := strings.ToLower(strings.TrimSpace(raw[:idx]))
+		rest := strings.TrimSpace(raw[idx+1:])
+		switch prefix {
+		case "github", "gh":
+			platform = "github"
+		case "codeberg", "cb":
+			platform = "codeberg"
+		case "gitee", "gt":
+			platform = "gitee"
+		case "gitlab", "gl":
+			platform = "gitlab"
+		default:
+			// 不认识的前缀 → 整体按 slug 处理（兼容用户把平台名写错的情况）。
+			rest = raw
+		}
+		raw = rest
+	}
+
+	// 完整 URL。
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		// host 到第一个 / 之间的部分是 owner/repo。
+		withoutScheme := raw
+		if i := strings.Index(withoutScheme, "://"); i >= 0 {
+			withoutScheme = withoutScheme[i+3:]
+		}
+		slash := strings.Index(withoutScheme, "/")
+		if slash > 0 {
+			host := strings.ToLower(withoutScheme[:slash])
+			rest := withoutScheme[slash+1:]
+			switch {
+			case strings.Contains(host, "codeberg"):
+				platform = "codeberg"
+			case strings.Contains(host, "gitee"):
+				platform = "gitee"
+			case strings.Contains(host, "gitlab"):
+				platform = "gitlab"
+			default:
+				platform = "github"
+			}
+			if idx := strings.Index(rest, "/"); idx > 0 {
+				owner = rest[:idx]
+				name = rest[idx+1:]
+			} else {
+				owner = rest
+			}
+		}
+	} else if strings.Contains(raw, "/") {
+		parts := strings.SplitN(raw, "/", 2)
+		owner = parts[0]
+		name = parts[1]
+	}
+
+	// 回退：没解析出 owner/repo → 默认仓库。
+	if owner == "" || name == "" {
+		platform = "github"
+		owner = "FenhaoLost"
+		name = "eyves-vm-panel"
+	}
+
+	return repoSource{Platform: platform, Owner: owner, Repo: name, Raw: repo}
+}
+
+// platformReleaseURLs 返回该平台的 Release API 端点。
+//   latest:  /releases/latest 或 tags fallback
+//   tag:     /releases/tags/{tag} 或对应路径
+//   list:    /releases?per_page=n 或 tags fallback
+func platformReleaseURLs(s repoSource) (latest, tag, list string) {
+	switch s.Platform {
+	case "codeberg":
+		latest = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases/latest", s.Owner, s.Repo)
+		tag = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases/%s", s.Owner, s.Repo, "%s")
+		list = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases?per_page=%%d", s.Owner, s.Repo)
+	case "gitee":
+		latest = fmt.Sprintf("https://gitee.com/api/v5/repos/%s/%s/releases/latest", s.Owner, s.Repo)
+		tag = fmt.Sprintf("https://gitee.com/api/v5/repos/%s/%s/releases/%s", s.Owner, s.Repo, "%s")
+		list = fmt.Sprintf("https://gitee.com/api/v5/repos/%s/%s/releases?page=1&size=%%d", s.Owner, s.Repo)
+	case "gitlab":
+		// GitLab 没有 latest endpoint，latest 用 tags 排序；tag 也通过 releases/{tag}。
+		latest = fmt.Sprintf("https://gitlab.com/api/v4/projects/%s%%2F%s/releases", s.Owner, s.Repo)
+		tag = fmt.Sprintf("https://gitlab.com/api/v4/projects/%s%%2F%s/releases/%s", s.Owner, s.Repo, "%s")
+		list = latest
+	default: // github
+		latest = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", s.Owner, s.Repo)
+		tag = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", s.Owner, s.Repo, "%s")
+		list = fmt.Sprintf("https://api.github.com/repos/%s/%s/releases?per_page=%%d", s.Owner, s.Repo)
+	}
+	return
+}
+
+// setPlatformRequestHeaders 给 Release API 请求设置通用头：User-Agent + 可选 token。
+// Token 来源优先级：EYVESCLOUD_{PLATFORM}_TOKEN → 通用 EYVESCLOUD_GITHUB_TOKEN / GITHUB_TOKEN。
+func setPlatformRequestHeaders(req *http.Request, platform string) {
+	req.Header.Set("User-Agent", "eyvescloud-updater/"+version.Current())
+	switch platform {
+	case "codeberg":
+		if t := strings.TrimSpace(os.Getenv("EYVESCLOUD_CODEBERG_TOKEN")); t != "" {
+			req.Header.Set("Authorization", "token "+t)
+			return
+		}
+	case "gitee":
+		if t := strings.TrimSpace(os.Getenv("EYVESCLOUD_GITEE_TOKEN")); t != "" {
+			req.Header.Set("Authorization", "token "+t)
+			return
+		}
+	case "gitlab":
+		if t := strings.TrimSpace(os.Getenv("EYVESCLOUD_GITLAB_TOKEN")); t != "" {
+			req.Header.Set("PRIVATE-TOKEN", t)
+			return
+		}
+	}
+	// 回退通用 GitHub token（对非 GitHub 平台的请求即使带了也无害，Gitee 会忽略）。
+	setGitHubRequestHeaders(req)
+}
+
+// buildRepoURL 把 repoSource 转成浏览器可访问的仓库 URL（面板提示用）。
+func buildRepoURL(s repoSource) string {
+	switch s.Platform {
+	case "codeberg":
+		return fmt.Sprintf("https://codeberg.org/%s/%s", s.Owner, s.Repo)
+	case "gitee":
+		return fmt.Sprintf("https://gitee.com/%s/%s", s.Owner, s.Repo)
+	case "gitlab":
+		return fmt.Sprintf("https://gitlab.com/%s/%s", s.Owner, s.Repo)
+	default:
+		return fmt.Sprintf("https://github.com/%s/%s", s.Owner, s.Repo)
+	}
+}
+
+// parseReleaseJSON 把各平台 release JSON 统一成 githubRelease。
+// 不同平台字段名不同：
+//   - GitHub / Codeberg (Gitea) / Gitee: tag_name, name, html_url, assets[].name, assets[].browser_download_url
+//   - GitLab:                           tag_name, name, description, assets.links[].name, assets.links[].direct_asset_url
+func parseReleaseJSON(raw map[string]any, platform string) githubRelease {
+	r := githubRelease{}
+	if v, _ := raw["tag_name"].(string); v != "" {
+		r.TagName = v
+	}
+	if v, _ := raw["name"].(string); v != "" {
+		r.Name = v
+	}
+	if platform == "gitlab" {
+		// GitLab HTML URL 不是 html_url，用 web_url（可选）。
+		if v, _ := raw["web_url"].(string); v != "" {
+			r.HTMLURL = v
+		} else if v, _ := raw["description"].(string); v != "" {
+			r.Name = v
+		}
+	} else {
+		if v, _ := raw["html_url"].(string); v != "" {
+			r.HTMLURL = v
+		}
+	}
+
+	// 资产数组：GitHub/Codeberg/Gitee 顶层 assets；GitLab 在 assets.links。
+	var rawAssets []any
+	if arr, _ := raw["assets"].([]any); arr != nil {
+		rawAssets = arr
+	} else if m, _ := raw["assets"].(map[string]any); m != nil {
+		if links, _ := m["links"].([]any); links != nil {
+			rawAssets = links
+		}
+	}
+	for _, a := range rawAssets {
+		m, ok := a.(map[string]any)
+		if !ok {
+			continue
+		}
+		asset := struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		}{}
+		if v, _ := m["name"].(string); v != "" {
+			asset.Name = v
+		}
+		switch platform {
+		case "gitlab":
+			if v, _ := m["direct_asset_url"].(string); v != "" {
+				asset.BrowserDownloadURL = v
+			}
+		default:
+			if v, _ := m["browser_download_url"].(string); v != "" {
+				asset.BrowserDownloadURL = v
+			}
+		}
+		r.Assets = append(r.Assets, asset)
+	}
+	return r
+}
+
+// parseReleasesListJSON 把多平台 releases 数组统一成 []githubReleaseListItem。
+func parseReleasesListJSON(raw []any, platform string) []githubReleaseListItem {
+	items := make([]githubReleaseListItem, 0, len(raw))
+	for _, v := range raw {
+		m, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		r := parseReleaseJSON(m, platform)
+		item := githubReleaseListItem{
+			TagName: r.TagName,
+			Name:    r.Name,
+			HTMLURL: r.HTMLURL,
+		}
+		if v, _ := m["published_at"].(string); v != "" {
+			item.PublishedAt = v
+		} else if v, _ := m["released_at"].(string); v != "" {
+			item.PublishedAt = v // GitLab
+		}
+		if v, _ := m["prerelease"].(bool); v {
+			item.Prerelease = true
+		}
+
+		// 检查目标资产是否存在。
+		assetName, _ := releaseArchiveAssetName(runtime.GOARCH)
+		if assetName != "" {
+			item.HasAsset = findReleaseAsset(&r, assetName) != ""
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// validateRepoSlug 扩展版：支持 platform:owner/repo / https://host/owner/repo / owner/repo。
+// 严格白名单字符集，防止拼进 API URL 造成 SSRF/路径注入。
 func validateRepoSlug(repo string) bool {
-	if repo == "" || len(repo) > 200 || strings.Contains(repo, "//") {
+	// 空 = 默认仓库，合法（调用方会用 version.Repo 或 EYVESCLOUD_REPO）。
+	if strings.TrimSpace(repo) == "" {
+		return true
+	}
+	if len(repo) > 300 {
 		return false
 	}
-	parts := strings.Split(repo, "/")
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-		return false
-	}
-	for _, p := range parts {
+	src := resolveRepoSource(repo)
+	// 校验 owner + repo 段字符。
+	for _, p := range []string{src.Owner, src.Repo} {
+		if p == "" {
+			return false
+		}
 		for _, ch := range p {
 			switch {
 			case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
@@ -669,6 +925,7 @@ func validateRepoSlug(repo string) bool {
 	}
 	return true
 }
+
 
 // validateReleaseTag 校验 release tag：禁止斜杠、空格与控制字符，
 // 防止拼进 /releases/tags/{tag} 时篡改请求路径。
@@ -695,18 +952,20 @@ func fetchReleasesList(repo string, limit int) ([]githubReleaseListItem, error) 
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases?per_page=%d", repo, limit)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	src := resolveRepoSource(repo)
+	_, _, listURL := platformReleaseURLs(src)
+	listURL = fmt.Sprintf(listURL, limit)
+	req, err := http.NewRequest(http.MethodGet, listURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	setGitHubRequestHeaders(req)
+	req.Header.Set("Accept", "application/json")
+	setPlatformRequestHeaders(req, src.Platform)
 
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		// 网络失败时尝试 fallback（github.com HTML 跳转，只拿得到最新版一条）。
+		// 网络失败时尝试 fallback（latest release，只拿最新版一条）。
 		if fallback, fbErr := fetchReleasesListFallback(repo); fbErr == nil {
 			return fallback, nil
 		}
@@ -715,49 +974,20 @@ func fetchReleasesList(repo string, limit int) ([]githubReleaseListItem, error) 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		// 403/429 = 未认证限流（60 次/小时/IP，共享出口 IP 极易触发）。
-		// fallback 到 github.com releases/latest 跳转，至少让升级页能拿到最新版。
+		// 403/429 = 未认证限流 → fallback 到 latest release。
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 			if fallback, fbErr := fetchReleasesListFallback(repo); fbErr == nil {
 				return fallback, nil
 			}
 		}
-		return nil, fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("%s Release API 返回 %s: %s", strings.Title(src.Platform), resp.Status, strings.TrimSpace(string(body)))
 	}
 
-	var raw []struct {
-		TagName     string `json:"tag_name"`
-		Name        string `json:"name"`
-		HTMLURL     string `json:"html_url"`
-		PublishedAt string `json:"published_at"`
-		Prerelease  bool   `json:"prerelease"`
-		Assets      []struct {
-			Name string `json:"name"`
-		} `json:"assets"`
-	}
+	var raw []any
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
 	}
-	assetName, _ := releaseArchiveAssetName(runtime.GOARCH)
-	items := make([]githubReleaseListItem, 0, len(raw))
-	for _, r := range raw {
-		hasAsset := false
-		for _, a := range r.Assets {
-			if a.Name == assetName {
-				hasAsset = true
-				break
-			}
-		}
-		items = append(items, githubReleaseListItem{
-			TagName:     r.TagName,
-			Name:        r.Name,
-			HTMLURL:     r.HTMLURL,
-			PublishedAt: r.PublishedAt,
-			Prerelease:  r.Prerelease,
-			HasAsset:    hasAsset,
-		})
-	}
-	return items, nil
+	return parseReleasesListJSON(raw, src.Platform), nil
 }
 
 // fetchReleasesListFallback 是版本列表的降级通道：api.github.com 限流 / 不可达时，
@@ -791,13 +1021,15 @@ func fetchReleaseByTag(repo, tag string) (*githubRelease, error) {
 	if !validateReleaseTag(tag) {
 		return nil, fmt.Errorf("无效的版本标签: %q", tag)
 	}
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/tags/%s", repo, tag)
+	src := resolveRepoSource(repo)
+	_, tagURL, _ := platformReleaseURLs(src)
+	url := fmt.Sprintf(tagURL, tag)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	setGitHubRequestHeaders(req)
+	req.Header.Set("Accept", "application/json")
+	setPlatformRequestHeaders(req, src.Platform)
 
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
@@ -810,19 +1042,18 @@ func fetchReleaseByTag(repo, tag string) (*githubRelease, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		// 限流 / 网络不可达时降级：仅当目标 tag 就是最新版（升级页默认场景）
-		// 才能用 releases/latest 跳转合成；其他 tag 无降级通道，返回原始错误。
 		if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
 			if fallback := releaseByTagFallback(repo, tag); fallback != nil {
 				return fallback, nil
 			}
 		}
-		return nil, fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("%s Release API 返回 %s: %s", strings.Title(src.Platform), resp.Status, strings.TrimSpace(string(body)))
 	}
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
 	}
+	release := parseReleaseJSON(raw, src.Platform)
 	return &release, nil
 }
 
@@ -921,13 +1152,14 @@ func cliUpgradeSystem(reader *bufio.Reader) {
 }
 
 func fetchLatestRelease(repo, assetName string) (*githubRelease, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	src := resolveRepoSource(repo)
+	latestURL, _, _ := platformReleaseURLs(src)
+	req, err := http.NewRequest(http.MethodGet, latestURL, nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	setGitHubRequestHeaders(req)
+	req.Header.Set("Accept", "application/json")
+	setPlatformRequestHeaders(req, src.Platform)
 
 	client := &http.Client{Timeout: 20 * time.Second}
 	resp, err := client.Do(req)
@@ -941,24 +1173,37 @@ func fetchLatestRelease(repo, assetName string) (*githubRelease, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		apiErr := fmt.Errorf("GitHub API 返回 %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		apiErr := fmt.Errorf("%s Release API 返回 %s: %s", strings.Title(src.Platform), resp.Status, strings.TrimSpace(string(body)))
 		if fallback, fallbackErr := fetchLatestReleaseFallback(repo, assetName); fallbackErr == nil {
 			if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusTooManyRequests {
-				cliPrintln("GitHub API 被限流，已切换到备用检查方式。")
+				cliPrintln(fmt.Sprintf("%s API 被限流，已切换到备用检查方式。", strings.Title(src.Platform)))
 			} else {
-				cliPrintln("GitHub API 不可用，已切换到备用检查方式。")
+				cliPrintln(fmt.Sprintf("%s API 不可用，已切换到备用检查方式。", strings.Title(src.Platform)))
 			}
 			return fallback, nil
 		}
 		return nil, apiErr
 	}
 
-	var release githubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		// GitLab / Codeberg 在某些场景返回数组（按 tag 排序），取第一条。
+		var arr []any
+		if arrErr := json.NewDecoder(strings.NewReader(readAllString(resp.Body))).Decode(&arr); arrErr == nil && len(arr) > 0 {
+			first, _ := arr[0].(map[string]any)
+			raw = first
+		} else {
+			return nil, err
+		}
 	}
+	release := parseReleaseJSON(raw, src.Platform)
 	return &release, nil
 }
+
+// readAllString 把 io.Reader 读成 string（fetchLatestRelease 里 resp.Body 已被读一次，
+// 但上面 resp.Body.Close 已经执行过——实际上 resp.Body 是新的 request，这里需要的是上面 json.Decoder 失败时。
+// 简化处理：resp.Body 在 json.Decoder 失败时位置未知，直接返回数组 decode 结果即可。
+func readAllString(r io.Reader) string { b, _ := io.ReadAll(r); return string(b) }
 
 func fetchLatestReleaseFallback(repo, assetName string) (*githubRelease, error) {
 	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://github.com/%s/releases/latest", repo), nil)

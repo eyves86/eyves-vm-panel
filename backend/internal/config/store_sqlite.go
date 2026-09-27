@@ -755,6 +755,14 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		// 节点对接密钥（本面板作为被控）：密文落库，读取后下方统一解密。
 		AgentPairingKey:        meta["agent_pairing_key"],
 		AgentPairingKeyExpiry: meta["agent_pairing_key_expiry"],
+		// 更新源：platform/owner/repo/branch/asset_prefix 明文；token 单独加密字段。
+		UpdateSource: UpdateSource{
+			Platform:    meta["update_source_platform"],
+			Owner:       meta["update_source_owner"],
+			Repo:        meta["update_source_repo"],
+			Branch:      meta["update_source_branch"],
+			AssetPrefix: meta["update_source_asset_prefix"],
+		},
 	}
 	if raw := strings.TrimSpace(meta["ksm_tuning"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.KSMTuning)
@@ -878,6 +886,14 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 			cfg.AgentPairingKeyExpiry = ""
 		} else {
 			cfg.AgentPairingKey = plainPK
+		}
+	}
+
+	// 更新源 token 解密（可选，私有仓库才填；加密方式与 Turnstile 等同级）。
+	if raw := strings.TrimSpace(meta["update_source_token"]); raw != "" {
+		plainT, err := DecryptNodeToken(raw)
+		if err == nil {
+			cfg.UpdateSource.Token = plainT
 		}
 	}
 
@@ -1042,6 +1058,16 @@ func saveMeta(tx *sql.Tx) error {
 		}
 		agentPairingKey = encPK
 	}
+	// 更新源：token 加密；其余字段明文（非敏感）。
+	us := NormalizeUpdateSource(AppConfig.UpdateSource)
+	usToken := ""
+	if us.Token != "" {
+		encUT, err := EncryptNodeToken(us.Token)
+		if err != nil {
+			return fmt.Errorf("加密 UpdateSource Token 失败: %w", err)
+		}
+		usToken = encUT
+	}
 	values := map[string]string{
 		"admin_user":             AppConfig.AdminUser,
 		"admin_pass_hash":        AppConfig.AdminPassHash,
@@ -1076,6 +1102,13 @@ func saveMeta(tx *sql.Tx) error {
 		"turnstile_user_login":   btoa(AppConfig.TurnstileUserLogin),
 		"agent_pairing_key":      agentPairingKey,
 		"agent_pairing_key_expiry": AppConfig.AgentPairingKeyExpiry,
+		// 更新源：platform/owner/repo/branch/asset_prefix 明文；token 加密。
+		"update_source_platform":    us.Platform,
+		"update_source_owner":       us.Owner,
+		"update_source_repo":        us.Repo,
+		"update_source_branch":      us.Branch,
+		"update_source_asset_prefix": us.AssetPrefix,
+		"update_source_token":       usToken, // 已加密（空 token → 空）。
 		"ssl":                    string(sslJSON),
 		"ssl_certificates":       string(sslCertificatesJSON),
 		"public_ipv4_pool":       string(publicIPv4PoolJSON),
