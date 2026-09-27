@@ -32,6 +32,7 @@ func main() {
 	isAgentMode := false
 	isAccessPolicyCommand := len(os.Args) > 1 && os.Args[1] == "access-policy"
 	isAccountCommand := len(os.Args) > 1 && (os.Args[1] == "account" || os.Args[1] == "kvm")
+	isNodeLinkCommand := len(os.Args) > 1 && (os.Args[1] == "node-link" || os.Args[1] == "pairing-key")
 	for _, arg := range os.Args[1:] {
 		if arg == "server" || arg == "-s" || arg == "--server" {
 			isServerMode = true
@@ -69,6 +70,16 @@ func main() {
 	if isAccountCommand {
 		if err := cli.RunAccountCommand(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "Account command error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// 节点对接快捷命令：查看/生成本面板作为被控的对接密钥
+	//（安装脚本用它把地址+密钥展示给运维）。
+	if isNodeLinkCommand {
+		if err := cli.RunNodeLinkCommand(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Node link command error: %v\n", err)
 			os.Exit(1)
 		}
 		return

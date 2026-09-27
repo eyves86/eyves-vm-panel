@@ -6,6 +6,7 @@ import {
   Eye,
   HardDrive,
   KeyRound,
+  Link2,
   Loader2,
   MemoryStick,
   Monitor,
@@ -21,6 +22,7 @@ import {
   X,
 } from 'lucide-react'
 import {
+  adoptExistingPanel,
   createCluster,
   createNode,
   createNodeContainer,
@@ -28,6 +30,8 @@ import {
   deleteCluster,
   deleteNode,
   deleteNodeGroup,
+  generateAgentPairingKey,
+  getAgentRegistration,
   getEnabledImages,
   getNodeContainers,
   getNodeImages,
@@ -38,9 +42,12 @@ import {
   listNodeGroups,
   nodeColdBackup,
   nodeContainerAction,
+  registerAgentController,
+  restartAgentService,
   syncNodeImages,
   updateCluster,
   updateNodeGroup,
+  type AgentRegistration,
   type Cluster,
   type ManualBootstrap,
   type NodeInstallCommand,
@@ -94,8 +101,9 @@ export default function NodeManagement() {
   const [nodes, setNodes] = useState<ManagedNode[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
-  // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址 + agent.json 预置配置手工接入）
-  const [createMode, setCreateMode] = useState<'quick' | 'manual'>('quick')
+  // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址 + agent.json 预置配置手工接入）；
+  // adopt=对接已有面板（被控侧已装好独立面板，凭其生成的对接密钥主动拉取注册）
+  const [createMode, setCreateMode] = useState<'quick' | 'manual' | 'adopt'>('quick')
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
   const [newBindIP, setNewBindIP] = useState('')
@@ -103,6 +111,23 @@ export default function NodeManagement() {
   const [newTLSSkipVerify, setNewTLSSkipVerify] = useState(false)
   const [newAllowPrivate, setNewAllowPrivate] = useState(false)
   const [creating, setCreating] = useState(false)
+  // 对接已有面板：被控面板地址 + 其「节点接入」生成的对接密钥
+  const [adoptURL, setAdoptURL] = useState('')
+  const [adoptKey, setAdoptKey] = useState('')
+  const [adoptAllowPrivate, setAdoptAllowPrivate] = useState(false)
+
+  // 节点接入（本面板作为被控）：注册状态 + 对接密钥管理
+  const [agentReg, setAgentReg] = useState<AgentRegistration | null>(null)
+  const [agentLoading, setAgentLoading] = useState(false)
+  const [generatingKey, setGeneratingKey] = useState(false)
+  const [showAgentToken, setShowAgentToken] = useState(false)
+  const [agentRestarting, setAgentRestarting] = useState(false)
+  // 高级路径：手动填 install key 接入/切换主控（被控侧发起）
+  const [showAgentForm, setShowAgentForm] = useState(false)
+  const [agentControllerInput, setAgentControllerInput] = useState('')
+  const [agentKeyInput, setAgentKeyInput] = useState('')
+  const [agentInsecure, setAgentInsecure] = useState(false)
+  const [savingAgent, setSavingAgent] = useState(false)
   // 一行安装命令（curl | sudo bash）：只展示命令，不展示脚本正文
   const [cmdNode, setCmdNode] = useState<ManagedNode | null>(null)
   const [cmdInfo, setCmdInfo] = useState<NodeInstallCommand | null>(null)
@@ -172,17 +197,42 @@ export default function NodeManagement() {
     }
   }, [])
 
+  // 节点接入：读取本机 agent.json 的注册信息与对接密钥状态（未注册时 Registered=false）。
+  const refreshAgent = useCallback(async () => {
+    setAgentLoading(true)
+    try {
+      const res = await getAgentRegistration()
+      const data: AgentRegistration | undefined = res.data.data
+      if (data) {
+        setAgentReg(data)
+        if (data.registered) {
+          setAgentControllerInput((prev) => prev || data.controller)
+          setAgentInsecure((prev) => prev || data.allow_insecure_http)
+        }
+      }
+    } catch {
+      // 保留上次数据
+    } finally {
+      setAgentLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     refresh()
     refreshGroups()
+    refreshAgent()
     const timer = window.setInterval(refresh, 8000)
     return () => window.clearInterval(timer)
-  }, [refresh, refreshGroups])
+  }, [refresh, refreshGroups, refreshAgent])
 
   const handleCreate = async () => {
     const name = newName.trim()
     const address = newAddress.trim()
     const bindIP = newBindIP.trim()
+    if (createMode === 'adopt') {
+      await handleAdopt()
+      return
+    }
     if (createMode === 'manual') {
       // 手动添加：地址必填（主控要主动连接被控 agent API）
       if (!address) {
@@ -223,6 +273,139 @@ export default function NodeManagement() {
       await alert(t('创建失败'), e?.response?.data?.message || String(e))
     } finally {
       setCreating(false)
+    }
+  }
+
+  // 对接已有面板：主控凭被控面板「节点接入」生成的对接密钥主动拉取注册。
+  const handleAdopt = async () => {
+    const panelURL = adoptURL.trim()
+    const key = adoptKey.trim()
+    if (!/^https?:\/\//i.test(panelURL)) {
+      await alert(t('提示'), t('请填写被控面板地址（以 http:// 或 https:// 开头）'))
+      return
+    }
+    if (!key) {
+      await alert(t('提示'), t('请填写被控面板生成的对接密钥'))
+      return
+    }
+    setCreating(true)
+    try {
+      const res = await adoptExistingPanel({
+        panel_url: panelURL,
+        pairing_key: key,
+        name: newName.trim() || undefined,
+        allow_private: adoptAllowPrivate,
+      })
+      setShowCreate(false)
+      setNewName('')
+      setAdoptURL('')
+      setAdoptKey('')
+      setAdoptAllowPrivate(false)
+      refresh()
+      const node = res.data.data?.node
+      await alert(t('对接成功'), node ? `${t('节点已接入')}：${node.name}（${node.id}）` : t('节点已接入，agent 服务重启后即上线'))
+    } catch (e: any) {
+      await alert(t('对接失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  // 生成/重置对接密钥（一次性、24h 有效）：填到目标主控「对接已有面板」表单即可发起对接。
+  const handleGenPairingKey = async () => {
+    setGeneratingKey(true)
+    try {
+      await generateAgentPairingKey()
+      await refreshAgent()
+    } catch (e: any) {
+      await alert(t('生成失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setGeneratingKey(false)
+    }
+  }
+
+  // 通用剪贴板复制（带降级兼容）。
+  const copyText = async (text: string, msg: string) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      await alert(t('已复制'), msg)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+      await alert(t('已复制'), msg)
+    }
+  }
+
+  // 高级路径：手动填主控地址 + install key，从被控侧发起接入/切换主控。
+  const handleAgentRegister = async () => {
+    const controller = agentControllerInput.trim()
+    const installKey = agentKeyInput.trim()
+    if (!/^https?:\/\//i.test(controller)) {
+      await alert(t('提示'), t('主控地址需以 http:// 或 https:// 开头'))
+      return
+    }
+    if (!installKey) {
+      await alert(t('提示'), t('请填写主控生成的 install key（节点管理 → 添加节点）'))
+      return
+    }
+    const isHTTP = controller.toLowerCase().startsWith('http://')
+    if (isHTTP && !agentInsecure) {
+      await alert(t('提示'), t('主控为明文 http，请先勾选「允许明文 http（不安全）」'))
+      return
+    }
+    setSavingAgent(true)
+    try {
+      await registerAgentController({
+        controller,
+        install_key: installKey,
+        allow_insecure_http: agentInsecure,
+      })
+      setAgentKeyInput('')
+      // 注册落盘后需重启 agent 服务（运行中的进程仍持有旧配置）。
+      setAgentRestarting(true)
+      try {
+        await restartAgentService()
+      } catch {
+        // 面板随 agent 重启短暂不可用属预期，交由下方轮询恢复。
+      }
+      for (let i = 0; i < 15; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        try {
+          const res = await getAgentRegistration()
+          if (res.data.data) {
+            setAgentReg(res.data.data)
+            break
+          }
+        } catch {
+          // 服务重启中，继续等待
+        }
+      }
+      setAgentRestarting(false)
+      await alert(t('完成'), t('已接入主控，agent 服务已重启'))
+    } catch (e: any) {
+      setAgentRestarting(false)
+      await alert(t('接入失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setSavingAgent(false)
+    }
+  }
+
+  // 重启 agent 服务（切换主控后生效）。
+  const handleAgentRestart = async () => {
+    setAgentRestarting(true)
+    try {
+      await restartAgentService()
+      await new Promise((resolve) => setTimeout(resolve, 4000))
+      await refreshAgent()
+      await alert(t('完成'), t('重启指令已下发，服务约 3-5 秒后恢复'))
+    } catch (e: any) {
+      await alert(t('重启失败'), e?.response?.data?.message || t('请手动执行 systemctl restart eyvescloud-agent'))
+    } finally {
+      setAgentRestarting(false)
     }
   }
 
@@ -741,6 +924,212 @@ export default function NodeManagement() {
         </div>
       )}
 
+      {/* 节点接入：本面板作为被控的注册状态与对接密钥（全新安装自带主控+被控） */}
+      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <Link2 className="h-4 w-4 shrink-0 text-gray-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-black dark:text-white">{t('节点接入（本面板作为被控）')}</h2>
+              <p className="text-xs text-gray-400">
+                {t('全新安装即自带主控+被控；若想把本面板接入其他主控，在目标主控「添加节点 → 对接已有面板」中填入以下信息')}
+              </p>
+            </div>
+          </div>
+          <button
+            onClick={() => refreshAgent()}
+            disabled={agentLoading}
+            className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${agentLoading ? 'animate-spin' : ''}`} />
+            {t('刷新')}
+          </button>
+        </div>
+        <div className="space-y-4 px-4 py-4">
+          {/* 本面板地址（对接表单直接填它） */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="text-gray-500">{t('本面板地址')}：</span>
+            <code className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700 dark:bg-gray-800 dark:text-gray-300">
+              {window.location.origin}
+            </code>
+            <button
+              type="button"
+              onClick={() => copyText(window.location.origin, t('面板地址已复制，填到目标主控「对接已有面板」表单'))}
+              className="flex items-center gap-1 rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+            >
+              <Copy className="h-3 w-3" />{t('复制')}
+            </button>
+          </div>
+
+          {/* 当前接入的主控 */}
+          {agentReg?.registered ? (
+            <div className="space-y-2 rounded-md border border-gray-200 px-3 py-2.5 text-xs dark:border-gray-700">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-500">{t('当前接入主控')}：</span>
+                <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.controller}</code>
+                {agentReg.allow_insecure_http && (
+                  <span className="text-amber-600 dark:text-amber-400">（{t('明文 http，不安全')}）</span>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-500">{t('节点名称')}：</span>
+                <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.name || '-'}</code>
+                <span className="text-gray-500">{t('节点 ID')}：</span>
+                <code className="rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">{agentReg.node_id}</code>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-gray-500">{t('节点 token')}：</span>
+                <code className="max-w-full break-all rounded bg-gray-100 px-1.5 py-0.5 dark:bg-gray-800">
+                  {showAgentToken ? agentReg.token : `${agentReg.token.slice(0, 6)}${'•'.repeat(18)}`}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => setShowAgentToken((v) => !v)}
+                  className="rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  {showAgentToken ? t('隐藏') : t('显示')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => copyText(agentReg.token, t('节点 token 已复制'))}
+                  className="flex items-center gap-1 rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  <Copy className="h-3 w-3" />{t('复制')}
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  disabled={agentRestarting}
+                  onClick={() => { void handleAgentRestart() }}
+                  className="rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                >
+                  <RefreshCw className={`mr-1 inline h-3 w-3 ${agentRestarting ? 'animate-spin' : ''}`} />
+                  {agentRestarting ? t('重启中...') : t('重启 agent 服务')}
+                </button>
+                <span className="text-gray-400">{t('注册信息变更（切换主控）后需重启生效。')}</span>
+              </div>
+            </div>
+          ) : (
+            <p className="rounded-md bg-gray-50 px-3 py-2 text-xs text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+              {t('当前未接入任何主控（独立运行模式）；本机容器数据不受接入主控影响。')}
+            </p>
+          )}
+
+          {/* 对接密钥 */}
+          <div className="rounded-md border border-gray-200 px-3 py-2.5 dark:border-gray-700">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs">
+                <KeyRound className="h-3.5 w-3.5 text-gray-400" />
+                <span className="font-medium text-gray-700 dark:text-gray-200">{t('对接密钥')}</span>
+                {agentReg?.pairing_key_valid ? (
+                  <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300">
+                    {t('有效')}
+                  </span>
+                ) : (
+                  <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                    {t('未生成 / 已过期')}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => { void handleGenPairingKey() }}
+                disabled={generatingKey}
+                className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+              >
+                {generatingKey ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <KeyRound className="h-3.5 w-3.5" />}
+                {agentReg?.pairing_key_valid ? t('重置密钥') : t('生成密钥')}
+              </button>
+            </div>
+            {agentReg?.pairing_key_valid && agentReg.pairing_key ? (
+              <div className="mt-2.5 space-y-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <code className="max-w-full break-all rounded bg-gray-950 px-2 py-1 font-mono text-[11px] text-gray-100">
+                    {agentReg.pairing_key}
+                  </code>
+                  <button
+                    type="button"
+                    onClick={() => copyText(agentReg.pairing_key, t('对接密钥已复制，填到目标主控「对接已有面板」表单'))}
+                    className="flex items-center gap-1 rounded border border-gray-200 px-2 py-0.5 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                  >
+                    <Copy className="h-3 w-3" />{t('复制')}
+                  </button>
+                </div>
+                <p className="text-gray-400">
+                  {t('有效期至')}：{agentReg.pairing_key_expiry}（{t('一次性，对接成功后作废')}）
+                </p>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-gray-400">
+                {t('生成后填到目标主控「添加节点 → 对接已有面板」表单即可发起对接（24 小时内有效，一次性）。')}
+              </p>
+            )}
+          </div>
+
+          {/* 高级：手动接入/切换主控（被控侧填主控 install key） */}
+          <details className="group rounded-md border border-gray-200 dark:border-gray-700">
+            <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-gray-600 hover:text-gray-800 dark:text-gray-300 dark:hover:text-gray-100">
+              {t('高级：从本面板发起接入 / 切换主控（手动填 install key）')}
+            </summary>
+            <div className="space-y-3 border-t border-gray-100 px-3 py-3 dark:border-gray-700">
+              <p className="text-xs text-gray-400">
+                {t('在目标主控「添加节点」中生成 install key，填入后由本面板主动注册到该主控；与上方对接密钥方向相反。')}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('主控地址')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={agentControllerInput}
+                    onChange={(e) => {
+                      setAgentControllerInput(e.target.value.trim())
+                      if (e.target.value.trim().toLowerCase().startsWith('http://')) setAgentInsecure(true)
+                    }}
+                    placeholder={t('例如：https://master.example.com:8999')}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-gray-700 dark:text-gray-300">{t('install key（目标主控生成，一次性）')}</label>
+                  <input
+                    type="text"
+                    className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                    value={agentKeyInput}
+                    onChange={(e) => setAgentKeyInput(e.target.value.trim())
+                    }
+                    placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                  />
+                </div>
+              </div>
+              <label className="flex cursor-pointer items-start gap-2.5">
+                <input
+                  type="checkbox"
+                  checked={agentInsecure}
+                  onChange={(e) => setAgentInsecure(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-950"
+                />
+                <span className="text-xs text-gray-600 dark:text-gray-300">
+                  {t('允许明文 http（不安全）')}
+                  <span className="block text-gray-400">{t('目标主控未启用 TLS 时勾选；节点 token 将明文传输。')}</span>
+                </span>
+              </label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => { void handleAgentRegister() }}
+                  disabled={savingAgent || agentRestarting}
+                  className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+                >
+                  {(savingAgent || agentRestarting) && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {agentRestarting ? t('重启中...') : t('接入并切换')}
+                </button>
+              </div>
+            </div>
+          </details>
+        </div>
+      </div>
+
       {/* 节点分组 */}
       <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
@@ -878,7 +1267,7 @@ export default function NodeManagement() {
         )}
       </div>
 
-      {/* 添加节点：一键添加 / 手动添加 */}
+      {/* 添加节点：一键添加 / 手动添加 / 对接已有面板 */}
       {showCreate && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
           <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
@@ -890,8 +1279,8 @@ export default function NodeManagement() {
             </div>
 
             {/* 模式切换：下划线 tab */}
-            <div className="flex gap-6 border-b border-gray-200 px-5 dark:border-gray-700">
-              {([['quick', t('一键添加')], ['manual', t('手动添加')]] as const).map(([mode, label]) => (
+            <div className="flex gap-5 border-b border-gray-200 px-5 dark:border-gray-700">
+              {([['quick', t('一键添加')], ['manual', t('手动添加')], ['adopt', t('对接已有面板')]] as const).map(([mode, label]) => (
                 <button
                   key={mode}
                   type="button"
@@ -917,6 +1306,53 @@ export default function NodeManagement() {
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
+
+              {createMode === 'adopt' && (
+                <>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-gray-500">
+                      {t('被控面板地址')}<span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={adoptURL}
+                      onChange={(e) => setAdoptURL(e.target.value)}
+                      placeholder="http://1.2.3.4:8999"
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    />
+                    <p className="mt-1.5 text-xs text-gray-400">
+                      {t('对方机器已用本项目装好独立面板（自带主控+被控）时，填其面板地址')}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs text-gray-500">
+                      {t('对接密钥')}<span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      value={adoptKey}
+                      onChange={(e) => setAdoptKey(e.target.value)}
+                      placeholder={t('被控面板「节点管理 → 节点接入」中生成')}
+                      className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                    />
+                    <p className="mt-1.5 text-xs text-gray-400">
+                      {t('在被控面板的「节点管理 → 节点接入」区块点击「生成密钥」，把密钥填到这里')}
+                    </p>
+                  </div>
+                  <label className="flex cursor-pointer items-start gap-2.5">
+                    <input
+                      type="checkbox"
+                      checked={adoptAllowPrivate}
+                      onChange={(e) => setAdoptAllowPrivate(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-600 dark:bg-gray-950"
+                    />
+                    <span className="text-xs text-gray-600 dark:text-gray-300">
+                      {t('允许内网 / 环回地址')}
+                      <span className="block text-gray-400">
+                        {t('主控与被控同内网部署时勾选（SSRF 防护豁免，记入审计）；链路本地 / 云元数据地址始终拒绝')}
+                      </span>
+                    </span>
+                  </label>
+                </>
+              )}
 
               {createMode === 'manual' && (
                 <>
@@ -999,9 +1435,13 @@ export default function NodeManagement() {
                 <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
                   {t('创建后将生成一行安装命令，在被控服务器上以 root 执行即可自动安装并接入主控。')}
                 </p>
-              ) : (
+              ) : createMode === 'manual' ? (
                 <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
                   {t('适合无法出网拉取安装脚本的机器：创建后将生成 agent.json 预置配置，手工部署到被控服务器即可接入（无需安装密钥）。')}
+                </p>
+              ) : (
+                <p className="rounded-md bg-brand-50 px-3 py-2 text-xs text-brand-700 dark:bg-brand-950/50 dark:text-brand-300">
+                  {t('适合已装好本面板的机器：主控将凭对接密钥主动拉取注册，被控侧自动写入配置并重启 agent 服务，无需在被控机执行任何命令。')}
                 </p>
               )}
             </div>
@@ -1018,7 +1458,7 @@ export default function NodeManagement() {
                 className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {creating && <Loader2 className="h-4 w-4 animate-spin" />}
-                {createMode === 'quick' ? t('生成安装命令') : t('创建')}
+                {createMode === 'quick' ? t('生成安装命令') : createMode === 'adopt' ? t('发起对接') : t('创建')}
               </button>
             </div>
           </div>

@@ -1452,6 +1452,11 @@ type EyvescloudConfig struct {
 	PolicyRules          []PolicyRule           `json:"policy_rules"`
 	PolicyHistory        []PolicyTriggerRecord  `json:"policy_history"`
 	Nodes                []Node                 `json:"nodes,omitempty"`
+	// AgentPairingKey 是本面板作为被控时的「对接密钥」：一次性、24h 有效，
+	// 由管理员在「节点管理 → 节点接入」生成，填到目标主控的「对接已有面板」
+	// 表单中，主控凭它调用本面板完成注册对接（方向与 install key 相反）。
+	AgentPairingKey        string `json:"agent_pairing_key,omitempty"`
+	AgentPairingKeyExpiry string `json:"agent_pairing_key_expiry,omitempty"`
 	Regions              []Region               `json:"regions,omitempty"`
 	NodeGroups           []NodeGroup            `json:"node_groups,omitempty"`
 	Clusters             []Cluster              `json:"clusters,omitempty"`
@@ -1790,6 +1795,10 @@ func InitConfig() (*EyvescloudConfig, error) {
 	jwtSecret := generateRandomString(32)
 	// 管理员入口默认随机化（/admin- + 12 位字母数字），避免被枚举。
 	adminPath := GenerateRandomAdminPath()
+	// 首装即自带「节点对接密钥」（一次性、24h 有效）：主控+被控开箱模式下，
+	// 安装脚本可直接把地址+密钥展示给运维，免去登录面板手动生成一步。
+	pairingKey := generateRandomString(64)
+	pairingKeyExpiry := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
 	hash, err := bcrypt.GenerateFromPassword([]byte(adminPass), bcrypt.DefaultCost)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash password: %v", err)
@@ -1848,6 +1857,8 @@ func InitConfig() (*EyvescloudConfig, error) {
 		},
 		NATSubnetOversubscription: false,
 		DiskOvercommitRatio:       1.0,
+		AgentPairingKey:        pairingKey,
+		AgentPairingKeyExpiry: pairingKeyExpiry,
 	}
 
 	if err := SaveConfig(); err != nil {
@@ -1859,8 +1870,8 @@ func InitConfig() (*EyvescloudConfig, error) {
 	// 手动查看并立即删除。
 	firstBootCreds := filepath.Join(dataDir, FirstBootCredsFile)
 	if err := os.WriteFile(firstBootCreds, []byte(fmt.Sprintf(
-		"# EyvesCloud initial admin credentials - DELETE after first login\nUsername: %s\nPassword: %s\nAdmin login path: %s\nChangedAt: \n",
-		adminUser, adminPass, adminPath)), 0600); err == nil {
+		"# EyvesCloud initial admin credentials - DELETE after first login\nUsername: %s\nPassword: %s\nAdmin login path: %s\nChangedAt: \n\n# Node pairing key (adopt this panel as an agent node; one-time, valid 24h)\nNode pairing key: %s\nNode pairing key expiry: %s\n",
+		adminUser, adminPass, adminPath, pairingKey, pairingKeyExpiry)), 0600); err == nil {
 		// 目录已经是 0700；额外 chmod 一道以防 umask 意外放开。
 		_ = os.Chmod(firstBootCreds, 0600)
 		fmt.Println("\n========================================")

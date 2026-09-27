@@ -2452,13 +2452,14 @@ menu() {
     echo "  4) 重启面板服务"
     echo "  5) 查看面板服务状态"
     echo "  6) 查看面板运行日志"
+    echo "  7) 查看节点对接信息（接入其他主控）"
     echo "  0) 退出"
     echo "====================================="
 }
 
 while true; do
     menu
-    printf "请选择 [0-6]: "
+    printf "请选择 [0-7]: "
     read -r choice || exit 0
     case "$choice" in
         1) "$BIN" account show ;;
@@ -2479,6 +2480,7 @@ while true; do
         4) svc_restart ;;
         5) svc_status ;;
         6) svc_logs ;;
+        7) "$BIN" node-link ;;
         0|q|Q) exit 0 ;;
         *) echo "无效选择：$choice" ;;
     esac
@@ -2520,6 +2522,18 @@ print_summary() {
         echo "$(tr_msg "  服务器已有 /root/.eyvescloud/config.db，初始凭据文件不存在。")"
         echo "$(tr_msg "  管理员密码使用 bcrypt 存储，无法反查；请使用面板内修改密码或重置配置。")"
     fi
+
+    # 主控+被控（或纯被控）模式：展示节点对接信息。
+    # 全新安装自带主控+被控（被控即本机）；若想接入其他主控，把下面输出的
+    # 面板地址与对接密钥填到目标主控「节点管理 → 添加节点 → 对接已有面板」即可。
+    case "$install_mode" in
+        controller-agent|agent|"")
+            if [ -x /usr/local/bin/eyvescloud ]; then
+                echo ""
+                /usr/local/bin/eyvescloud node-link 2>/dev/null || true
+            fi
+            ;;
+    esac
 }
 
 run_step "兼容性检查" check_os_compatibility

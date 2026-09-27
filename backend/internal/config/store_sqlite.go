@@ -743,6 +743,7 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		LoginFooterHidden:    atob(meta["login_footer_hidden"]),
 		PanelDomain:          meta["panel_domain"],
 		TurnstileSiteKey:     meta["turnstile_site_key"],
+		TurnstileSecretKey:   meta["turnstile_secret_key"],
 		TurnstileAdminLogin:  atob(meta["turnstile_admin_login"]),
 		TurnstileUserLogin:   atob(meta["turnstile_user_login"]),
 		MetricRetentionDays:  atoi(meta["metric_retention_days"]),
@@ -751,6 +752,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		MemoryOvercommitRatio:   atof(meta["memory_overcommit_ratio"]),
 		NATSubnetOversubscription: atob(meta["nat_subnet_oversubscription"]),
 		DiskOvercommitRatio:       atof(meta["disk_overcommit_ratio"]),
+		// 节点对接密钥（本面板作为被控）：密文落库，读取后下方统一解密。
+		AgentPairingKey:        meta["agent_pairing_key"],
+		AgentPairingKeyExpiry: meta["agent_pairing_key_expiry"],
 	}
 	if raw := strings.TrimSpace(meta["ksm_tuning"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.KSMTuning)
@@ -862,6 +866,18 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 			cfg.TurnstileUserLogin = false
 		} else {
 			cfg.TurnstileSecretKey = plainTS
+		}
+	}
+
+	// 节点对接密钥解密（与节点 Token 同级敏感：enc:v1 密文落库，内存态明文）。
+	// 存量明文原样通过；解密失败置空（重新生成即可，不影响已对接节点）。
+	if raw := strings.TrimSpace(cfg.AgentPairingKey); raw != "" {
+		plainPK, err := DecryptNodeToken(raw)
+		if err != nil {
+			cfg.AgentPairingKey = ""
+			cfg.AgentPairingKeyExpiry = ""
+		} else {
+			cfg.AgentPairingKey = plainPK
 		}
 	}
 
@@ -1017,6 +1033,15 @@ func saveMeta(tx *sql.Tx) error {
 		}
 		turnstileSecret = encTS
 	}
+	// 节点对接密钥同上：一次性、24h TTL，密文落库减小泄露窗口。
+	agentPairingKey := AppConfig.AgentPairingKey
+	if agentPairingKey != "" {
+		encPK, err := EncryptNodeToken(agentPairingKey)
+		if err != nil {
+			return fmt.Errorf("加密 Agent PairingKey 失败: %w", err)
+		}
+		agentPairingKey = encPK
+	}
 	values := map[string]string{
 		"admin_user":             AppConfig.AdminUser,
 		"admin_pass_hash":        AppConfig.AdminPassHash,
@@ -1049,6 +1074,8 @@ func saveMeta(tx *sql.Tx) error {
 		"turnstile_secret_key":   turnstileSecret,
 		"turnstile_admin_login":  btoa(AppConfig.TurnstileAdminLogin),
 		"turnstile_user_login":   btoa(AppConfig.TurnstileUserLogin),
+		"agent_pairing_key":      agentPairingKey,
+		"agent_pairing_key_expiry": AppConfig.AgentPairingKeyExpiry,
 		"ssl":                    string(sslJSON),
 		"ssl_certificates":       string(sslCertificatesJSON),
 		"public_ipv4_pool":       string(publicIPv4PoolJSON),

@@ -914,10 +914,16 @@ export interface AgentRegistration {
   name: string
   address: string
   allow_insecure_http: boolean
+  pairing_key: string
+  pairing_key_expiry: string
+  pairing_key_valid: boolean
 }
 
 export const getAgentRegistration = () =>
   api.get<APIResponse<AgentRegistration>>('/agent/status')
+
+export const generateAgentPairingKey = () =>
+  api.post<APIResponse<{ pairing_key: string; expiry: string }>>('/agent/pairing-key')
 
 export const registerAgentController = (data: {
   controller: string
@@ -930,6 +936,15 @@ export const registerAgentController = (data: {
 
 export const restartAgentService = () =>
   api.post<APIResponse<{ restart_initiated: boolean }>>('/agent/restart')
+
+// 主控侧「对接已有面板」：凭被控面板生成的对接密钥主动拉取注册。
+export const adoptExistingPanel = (data: {
+  panel_url: string
+  pairing_key: string
+  name?: string
+  allow_private: boolean
+}) =>
+  api.post<APIResponse<{ node: { id: string; name: string } }>>('/nodes/adopt', data)
 
 // Cloudflare Turnstile 人机验证
 export interface TurnstilePublicConfig {

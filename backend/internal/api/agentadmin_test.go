@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 
@@ -205,5 +207,129 @@ func TestAgentRegisterValidatesInput(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("%s: status = %d, want 400", tc.name, rec.Code)
 		}
+	}
+}
+
+// TestNodeAdoptEndToEnd 端到端「对接已有面板」全链路（两侧 handler 均为真实实现）：
+// 主控 handleNodeAdopt → 被控面板 HandleAgentRegister（校验一次性对接密钥）→
+// 回连主控 handleNodeRegister（install key 换 node token）→ agent.json 落盘、
+// 对接密钥即焚、install key 一次性清空、节点自动上线；重放同一密钥被拒绝。
+func TestNodeAdoptEndToEnd(t *testing.T) {
+	agentAdminTestConfig(t)
+	// 模拟全新安装：临时数据目录 + 首启 InitConfig（自动生成管理员凭据与
+	// 24h 一次性对接密钥，即安装脚本 node-link 展示的那把）。
+	dir := t.TempDir()
+	t.Setenv("EYVESCLOUD_DATA_DIR", dir)
+	config.SetConfigPath(filepath.Join(dir, "config.json"))
+	cfg, err := config.InitConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		config.CloseConfigDB()
+		if home, herr := os.UserHomeDir(); herr == nil {
+			config.SetConfigPath(filepath.Join(home, ".eyvescloud", "config.json"))
+		}
+	})
+
+	// 被控面板：真实 HandleAgentRegister（凭一次性对接密钥接受注册）。
+	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/agent/register" {
+			HandleAgentRegister(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(agentSrv.Close)
+
+	// 主控面板：真实 handleNodeRegister（install_key → node token 的一次性兑换）。
+	controllerSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/nodes/register" {
+			handleNodeRegister(w, r)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(controllerSrv.Close)
+
+	// 首启生成的对接密钥即「节点管理 → 节点接入」展示的那把（64 位、24h 有效）。
+	pairingKey := cfg.AgentPairingKey
+	if len(pairingKey) != 64 {
+		t.Fatalf("first boot should generate a 64-char pairing key, got %d chars: %q", len(pairingKey), pairingKey)
+	}
+
+	adoptBody, _ := json.Marshal(map[string]interface{}{
+		"panel_url":     agentSrv.URL,
+		"pairing_key":   pairingKey,
+		"name":          "被控A",
+		"allow_private": true, // httptest 环回地址需 SSRF 豁免
+	})
+	rec := httptest.NewRecorder()
+	req := asAdminRequest(httptest.NewRequest(http.MethodPost, controllerSrv.URL+"/api/nodes/adopt", bytes.NewReader(adoptBody)))
+	handleNodeAdopt(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("adopt status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Node struct {
+				ID     string `json:"id"`
+				Name   string `json:"name"`
+				Status string `json:"status"`
+			} `json:"node"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.Success || resp.Data.Node.ID == "" {
+		t.Fatalf("adopt not successful: %+v; body=%s", resp, rec.Body.String())
+	}
+	if resp.Data.Node.Status != "online" {
+		t.Fatalf("node status = %q, want online (register marks it online before adopt replies)", resp.Data.Node.Status)
+	}
+
+	// 被控侧：agent.json 落盘且指向主控（node_id/token 与主控一致）。
+	ac := config.LoadAgentConfig()
+	if ac == nil {
+		t.Fatal("agent.json not written")
+	}
+	if ac.Controller != controllerSrv.URL || ac.NodeID != resp.Data.Node.ID || ac.Token == "" || ac.Name != "被控A" {
+		t.Fatalf("unexpected agent.json: %+v (want controller=%s node=%s)", ac, controllerSrv.URL, resp.Data.Node.ID)
+	}
+	if !ac.AllowInsecureHTTP {
+		t.Fatal("allow_insecure_http should persist for http controller")
+	}
+
+	// 主控侧：install key 已一次性清空；节点 token 与被控持有一致。
+	node, ok := config.FindNode(resp.Data.Node.ID)
+	if !ok {
+		t.Fatalf("controller node %s missing after adopt", resp.Data.Node.ID)
+	}
+	if node.Token != ac.Token {
+		t.Fatalf("controller token %q != agent token %q", node.Token, ac.Token)
+	}
+	if node.InstallKey != "" {
+		t.Fatalf("install key must be cleared after one-time use, got %q", node.InstallKey)
+	}
+
+	// 对接密钥一次性：成功对接后即焚毁，重放同一密钥被被控面板拒绝且回滚节点。
+	if _, valid := agentPairingKeyValid(); valid {
+		t.Fatal("pairing key must be consumed after successful adopt")
+	}
+	config.AppConfigMu.RLock()
+	before := len(config.AppConfig.Nodes)
+	config.AppConfigMu.RUnlock()
+	rec2 := httptest.NewRecorder()
+	handleNodeAdopt(rec2, asAdminRequest(httptest.NewRequest(http.MethodPost, controllerSrv.URL+"/api/nodes/adopt", bytes.NewReader(adoptBody))))
+	if rec2.Code == http.StatusOK {
+		t.Fatalf("replayed adopt must fail, got 200: %s", rec2.Body.String())
+	}
+	config.AppConfigMu.RLock()
+	after := len(config.AppConfig.Nodes)
+	config.AppConfigMu.RUnlock()
+	if after != before {
+		t.Fatalf("failed adopt must roll back node creation: %d nodes before replay, %d after", before, after)
 	}
 }

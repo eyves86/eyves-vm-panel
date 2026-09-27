@@ -74,6 +74,9 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case rest == "" && nodeID == "register" && r.Method == http.MethodPost:
 		handleNodeRegister(w, r)
+	case rest == "" && nodeID == "adopt" && r.Method == http.MethodPost:
+		// 对接已有面板：管理员提供被控面板地址 + 对接密钥，主控主动拉取注册。
+		AdminMiddleware(handleNodeAdopt)(w, r)
 	case rest == "":
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeItem(w, r, nodeID) })(w, r)
 	case rest == "heartbeat":
@@ -439,6 +442,102 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 		"install_key_ttl":   "24h",
 		"install_key_bound": bindIP,
 	}})
+}
+
+// handleNodeAdopt 对接已有面板（POST /api/nodes/adopt）：适用于被控机上已用通用
+// 安装脚本装好独立面板的场景。管理员提供被控面板地址 + 该面板「节点接入」生成的
+// 对接密钥；主控创建节点后凭密钥调用被控 /api/agent/register，被控保存 agent.json
+// 并自动重启 agent 服务、回连主控完成注册（与 install key 的方向相反：密钥由被控签发）。
+func handleNodeAdopt(w http.ResponseWriter, r *http.Request) {
+	if !requireScope(w, r, "node:write") {
+		return
+	}
+	var req struct {
+		PanelURL     string `json:"panel_url"`
+		PairingKey   string `json:"pairing_key"`
+		Name         string `json:"name"`
+		AllowPrivate bool   `json:"allow_private"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
+		return
+	}
+	panelURL := normalizeNodeAddress(req.PanelURL)
+	if panelURL == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "请填写被控面板地址（http://IP:端口）"})
+		return
+	}
+	// 主控会主动连接被控面板（对接调用），执行与手动添加一致的 SSRF 检查。
+	if err := validateNodeAddress(panelURL, req.AllowPrivate); err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	pairingKey := strings.TrimSpace(req.PairingKey)
+	if pairingKey == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "请填写被控面板生成的对接密钥（其「节点管理 → 节点接入」中生成）"})
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = "node-" + randomNodeSecret(4)
+	}
+	node := config.Node{
+		ID:                  newNodeID(),
+		Name:                name,
+		Address:             panelURL,
+		Token:               randomNodeSecret(32),
+		InstallKey:          randomNodeSecret(32),
+		InstallKeyCreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Status:              "pending",
+		CreatedAt:           time.Now().Format("2006-01-02 15:04:05"),
+		AllowPrivateAddr:    req.AllowPrivate,
+	}
+	if err := config.AddNode(node); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	auditRequest(r, "node.adopt", node.Name, "对接已有面板 "+panelURL+"（内网豁免: "+boolLabel(req.AllowPrivate)+"）", true, "")
+
+	// 主控对外地址（优先面板绑定域名）；本主控走明文 http 时告知被控豁免（与安装命令一致）。
+	controllerURL := externalBaseURL(r)
+	allowInsecure := strings.HasPrefix(strings.ToLower(controllerURL), "http://")
+	payload, _ := json.Marshal(map[string]any{
+		"controller":          controllerURL,
+		"install_key":        node.InstallKey,
+		"pairing_key":        pairingKey,
+		"name":               name,
+		"address":            panelURL,
+		"allow_insecure_http": allowInsecure,
+	})
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Post(strings.TrimSuffix(panelURL, "/")+"/api/agent/register", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		config.RemoveNode(node.ID)
+		auditRequest(r, "node.adopt", node.Name, "对接调用失败", false, err.Error())
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "连接被控面板失败: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		config.RemoveNode(node.ID)
+		jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "解析被控面板响应失败: " + err.Error()})
+		return
+	}
+	if !out.Success {
+		// 被控侧拒绝（密钥无效/过期等）：回滚本次创建的节点。
+		config.RemoveNode(node.ID)
+		auditRequest(r, "node.adopt", node.Name, "被控面板拒绝对接", false, out.Message)
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "对接失败: " + out.Message})
+		return
+	}
+	if n, ok := config.FindNode(node.ID); ok {
+		node = n
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "对接成功，节点已接入（agent 服务重启后即上线）", Data: map[string]any{"node": sanitizeNode(node)}})
 }
 
 // tlsVerifyLabel / boolLabel 审计日志友好输出。
