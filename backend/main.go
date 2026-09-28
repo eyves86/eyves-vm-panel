@@ -24,6 +24,17 @@ import (
 var shutdownCaptureOnce sync.Once
 
 func main() {
+	// 版本查询：`eyvescloud --version | -v | version`。
+	// 必须**早于配置初始化**：否则在全新机器上仅查询版本就会触发首启流程
+	// （生成 config.db、管理员账号与首启凭据文件），在只读文件系统上还会直接报错。
+	// 安装脚本用该输出做已装版本检测（形如 "EyvesCloud 2.2.3"），因此输出保持单行。
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-v" || arg == "version" {
+			fmt.Println("EyvesCloud " + version.Current())
+			return
+		}
+	}
+
 	isTerminal := term.IsTerminal(int(os.Stdin.Fd()))
 
 	isServerMode := false
@@ -49,7 +60,7 @@ func main() {
 		}
 	}
 
-	// Initialize config
+	// 初始化配置
 	cfg, err := config.InitConfig()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to initialize config: %v\n", err)
@@ -83,15 +94,6 @@ func main() {
 			os.Exit(1)
 		}
 		return
-	}
-
-	// 版本查询：`eyvescloud --version | -v | version`。必须早于配置初始化，
-	// 以便在只读/最小化环境中也能安全打印版本（也用于被控安装脚本的完整性校验）。
-	for _, arg := range os.Args[1:] {
-		if arg == "--version" || arg == "-v" || arg == "version" {
-			fmt.Println("EyvesCloud " + version.Current())
-			return
-		}
 	}
 
 	// 被控节点 agent 模式：注册到主控 + 心跳 + 本地面板
