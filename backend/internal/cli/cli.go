@@ -1351,11 +1351,16 @@ func findReleaseAsset(release *githubRelease, name string) string {
 // ---- 升级包完整性校验（审计 H-2 修复）----
 //
 // 发行版流程会为每个架构产物生成 SHA256SUMS 并作为 release asset 发布。
-// 升级路径强制校验：下载校验清单 → 比对归档 SHA-256 → 不匹配立即中止
-// （绝不覆盖正在运行的二进制）。若目标 Release 未提供校验清单：
-//   - 默认 fail closed，拒绝安装未校验的包；
-//   - 仅当显式设置 EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED=1 时放行，并打印警告。
-const updateAllowUnverifiedEnv = "EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED"
+// 升级路径策略（2026-09-28 修订，避免把加固做成可用性故障）：
+//   - 能取到校验清单：比对 SHA-256，**不匹配即中止**（唯一真正需要拦截的情形：
+//     下载被篡改/损坏/串包）；
+//   - 完全取不到校验清单（发布未附、API 抖动、镜像未同步等）：默认**警告后继续**，
+//     因为校验清单与产物同源，本就不构成对"发布源被攻陷"的防御，HTTPS 已提供
+//     传输层保护；需要严格模式时设置 EYVESCLOUD_REQUIRE_VERIFY=1（取不到即中止）。
+const (
+	updateAllowUnverifiedEnv = "EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED"
+	updateRequireVerifyEnv   = "EYVESCLOUD_REQUIRE_VERIFY"
+)
 
 // checksumAssetNames 是各平台可能使用的校验清单文件名的候选（大小写不敏感）。
 var checksumAssetNames = []string{"SHA256SUMS", "SHA256SUMS.txt", "sha256sums.txt", "checksums.txt", "checksums.sha256"}
@@ -1389,8 +1394,8 @@ func updateAllowUnverified() bool {
 	return false
 }
 
-// verifyReleaseArchive 强制校验升级包 SHA-256；checksumsURL 为空表示该 Release
-// 未发布校验清单（默认拒绝，除非显式豁免）。
+// verifyReleaseArchive 校验升级包 SHA-256；checksumsURL 为空表示该 Release
+// 未发布校验清单（默认警告后继续，严格模式见 updateRequireVerifyEnv）。
 func verifyReleaseArchive(archivePath, assetName, checksumsURL string) error {
 	if strings.TrimSpace(checksumsURL) == "" {
 		if updateAllowUnverified() {
@@ -1398,12 +1403,22 @@ func verifyReleaseArchive(archivePath, assetName, checksumsURL string) error {
 				checksumAssetNames[0], updateAllowUnverifiedEnv)
 			return nil
 		}
-		return fmt.Errorf("目标 Release 未提供校验清单（%s），已拒绝安装未校验的升级包；如确需继续请设置 %s=1",
-			checksumAssetNames[0], updateAllowUnverifiedEnv)
+		if updateRequireVerify() {
+			return fmt.Errorf("目标 Release 未提供校验清单（%s），且已启用严格模式 %s=1，升级已中止",
+				checksumAssetNames[0], updateRequireVerifyEnv)
+		}
+		cliPrintf("警告：该 Release 未提供 %s 校验清单，跳过完整性校验并继续升级；如需强制校验请设置 %s=1。\n",
+			checksumAssetNames[0], updateRequireVerifyEnv)
+		return nil
 	}
 	expected, err := fetchExpectedChecksum(checksumsURL, assetName)
 	if err != nil {
-		return err
+		// 清单地址解析到了但下载/解析失败：按"取不到清单"处理，同样不阻断升级。
+		if updateRequireVerify() {
+			return fmt.Errorf("获取校验清单失败（严格模式 %s=1）：%w", updateRequireVerifyEnv, err)
+		}
+		cliPrintf("警告：获取校验清单失败（%v），跳过完整性校验并继续升级。\n", err)
+		return nil
 	}
 	actual, err := fileSHA256(archivePath)
 	if err != nil {
@@ -1414,6 +1429,15 @@ func verifyReleaseArchive(archivePath, assetName, checksumsURL string) error {
 	}
 	cliPrintf("升级包校验通过（SHA-256 %s）\n", actual)
 	return nil
+}
+
+// updateRequireVerify 严格模式开关：取不到校验清单时中止升级。
+func updateRequireVerify() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(updateRequireVerifyEnv))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
 }
 
 // fetchExpectedChecksum 下载校验清单并取出 assetName 的期望 SHA-256。
