@@ -2,6 +2,7 @@ package api
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -525,6 +526,7 @@ func HandleSubUserLogin(w http.ResponseWriter, r *http.Request) {
 				tokenStr := newSubUserTokenWithRole(su.Username, containerUUIDs, su.Role, time.Now().Add(24*time.Hour), su.TokenVersion)
 				config.AddLoginLog(su.Username, ip, clientUA, true)
 
+				setSessionCookie(w, r, tokenStr)
 				jsonResponse(w, http.StatusOK, APIResponse{
 					Success: true,
 					Data: map[string]interface{}{
@@ -583,37 +585,45 @@ func HandleSubUserAccessCode(w http.ResponseWriter, r *http.Request) {
 	config.AppConfigMu.RLock()
 	subUsers := append([]config.SubUser(nil), config.AppConfig.SubUsers...)
 	config.AppConfigMu.RUnlock()
-	for _, su := range subUsers {
-		if su.AccessCode == req.Code {
-			if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte(req.Password)); err != nil {
-				loginLimiter.recordFail(rateKey)
-				config.AddLoginLog(su.Username, ip, clientUA, false)
-				jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid password"})
-				return
-			}
-
-			containerUUIDs := activeSubUserContainerUUIDs(&su)
-			if len(containerUUIDs) == 0 {
-				loginLimiter.recordFail(rateKey)
-				config.AddLoginLog(su.Username, ip, clientUA, false)
-				jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "No active container is assigned to this link"})
-				return
-			}
-			loginLimiter.reset(rateKey)
-			tokenStr := newSubUserTokenWithRole(su.Username, containerUUIDs, su.Role, time.Now().Add(24*time.Hour), su.TokenVersion)
-			config.AddLoginLog(su.Username, ip, clientUA, true)
-
-			jsonResponse(w, http.StatusOK, APIResponse{
-				Success: true,
-				Data: map[string]interface{}{
-					"token":           tokenStr,
-					"username":        su.Username,
-					"role":            subUserRole(su.Role),
-					"container_uuids": containerUUIDs,
-				},
-			})
+	// 常量时间比较访问码（审计 H-8）：遍历全量候选而不提前 return，
+	// 避免通过响应耗时差异逐个字符猜测访问码。
+	var matched *config.SubUser
+	for i := range subUsers {
+		if subtle.ConstantTimeCompare([]byte(subUsers[i].AccessCode), []byte(req.Code)) == 1 {
+			matched = &subUsers[i]
+		}
+	}
+	if matched != nil {
+		su := *matched
+		if err := bcrypt.CompareHashAndPassword([]byte(su.PassHash), []byte(req.Password)); err != nil {
+			loginLimiter.recordFail(rateKey)
+			config.AddLoginLog(su.Username, ip, clientUA, false)
+			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid password"})
 			return
 		}
+
+		containerUUIDs := activeSubUserContainerUUIDs(&su)
+		if len(containerUUIDs) == 0 {
+			loginLimiter.recordFail(rateKey)
+			config.AddLoginLog(su.Username, ip, clientUA, false)
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "No active container is assigned to this link"})
+			return
+		}
+		loginLimiter.reset(rateKey)
+		tokenStr := newSubUserTokenWithRole(su.Username, containerUUIDs, su.Role, time.Now().Add(24*time.Hour), su.TokenVersion)
+		config.AddLoginLog(su.Username, ip, clientUA, true)
+
+		setSessionCookie(w, r, tokenStr)
+		jsonResponse(w, http.StatusOK, APIResponse{
+			Success: true,
+			Data: map[string]interface{}{
+				"token":           tokenStr,
+				"username":        su.Username,
+				"role":            subUserRole(su.Role),
+				"container_uuids": containerUUIDs,
+			},
+		})
+		return
 	}
 
 	// Unknown access code: throttle further attempts from this identity.

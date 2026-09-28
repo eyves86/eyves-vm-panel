@@ -2,16 +2,18 @@ package cli
 
 import (
 	"testing"
+
+	"eyvescloud/internal/version"
 )
 
-// TestFetchReleasesListLive 验证版本列表在 api.github.com 限流（403/429）时
-// 能通过 github.com releases/latest 跳转降级，至少返回最新版一条。
+// TestFetchReleasesListLive 验证版本列表在官方仓库 API 限流（403/429）时
+// 能通过 releases/latest 跳转降级，至少返回最新版一条。
 // 依赖真实网络，跳过条件：-short 模式。
 func TestFetchReleasesListLive(t *testing.T) {
 	if testing.Short() {
 		t.Skip("network test skipped in short mode")
 	}
-	items, err := fetchReleasesList("FenhaoLost/eyves-vm-panel", 20)
+	items, err := fetchReleasesList(version.Repo, 20)
 	if err != nil {
 		t.Fatalf("fetchReleasesList failed: %v", err)
 	}

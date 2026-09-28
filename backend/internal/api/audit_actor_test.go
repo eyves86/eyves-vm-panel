@@ -10,23 +10,35 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// TestRequestActorPrefersXOriginalActor 多节点转发场景：agent 端必须
-// 优先使用 X-Original-Actor，避免把操作记到 agent token 名下。
+// TestRequestActorPrefersXOriginalActor 多节点转发场景：agent 端审计应使用主控
+// 写入的 X-Original-Actor，避免把操作记到 agent token 名下。
+//
+// 审计 H-3 修复后的安全约束：该 header 只在请求**已通过节点 token 校验**
+// （authTypeAgent 上下文）时才被采信；普通浏览器 / API Key / 子用户请求即使
+// 自带同名 header 也必须被忽略，否则可伪造审计主体。
 func TestRequestActorPrefersXOriginalActor(t *testing.T) {
 	cases := []struct {
-		name    string
-		header  string
-		want    string
+		name  string
+		auth  AuthContext
+		agent bool
+		header string
+		want  string
 	}{
-		{"empty header falls through to admin", "", "admin"},
-		{"non-empty header wins", "user:bob", "user:bob"},
-		{"api-key-style actor preserved", "apikey:ak_123", "apikey:ak_123"},
+		{"agent request: header wins", AuthContext{Type: authTypeAgent, Actor: "agent"}, true, "user:bob", "user:bob"},
+		{"agent request: apikey actor preserved", AuthContext{Type: authTypeAgent, Actor: "agent"}, true, "apikey:ak_123", "apikey:ak_123"},
+		{"agent request: empty header falls back to agent", AuthContext{Type: authTypeAgent, Actor: "agent"}, true, "", "agent"},
+		{"non-agent request: header ignored (spoof attempt)", AuthContext{Type: authTypeAdmin, Actor: "admin"}, false, "user:bob", "admin"},
+		{"sub-user request: header ignored", AuthContext{Type: authTypeSubUser, Actor: "user:alice"}, false, "admin", "user:alice"},
+		{"no auth context: unauthenticated falls back to admin", AuthContext{}, false, "user:mallory", "admin"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, "/", nil)
 			if tc.header != "" {
 				r.Header.Set("X-Original-Actor", tc.header)
+			}
+			if tc.agent || tc.auth.Type != "" {
+				r = withAuthContext(r, tc.auth)
 			}
 			if got := requestActor(r); got != tc.want {
 				t.Fatalf("requestActor = %q, want %q", got, tc.want)

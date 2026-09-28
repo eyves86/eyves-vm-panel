@@ -54,6 +54,7 @@ import {
   updateTurnstileSettings,
   updateWebSSHOriginSettings,
   WebSSHOriginSettings,
+  getAuthToken,
 } from '../services/api'
 import { useDialog } from '../components/Dialog'
 import TurnstileWidget from '../components/TurnstileWidget'
@@ -1894,8 +1895,11 @@ function CodeIcon({ className = '' }: { className?: string }) {
 // Authorization header, so downloads of protected resources must go through
 // fetch() and a Blob object URL.
 async function downloadWithAuth(url: string, fallbackName: string) {
-  const token = localStorage.getItem('eyvescloud_token')
+  // 会话令牌由 HttpOnly Cookie 承载（审计 H-6），同源 fetch 自动携带；
+  // 内存令牌仅在存在时作为兜底头部。
+  const token = getAuthToken()
   const res = await fetch(url, {
+    credentials: 'same-origin',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
   if (!res.ok) {

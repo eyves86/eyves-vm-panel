@@ -308,9 +308,22 @@ func createConfigurationBackup() (config.BackupRecord, error) {
 		Version:   "1",
 		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 	}
+	// 审计 H-5：备份文件此前是整份配置的明文快照，包含节点 Token、容器 SSH
+	// 口令、Turnstile 密钥、对接密钥、SMTP 口令等**可直接使用的凭据**。这里先
+	// 深拷贝（JSON 往返，避免共享切片），再对副本做静态加密后再落盘：
+	// 备份文件泄露不再等于交出集群；同机还原由 DecryptSecretsAfterImport 还原。
 	config.AppConfigMu.RLock()
-	snap.Config = *config.AppConfig
+	copyRaw, err := json.Marshal(config.AppConfig)
 	config.AppConfigMu.RUnlock()
+	if err != nil {
+		return config.BackupRecord{}, err
+	}
+	var exported config.EyvescloudConfig
+	if err := json.Unmarshal(copyRaw, &exported); err != nil {
+		return config.BackupRecord{}, err
+	}
+	config.EncryptSecretsForExport(&exported)
+	snap.Config = exported
 
 	data, err := json.MarshalIndent(snap, "", "  ")
 	if err != nil {
@@ -533,6 +546,10 @@ func HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "invalid backup file"})
 		return
 	}
+	// 审计 H-5：新版备份里的凭据是 enc:v1: 密文（导出时加密），还原前先解密回
+	// 明文；旧版备份为明文，原样通过。无法解密的字段（换过 at-rest 密钥）会被
+	// 置空并回报字段名，避免把密文当明文写回配置。
+	undecryptable := config.DecryptSecretsAfterImport(&snap.Config)
 	// 还原：以备份内容整体替换当前配置并持久化到 SQLite。
 	errRestore := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		*cfg = snap.Config
@@ -547,7 +564,11 @@ func HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRequest(r, "backup.restore", "backup", "从备份还原配置 "+filename, true, "")
-	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "配置已从备份还原，部分运行时状态将在服务重启后完全生效"})
+	msg := "配置已从备份还原，部分运行时状态将在服务重启后完全生效"
+	if len(undecryptable) > 0 {
+		msg += "；以下凭据无法解密（加密密钥与备份时不同），已置空需重新设置：" + strings.Join(undecryptable, ", ")
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: msg})
 }
 
 // ===========================================================================

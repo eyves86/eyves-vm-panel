@@ -1178,7 +1178,7 @@ func saveContainers(tx *sql.Tx) error {
 			c.TrafficOutGB, c.TrafficUsedRX, c.TrafficUsedTX, c.TrafficResetDate,
 			c.IOSpeedMBps, c.IOReadMBps, c.IOWriteMBps,
 			c.Status, boolInt(c.RestoreOnHostBoot), c.IP, c.LANIPv4Mode, c.LANInterface, c.LANIPv4Address, c.LANIPv4PrefixLen, c.LANIPv4Gateway,
-			c.IPv6, c.IPv6PrefixLen, c.IPv6Interface, c.VNCPort, c.SSHPort, c.SSHPassword,
+			c.IPv6, c.IPv6PrefixLen, c.IPv6Interface, c.VNCPort, c.SSHPort, EncryptSecretAtRest(c.SSHPassword),
 			c.SSHHostKey, c.PortMappingLimit, c.SnapshotLimit, c.CreatedAt, c.ExpiresAt,
 			boolInt(c.SnapshotScheduleEnabled), c.SnapshotScheduleIntervalHours, c.SnapshotScheduleTime,
 			c.SnapshotScheduleLastRun, c.SnapshotScheduleNextRun, c.SnapshotScheduleCreatedBy,
@@ -1492,7 +1492,7 @@ func saveTasksDB(tx *sql.Tx) error {
 			cfg.LANIPv4Address, cfg.LANIPv4PrefixLen, cfg.LANIPv4Gateway, cfg.SnapshotLimit,
 			boolInt(cfg.AssignIPv4), cfg.IPv4Count, encodeStringSlice(cfg.PublicIPv4s),
 			boolInt(cfg.AssignIPv6), cfg.IPv6Count, encodeStringSlice(cfg.IPv6Addresses),
-			cfg.SSHAuthMode, cfg.SSHPassword, cfg.SSHPublicKey, encodeStringSlice(cfg.AllowedImageIDs), boolInt(cfg.ImageLimitConfigured), cfg.ExpiresAt,
+			cfg.SSHAuthMode, EncryptSecretAtRest(cfg.SSHPassword), cfg.SSHPublicKey, encodeStringSlice(cfg.AllowedImageIDs), boolInt(cfg.ImageLimitConfigured), cfg.ExpiresAt,
 		); err != nil {
 			return err
 		}
@@ -1584,6 +1584,8 @@ func loadContainers() ([]Container, error) {
 		var rootVolumeID, dataVolumeIDs sql.NullString
 		var suspended int
 		var suspendedAt, suspendedReason sql.NullString
+		// ssh_password 以 enc:v1: 密文落库（审计 H-5）：先扫进临时变量再解密。
+		var sshPasswordCol sql.NullString
 		if err := rows.Scan(
 			&c.ID, &c.UUID, &c.Name, &c.Virtualization, &c.LXCName, &c.KVMName, &c.DiskImage, &storagePoolID, &storagePath, &c.MACAddress, &c.Template,
 			&c.VCPU, &c.RAMMB, &c.DiskGB, &c.NetworkBWMbps, &c.NetworkDownMbps, &c.NetworkUpMbps,
@@ -1591,7 +1593,7 @@ func loadContainers() ([]Container, error) {
 			&c.TrafficOutGB, &c.TrafficUsedRX, &c.TrafficUsedTX, &c.TrafficResetDate,
 			&c.IOSpeedMBps, &c.IOReadMBps, &c.IOWriteMBps,
 			&c.Status, &restoreOnHostBoot, &c.IP, &lanIPv4Mode, &lanInterface, &lanIPv4Address, &lanIPv4PrefixLen, &lanIPv4Gateway,
-			&c.IPv6, &c.IPv6PrefixLen, &c.IPv6Interface, &c.VNCPort, &c.SSHPort, &c.SSHPassword,
+			&c.IPv6, &c.IPv6PrefixLen, &c.IPv6Interface, &c.VNCPort, &c.SSHPort, &sshPasswordCol,
 			&c.SSHHostKey, &c.PortMappingLimit, &c.SnapshotLimit, &c.CreatedAt, &c.ExpiresAt,
 			&scheduleEnabled, &c.SnapshotScheduleIntervalHours, &c.SnapshotScheduleTime,
 			&c.SnapshotScheduleLastRun, &c.SnapshotScheduleNextRun, &c.SnapshotScheduleCreatedBy,
@@ -1606,6 +1608,9 @@ func loadContainers() ([]Container, error) {
 			return nil, err
 		}
 		c.CloudInitUserData = cloudInitUserData.String
+		// SSH 口令：解密 enc:v1: 密文；存量明文原样通过；解密失败置空
+		// （宁可让面板"看不到口令"，也不把密文当口令用）。
+		c.SSHPassword = DecryptSecretAtRest(sshPasswordCol.String)
 		c.DataDiskMountPath = dataDiskMountPath.String
 		c.RescueEnabled = rescueEnabled != 0
 		c.RescueISOID = rescueISOID.String
@@ -1901,7 +1906,7 @@ func loadTasks() ([]SavedTask, error) {
 		}
 		cfg.IPv6Addresses = decodeStringSlice(ipv6Addresses.String)
 		cfg.SSHAuthMode = sshAuthMode.String
-		cfg.SSHPassword = sshPassword.String
+		cfg.SSHPassword = DecryptSecretAtRest(sshPassword.String)
 		cfg.SSHPublicKey = sshPublicKey.String
 		cfg.AllowedImageIDs = decodeStringSlice(allowedImageIDs.String)
 		cfg.ImageLimitConfigured = imageLimitConfigured != 0

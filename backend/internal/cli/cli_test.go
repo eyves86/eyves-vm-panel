@@ -81,7 +81,7 @@ func TestResolveRepoSource(t *testing.T) {
 		owner    string
 		repo     string
 	}{
-		{"plain owner/repo", "FenhaoLost/eyves-vm-panel", "github", "FenhaoLost", "eyves-vm-panel"},
+		{"plain owner/repo (platform default github)", "someorg/eyves-vm-panel", "github", "someorg", "eyves-vm-panel"},
 		{"codeberg prefix", "codeberg:fenhaolost/eyves-vm-panel", "codeberg", "fenhaolost", "eyves-vm-panel"},
 		{"gitee short prefix", "gt:user/repo", "gitee", "user", "repo"},
 		{"gitlab prefix", "gitlab:group/subgroup/repo", "gitlab", "group", "subgroup/repo"},
@@ -89,7 +89,7 @@ func TestResolveRepoSource(t *testing.T) {
 		{"gitee URL", "https://gitee.com/user/repo", "gitee", "user", "repo"},
 		{"gitlab URL", "https://gitlab.com/group/repo", "gitlab", "group", "repo"},
 		{"github URL fallback", "https://github.com/user/repo", "github", "user", "repo"},
-		{"empty → default", "", "github", "FenhaoLost", "eyves-vm-panel"},
+		{"empty → default official repo (codeberg)", "", "codeberg", "fenhaolost", "eyves-vm-panel"},
 		{"gh alias", "gh:user/repo", "github", "user", "repo"},
 		{"cb alias", "cb:user/repo", "codeberg", "user", "repo"},
 		{"gl alias", "gl:group/repo", "gitlab", "group", "repo"},
@@ -112,7 +112,7 @@ func TestResolveRepoSource(t *testing.T) {
 
 func TestValidateRepoSlugMultiPlatform(t *testing.T) {
 	// 扩展后应同时接受 owner/repo 和 codeberg:owner/repo 两种格式。
-	if !validateRepoSlug("FenhaoLost/eyves-vm-panel") {
+	if !validateRepoSlug("fenhaolost/eyves-vm-panel") {
 		t.Fatal("owner/repo must be valid")
 	}
 	if !validateRepoSlug("codeberg:fenhaolost/eyves-vm-panel") {

@@ -1,11 +1,107 @@
 #!/bin/sh
 set -eu
 
-REPO="${EYVESCLOUD_REPO:-FenhaoLost/eyves-vm-panel}"
+REPO="${EYVESCLOUD_REPO:-codeberg:fenhaolost/eyves-vm-panel}"
+
+# ---- 发行版来源仓库解析（支持 Codeberg / GitHub / Gitee / GitLab）----
+# REPO 接受三种写法：
+#   1) platform:owner/name   例：codeberg:fenhaolost/eyves-vm-panel
+#   2) https://host/owner/name（按域名推断平台）
+#   3) owner/name（默认官方平台 Codeberg）
+REPO_PLATFORM=""
+REPO_SLUG=""
+case "$REPO" in
+    http://*|https://*)
+        _repo_rest="${REPO#*://}"
+        _repo_host="${_repo_rest%%/*}"
+        _repo_path="${_repo_rest#*/}"
+        case "$_repo_host" in
+            *codeberg*) REPO_PLATFORM="codeberg" ;;
+            *gitee*)    REPO_PLATFORM="gitee" ;;
+            *gitlab*)   REPO_PLATFORM="gitlab" ;;
+            *)          REPO_PLATFORM="github" ;;
+        esac
+        REPO_SLUG="$_repo_path"
+        ;;
+    github:*|gh:*)   REPO_PLATFORM="github";   REPO_SLUG="${REPO#*:}" ;;
+    codeberg:*|cb:*) REPO_PLATFORM="codeberg"; REPO_SLUG="${REPO#*:}" ;;
+    gitee:*|gt:*)    REPO_PLATFORM="gitee";    REPO_SLUG="${REPO#*:}" ;;
+    gitlab:*|gl:*)   REPO_PLATFORM="gitlab";   REPO_SLUG="${REPO#*:}" ;;
+    *)               REPO_PLATFORM="codeberg"; REPO_SLUG="$REPO" ;;
+esac
+REPO_SLUG="${REPO_SLUG#/}"
+REPO_SLUG="${REPO_SLUG%/}"
+# 校验 owner/repo 形态（只允许字母数字与 . _ - /），防止拼进 URL 造成注入/SSRF。
+case "$REPO_SLUG" in
+    */*) ;;
+    *) REPO_SLUG="" ;;
+esac
+if [ -n "$REPO_SLUG" ]; then
+    case "$(printf '%s' "$REPO_SLUG" | tr -d 'A-Za-z0-9._/-')" in
+        "") ;;
+        *) REPO_SLUG="" ;;
+    esac
+fi
+if [ -z "$REPO_SLUG" ]; then
+    echo "警告：EYVESCLOUD_REPO 无法解析为 owner/repo（$REPO），回退到官方仓库 codeberg:fenhaolost/eyves-vm-panel" >&2
+    REPO_PLATFORM="codeberg"
+    REPO_SLUG="fenhaolost/eyves-vm-panel"
+fi
+
+# 各平台网页 / Release API / 产物下载地址模板
+case "$REPO_PLATFORM" in
+    github)
+        REPO_WEB="https://github.com/${REPO_SLUG}"
+        RELEASE_API_LATEST="https://api.github.com/repos/${REPO_SLUG}/releases/latest"
+        RELEASE_API_LIST="https://api.github.com/repos/${REPO_SLUG}/releases?per_page=100"
+        ;;
+    codeberg)
+        REPO_WEB="https://codeberg.org/${REPO_SLUG}"
+        RELEASE_API_LATEST="https://codeberg.org/api/v1/repos/${REPO_SLUG}/releases/latest"
+        RELEASE_API_LIST="https://codeberg.org/api/v1/repos/${REPO_SLUG}/releases?limit=50"
+        ;;
+    gitee)
+        REPO_WEB="https://gitee.com/${REPO_SLUG}"
+        RELEASE_API_LATEST="https://gitee.com/api/v5/repos/${REPO_SLUG}/releases/latest"
+        RELEASE_API_LIST="https://gitee.com/api/v5/repos/${REPO_SLUG}/releases?page=1&size=100"
+        ;;
+    gitlab)
+        _repo_gitlab_path="$(printf '%s' "$REPO_SLUG" | sed 's#/#%2F#g')"
+        REPO_WEB="https://gitlab.com/${REPO_SLUG}"
+        RELEASE_API_LATEST="https://gitlab.com/api/v4/projects/${_repo_gitlab_path}/releases"
+        RELEASE_API_LIST="https://gitlab.com/api/v4/projects/${_repo_gitlab_path}/releases?per_page=100"
+        ;;
+esac
+export REPO REPO_PLATFORM REPO_SLUG REPO_WEB
+
+# install.sh 自身的 raw 下载地址（各平台 raw 路径不同，提示用户时用）。
+case "$REPO_PLATFORM" in
+    github)   REPO_RAW_INSTALL_URL="https://raw.githubusercontent.com/${REPO_SLUG}/main/install.sh" ;;
+    codeberg) REPO_RAW_INSTALL_URL="${REPO_WEB}/raw/branch/main/install.sh" ;;
+    gitee)    REPO_RAW_INSTALL_URL="${REPO_WEB}/raw/main/install.sh" ;;
+    gitlab)   REPO_RAW_INSTALL_URL="${REPO_WEB}/-/raw/main/install.sh" ;;
+esac
+export REPO_RAW_INSTALL_URL
+
+# release_download_url <tag|latest> <asset>：拼出产物下载地址
+release_download_url() {
+    _dl_tag="$1"
+    _dl_asset="$2"
+    if [ "$REPO_PLATFORM" = "gitlab" ]; then
+        if [ "$_dl_tag" = "latest" ]; then
+            printf '%s\n' "${REPO_WEB}/-/releases/permalink/latest/downloads/${_dl_asset}"
+        else
+            printf '%s\n' "${REPO_WEB}/-/releases/${_dl_tag}/downloads/${_dl_asset}"
+        fi
+        return
+    fi
+    printf '%s\n' "${REPO_WEB}/releases/download/${_dl_tag}/${_dl_asset}"
+}
+
 EYVESCLOUD_INSTALL_VERSION="${EYVESCLOUD_VERSION:-latest}"
 ACTION="${1:-install}"
 ACTION_CONFIRM="${2:-}"
-ISSUE_URL="https://github.com/${REPO}/issues"
+ISSUE_URL="${REPO_WEB}/issues"
 LOG_FILE="${EYVESCLOUD_LOG_FILE:-/var/log/eyvescloud-install.log}"
 INSTALL_DOWNLOAD_MARKER="${EYVESCLOUD_INSTALL_DOWNLOAD_MARKER:-/tmp/eyvescloud-install-dir.$$}"
 LIBVIRT_DEFAULT_MARKER="/var/lib/eyvescloud/kvm/default-network.created"
@@ -393,15 +489,15 @@ check_storage_compatibility() {
 
 if [ "$(id -u)" -ne 0 ]; then
     echo "$(tr_msg "请使用 root 权限运行：")sudo ./install.sh"
-    echo "$(tr_msg "或执行：")curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh"
-    echo "$(tr_msg "卸载：")curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh -s -- uninstall"
+    echo "$(tr_msg "或执行：")curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh"
+    echo "$(tr_msg "卸载：")curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall"
     echo "$(tr_msg "问题反馈：")$ISSUE_URL"
     exit 1
 fi
 
 : > "$LOG_FILE" 2>/dev/null || true
 log "日志文件：$LOG_FILE"
-log "仓库地址：https://github.com/${REPO}"
+log "仓库地址：${REPO_WEB}"
 log "问题反馈：$ISSUE_URL"
 
 OS_ID="unknown"
@@ -421,6 +517,7 @@ Usage:
 
 Environment variables:
   EYVESCLOUD_REPO=owner/repo          Default: ${REPO}
+                                      Also: codeberg:owner/repo | github:owner/repo | gitee:owner/repo | gitlab:owner/repo | https://host/owner/repo
   EYVESCLOUD_VERSION=latest|v1.0.0    Default: latest
   EYVESCLOUD_LANG=en|zh               Default: auto
   EYVESCLOUD_LXC_SUBNET=10.0.3.0/24   Default: auto-detect an available private subnet
@@ -429,11 +526,13 @@ Environment variables:
   EYVESCLOUD_FORCE_DOWNGRADE=1         Allow downgrade install (default: refuse)
   EYVESCLOUD_FORCE_REINSTALL=1         Reinstall even if the same version is present
   EYVESCLOUD_AUTO_UPDATE=1440          Agent auto-update interval in minutes (>=60)
+  EYVESCLOUD_ALLOW_UNVERIFIED=1        Allow install when the release has no SHA256SUMS (not recommended)
+  EYVESCLOUD_SKIP_VERIFY=1             Skip release SHA-256 verification entirely (not recommended)
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh -s -- uninstall
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh -s -- uninstall --yes
+  curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh
+  curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall
+  curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall --yes
 
 Log: ${LOG_FILE}
 Issues: ${ISSUE_URL}
@@ -447,6 +546,7 @@ EOF
 
 环境变量：
   EYVESCLOUD_REPO=owner/repo          默认：${REPO}
+                                     也支持：codeberg:owner/repo | github:owner/repo | gitee:owner/repo | gitlab:owner/repo | https://host/owner/repo
   EYVESCLOUD_VERSION=latest|v1.0.0    默认：latest
   EYVESCLOUD_LANG=en|zh               默认：自动检测
   EYVESCLOUD_LXC_SUBNET=10.0.3.0/24   默认：自动检测可用私网网段
@@ -455,11 +555,13 @@ EOF
   EYVESCLOUD_FORCE_DOWNGRADE=1       允许版本回退安装（默认拒绝）
   EYVESCLOUD_FORCE_REINSTALL=1       相同版本时强制重装
   EYVESCLOUD_AUTO_UPDATE=1440        被控节点自动更新间隔（分钟，>=60）
+  EYVESCLOUD_ALLOW_UNVERIFIED=1      Release 未提供 SHA256SUMS 时仍继续安装（不推荐）
+  EYVESCLOUD_SKIP_VERIFY=1           完全跳过发行版 SHA-256 校验（不推荐）
 
 示例：
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh -s -- uninstall
-  curl -fsSL https://raw.githubusercontent.com/${REPO}/main/install.sh | sudo sh -s -- uninstall --yes
+  curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh
+  curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall
+  curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall --yes
 
 日志：${LOG_FILE}
 问题反馈：${ISSUE_URL}
@@ -1839,14 +1941,28 @@ download_file() {
         return
     fi
     if has_cmd wget; then
-        wget --tries=6 --timeout=30 --waitretry=2 -O "$dest" "$url"
-        return
+        # GNU wget 支持 --waitretry；BusyBox wget 不支持（会直接报 usage 错误），
+        # 因此先按 GNU 参数尝试（失败时的 usage 噪声抑制掉），再退回最简参数
+        # （Alpine/OpenWrt 等最小系统常只有 BusyBox wget）。
+        if wget --tries=6 --timeout=30 --waitretry=2 -O "$dest" "$url" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$dest"
+        if wget -q -T 30 -O "$dest" "$url"; then
+            return 0
+        fi
+    fi
+    if has_cmd busybox; then
+        rm -f "$dest"
+        if busybox wget -q -T 30 -O "$dest" "$url"; then
+            return 0
+        fi
     fi
     return 127
 }
 
 release_api_json() {
-    api_url="https://api.github.com/repos/${REPO}/releases/latest"
+    api_url="$RELEASE_API_LATEST"
 
     if has_cmd curl; then
         curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$api_url" 2>/dev/null || true
@@ -1862,12 +1978,16 @@ release_asset_url() {
     asset_name="$1"
 
     if [ "$EYVESCLOUD_INSTALL_VERSION" != "latest" ]; then
-        printf '%s\n' "https://github.com/${REPO}/releases/download/${EYVESCLOUD_INSTALL_VERSION}/${asset_name}"
+        release_download_url "$EYVESCLOUD_INSTALL_VERSION" "$asset_name"
         return
     fi
 
     api_data="$(release_api_json)"
+    # GitHub / Codeberg(Gitea) / Gitee 提供 browser_download_url；GitLab 为 direct_asset_url。
     url="$(printf '%s\n' "$api_data" | sed -n 's/.*"browser_download_url": *"\([^"]*\/'"$asset_name"'\)".*/\1/p' | head -n 1)"
+    if [ -z "$url" ]; then
+        url="$(printf '%s\n' "$api_data" | sed -n 's/.*"direct_asset_url": *"\([^"]*\/'"$asset_name"'\)".*/\1/p' | head -n 1)"
+    fi
     if [ -n "$url" ]; then
         printf '%s\n' "$url"
         return
@@ -1875,16 +1995,16 @@ release_asset_url() {
 
     tag="$(printf '%s\n' "$api_data" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
     if [ -n "$tag" ]; then
-        printf '%s\n' "https://github.com/${REPO}/releases/download/${tag}/${asset_name}"
+        release_download_url "$tag" "$asset_name"
         return
     fi
 
-    printf '%s\n' "https://github.com/${REPO}/releases/latest/download/${asset_name}"
+    release_download_url "latest" "$asset_name"
 }
 
-# 获取项目全部 Release 版本号（tag，按 GitHub API 返回顺序，最新的在前）。
+# 获取项目全部 Release 版本号（tag，按 API 返回顺序，最新的在前）。
 fetch_release_list() {
-    api_url="https://api.github.com/repos/${REPO}/releases?per_page=100"
+    api_url="$RELEASE_API_LIST"
     if has_cmd curl; then
         curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$api_url" 2>/dev/null
         return
@@ -2122,15 +2242,118 @@ check_upgrade_compatibility() {
     fi
 }
 
+# ---- 发行版完整性校验（审计 H-2 修复）----
+# 发布流程会为每个架构产物生成 SHA256SUMS 并作为 release asset 发布。
+# 安装脚本默认强制校验；Release 缺少校验清单时中止安装，除非显式设置
+# EYVESCLOUD_ALLOW_UNVERIFIED=1（或 EYVESCLOUD_SKIP_VERIFY=1 完全跳过）。
+EYVESCLOUD_ALLOW_UNVERIFIED="${EYVESCLOUD_ALLOW_UNVERIFIED:-0}"
+
+compute_sha256() {
+    _cfile="$1"
+    if has_cmd sha256sum; then
+        sha256sum "$_cfile" | awk '{print $1}'
+        return
+    fi
+    if has_cmd shasum; then
+        shasum -a 256 "$_cfile" | awk '{print $1}'
+        return
+    fi
+    if has_cmd openssl; then
+        openssl dgst -sha256 "$_cfile" | sed 's/.*= *//'
+        return
+    fi
+    if has_cmd busybox; then
+        busybox sha256sum "$_cfile" | awk '{print $1}'
+        return
+    fi
+    printf '%s\n' ""
+}
+
+verify_release_asset() {
+    _vfile="$1"
+    _vasset="$2"
+
+    if [ "${EYVESCLOUD_SKIP_VERIFY:-0}" = "1" ]; then
+        warn "已按 EYVESCLOUD_SKIP_VERIFY=1 跳过发行版完整性校验（不推荐）。"
+        return 0
+    fi
+
+    _expected=""
+    _sums_tmp="$(mktemp 2>/dev/null || printf '%s' "/tmp/eyvescloud-SHA256SUMS.$$")"
+    # 优先汇总清单 SHA256SUMS，其次单文件校验值 <asset>.sha256。
+    _sums_url="$(release_asset_url "SHA256SUMS")"
+    if [ -n "$_sums_url" ]; then
+        download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || true
+    fi
+    if [ ! -s "$_sums_tmp" ]; then
+        # 汇总清单不可用 → 回退到 <asset>.sha256，并真正下载该文件。
+        _per_asset_url="$(release_asset_url "${_vasset}.sha256")"
+        if [ -n "$_per_asset_url" ]; then
+            _sums_url="$_per_asset_url"
+            download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || true
+        fi
+    fi
+    if [ -n "$_sums_url" ] && [ -s "$_sums_tmp" ]; then
+        # 兼容四种常见写法：
+        #   1) GNU：<hash>  <file>（file 可带路径）
+        #   2) BSD：SHA256 (<file>) = <hash>
+        #   3) 仅含哈希的单文件校验值 <asset>.sha256
+        #   4) 汇总清单里夹带注释/空行
+        _expected="$(awk -v want="$_vasset" '
+            /^[[:space:]]*#/ { next }
+            {
+                line = $0
+                gsub(/\r/, "", line)
+                n = split(line, f, " ")
+                if (n == 0) { next }
+                hash = ""
+                name = ""
+                first = tolower(f[1])
+                if (first ~ /^[0-9a-f]{64}$/) {
+                    hash = first
+                    if (n >= 2) { name = f[n] }
+                } else if (n >= 4) {
+                    # BSD: SHA256 (file) = <hash>
+                    candidate = tolower(f[n])
+                    if (candidate ~ /^[0-9a-f]{64}$/) {
+                        hash = candidate
+                        name = f[2]
+                        gsub(/[()]/, "", name)
+                    }
+                }
+                if (hash == "") { next }
+                sub(/^.*\//, "", name)
+                if (name == "" || name == want) { print hash; exit }
+            }' "$_sums_tmp")"
+    fi
+    rm -f "$_sums_tmp"
+
+    _actual="$(compute_sha256 "$_vfile")"
+    if [ -z "$_expected" ]; then
+        if [ "$EYVESCLOUD_ALLOW_UNVERIFIED" = "1" ]; then
+            warn "该 Release 未提供 SHA256SUMS（或清单中缺少 ${_vasset}），已按 EYVESCLOUD_ALLOW_UNVERIFIED=1 继续安装（不推荐）。"
+            return 0
+        fi
+        die "无法校验 ${_vasset} 的 SHA-256：Release 缺少 SHA256SUMS。为安全起见已中止安装；如确认该来源可信，可设置 EYVESCLOUD_ALLOW_UNVERIFIED=1 强制继续。"
+    fi
+    if [ -z "$_actual" ]; then
+        die "系统缺少 SHA-256 校验工具（sha256sum / shasum / openssl），无法校验 ${_vasset}。"
+    fi
+    if [ "$_expected" != "$_actual" ]; then
+        die "发行版包完整性校验失败：${_vasset} 期望 SHA-256 ${_expected}，实际 ${_actual}。安装已中止。"
+    fi
+    log "校验通过：${_vasset} SHA-256 ${_actual}"
+}
+
 download_release_if_needed() {
     if [ -f "./eyvescloud" ]; then
         return
     fi
 
     if [ "$EYVESCLOUD_INSTALL_VERSION" = "latest" ]; then
-        download_url="https://github.com/${REPO}/releases/latest/download/${ASSET}"
+        download_url="$(release_download_url "latest" "$ASSET")"
     else
-        download_url="https://github.com/${REPO}/releases/download/${EYVESCLOUD_INSTALL_VERSION}/${ASSET}"
+        download_url="$(release_download_url "$EYVESCLOUD_INSTALL_VERSION" "$ASSET")"
     fi
 
     log "当前目录未找到 eyvescloud 二进制，将下载发行版包。"
@@ -2163,13 +2386,14 @@ download_release_if_needed() {
     done
 
     if [ "$archive_ok" = "1" ]; then
+        verify_release_asset "$archive_path" "$ASSET"
         tar -xzf "$archive_path" -C "$tmp_dir" || die "Failed to extract release package: $archive_path"
     else
         binary_asset="$BINARY_ASSET"
         if [ "$EYVESCLOUD_INSTALL_VERSION" = "latest" ]; then
-            binary_url="https://github.com/${REPO}/releases/latest/download/${binary_asset}"
+            binary_url="$(release_download_url "latest" "$binary_asset")"
         else
-            binary_url="https://github.com/${REPO}/releases/download/${EYVESCLOUD_INSTALL_VERSION}/${binary_asset}"
+            binary_url="$(release_download_url "$EYVESCLOUD_INSTALL_VERSION" "$binary_asset")"
         fi
         binary_urls="$binary_url"
         resolved_binary_url="$(release_asset_url "$binary_asset")"
@@ -2183,6 +2407,7 @@ download_release_if_needed() {
             [ -n "$url" ] || continue
             log "Trying release binary: $url"
             if download_file "$url" "$binary_path" && [ -s "$binary_path" ]; then
+                verify_release_asset "$binary_path" "$binary_asset"
                 mkdir -p "$tmp_dir/$ASSET_DIR"
                 cp "$binary_path" "$tmp_dir/$ASSET_DIR/eyvescloud"
                 chmod +x "$tmp_dir/$ASSET_DIR/eyvescloud"
@@ -2195,6 +2420,14 @@ download_release_if_needed() {
         [ "$binary_ok" = "1" ] || die "Release package download failed: $download_url"
     fi
 
+    # 兼容两种发行包布局：
+    #   1) eyvescloud-linux-<arch>/eyvescloud（build.sh / CI workflow 产物）
+    #   2) ./eyvescloud（早期手工打包的"扁平"产物，历史 Release 存在此形态）
+    if [ ! -f "$tmp_dir/$ASSET_DIR/eyvescloud" ] && [ -f "$tmp_dir/eyvescloud" ]; then
+        warn "发行包为扁平布局（根目录直接是 eyvescloud），已自动兼容。"
+        mkdir -p "$tmp_dir/$ASSET_DIR"
+        mv "$tmp_dir/eyvescloud" "$tmp_dir/$ASSET_DIR/eyvescloud"
+    fi
     [ -d "$tmp_dir/$ASSET_DIR" ] || die "Release package layout is invalid: missing $ASSET_DIR directory"
     [ -f "$tmp_dir/$ASSET_DIR/eyvescloud" ] || die "下载的发行版包中未找到 eyvescloud 二进制。"
 }

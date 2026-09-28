@@ -405,6 +405,20 @@ func randomHex(bytesLen int) string {
 	return hex.EncodeToString(b)
 }
 
+// randomVirtualMAC 生成一个本地管理位（02:）的虚拟机 MAC 地址。
+// 审计 H-8：使用 crypto/rand（原实现用 math/rand，仅 24 位且可预测）。
+func randomVirtualMAC() string {
+	b := make([]byte, 3)
+	if _, err := rand.Read(b); err != nil {
+		// 随机源不可用时退回时间派生值，至少保证不重复。
+		n := time.Now().UnixNano()
+		b[0] = byte(n)
+		b[1] = byte(n >> 8)
+		b[2] = byte(n >> 16)
+	}
+	return fmt.Sprintf("02:00:00:%02x:%02x:%02x", b[0], b[1], b[2])
+}
+
 // containerIPLooksUnusable 判断容器 IP 是否不可用于直连（link-local/loopback/空）。
 // 在 DHCP 尚未从 lxcbr0 拿到正常网段地址时，容器 eth0 常落到 169.254.x（APIPA），
 // 宿主对它不可路由，导致 WebSSH 永远卡在 preparing。

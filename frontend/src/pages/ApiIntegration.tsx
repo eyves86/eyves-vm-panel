@@ -15,7 +15,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react'
-import api, { APIResponse, Container } from '../services/api'
+import api, { getAuthToken, APIResponse, Container } from '../services/api'
 import { useLanguage } from '../contexts/LanguageContext'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -352,9 +352,11 @@ export default function ApiIntegration() {
   const downloadWhmcs = async () => {
     setWhmcsDownloading(true)
     try {
-      // 受保护资源需要携带 Authorization 头，<a href> 无法做到，因此走 fetch + Blob。
-      const token = localStorage.getItem('eyvescloud_token')
+      // 受保护资源需要认证：会话令牌在 HttpOnly Cookie 中由浏览器自动携带
+      // （审计 H-6），因此 fetch 同源请求即可，无需再手工拼 Authorization。
+      const token = getAuthToken()
       const res = await fetch('/api/v1/integrations/whmcs/download', {
+        credentials: 'same-origin',
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       })
       if (!res.ok) {

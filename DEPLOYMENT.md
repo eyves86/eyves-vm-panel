@@ -20,18 +20,18 @@ EyvesCloud 是一个面向 LXC / KVM 的轻量虚拟化管理面板，提供自�
 
 ## 二、一键安装
 
-> 说明：`install.sh` 默认从本仓库 Release 拉取发行版；如需指向其它仓库或上游构建，可通过 `EYVESCLOUD_REPO` 覆盖（默认 `FenhaoLost/eyves-vm-panel`）。
+> 说明：`install.sh` 默认从本仓库 Release 拉取发行版；如需指向其它仓库或上游构建，可通过 `EYVESCLOUD_REPO` 覆盖（默认 `codeberg:fenhaolost/eyves-vm-panel`）。
 
 ```bash
 # 安装本仓库发行版（国内网络可先配置代理或使用镜像）
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh
 ```
 
 常用环境变量：
 
 ```bash
 # 发行版来源仓库（推荐显式指定为本仓库）
-EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel
+EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel
 # 指定版本（默认 latest）
 EYVESCLOUD_VERSION=latest
 # 手动指定 NAT 网段（默认自动检测可用私网）
@@ -44,9 +44,9 @@ EYVESCLOUD_LANG=zh
 卸载：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh -s -- uninstall
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh -s -- uninstall
 # 非交互卸载
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel EYVESCLOUD_UNINSTALL_CONFIRM=1 sh -s -- uninstall
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel EYVESCLOUD_UNINSTALL_CONFIRM=1 sh -s -- uninstall
 ```
 
 > 卸载仅删除名称形如 `ct-数字` 的 LXC 容器、`eyvescloud-img-dl-*` 下载临时容器和 `vm-数字` 的 KVM 域，不会误删其他生产数据；`/root/eyvescloud-backups` 备份目录会被保留。
@@ -243,7 +243,7 @@ cp /root/.eyvescloud/config.db /root/eyvescloud-backups/config.$(date +%F).db
 
 ```bash
 # 一键安装的节点直接重跑安装脚本即可升级
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh
 
 # 手动编译方式
 cd backend && go build -o eyvescloud . && systemctl restart eyvescloud

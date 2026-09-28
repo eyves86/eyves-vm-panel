@@ -55,6 +55,10 @@ jobs:
           cp install.sh "$PKG/$ASSET_DIR/install.sh" 2>/dev/null || true
           chmod +x "$PKG/$ASSET_DIR/eyvescloud"
           tar -C "$PKG" -czf "dist/$ASSET_DIR.tar.gz" "$ASSET_DIR"
+          # 生成产物校验值：安装/升级路径会强制校验（见 install.sh verify_release_asset
+          # 与 internal/cli 的 verifyReleaseArchive），因此每个产物都必须有校验记录。
+          ( cd dist && sha256sum "$ASSET_DIR.tar.gz" "$ASSET_DIR" > "$ASSET_DIR.sha256" )
+          cat "dist/$ASSET_DIR.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -63,6 +67,7 @@ jobs:
           path: |
             dist/eyvescloud-linux-${{ matrix.arch }}
             dist/eyvescloud-linux-${{ matrix.arch }}.tar.gz
+            dist/eyvescloud-linux-${{ matrix.arch }}.sha256
 
   release:
     name: Publish GitHub Release
@@ -71,12 +76,69 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+      - name: Build SHA256SUMS
+        run: |
+          set -e
+          cd artifacts
+          # 汇总所有架构产物 + 单文件校验值，供安装/升级路径强制校验。
+          cat */*.sha256 | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+
       - name: Publish
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*
+          files: |
+            artifacts/**/*
           generate_release_notes: true
+
+  release-codeberg:
+    name: Publish Codeberg Release
+    needs: build
+    runs-on: ubuntu-latest
+    # 官方仓库托管在 Codeberg；配置 CODEBERG_TOKEN（Codeberg 设置 → 应用 → 令牌，
+    # 需要 write:repository 权限）后本任务会把同一批产物同步发布到 Codeberg。
+    env:
+      CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+    if: env.CODEBERG_TOKEN != ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Build SHA256SUMS
+        run: |
+          set -e
+          cd artifacts
+          cat */*.sha256 | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish to Codeberg
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -e
+          API="https://codeberg.org/api/v1/repos/fenhaolost/eyves-vm-panel"
+          # 创建（或复用）release，然后逐个上传产物。
+          payload="$(printf '{"tag_name":"%s","name":"%s","draft":false,"prerelease":false}' "$TAG" "$TAG")"
+          curl -fsSL -X POST "$API/releases" \
+            -H "Authorization: token $CODEBERG_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$payload" >/dev/null || true
+          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -n 1)"
+          [ -n "$id" ] || { echo "无法获取 Codeberg release id"; exit 1; }
+          for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' \)); do
+            echo "upload $f"
+            curl -fsSL -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
+              -H "Authorization: token $CODEBERG_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" >/dev/null
+          done

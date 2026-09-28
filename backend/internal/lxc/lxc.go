@@ -1078,10 +1078,26 @@ func defaultLANInterface() string {
 	return ""
 }
 
+// isInvalidLANUplinkInterface 判断上联接口名是否不可用于 LAN macvlan。
+//
+// 审计 H-8：除黑名单前缀外，还做字符集/长度校验（Linux 接口名上限 15 字符，
+// 只允许字母数字与 . _ -）。该值会被写进 LXC 容器配置文件（lxc.net.0.link），
+// 换行/空格等字符若不加限制即可注入额外配置行——纵深防御，与"接口必须真实存在"
+// 的存在性检查叠加使用。
 func isInvalidLANUplinkInterface(name string) bool {
 	name = strings.TrimSpace(name)
-	return name == "" ||
-		name == "lo" ||
+	if name == "" || len(name) > 15 {
+		return true
+	}
+	for _, ch := range name {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
+		case ch == '.' || ch == '_' || ch == '-' || ch == ':' || ch == '@':
+		default:
+			return true
+		}
+	}
+	return name == "lo" ||
 		strings.HasPrefix(name, "lxc") ||
 		strings.HasPrefix(name, "docker") ||
 		strings.HasPrefix(name, "br-") ||

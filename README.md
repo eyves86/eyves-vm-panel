@@ -131,16 +131,16 @@ EyvesCloud unifies host administration into a single control plane — deliverin
 
 ```bash
 # 安装 / Install
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh
 
 # 卸载 / Uninstall（非交互：EYVESCLOUD_UNINSTALL_CONFIRM=1）
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh -s -- uninstall
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh -s -- uninstall
 ```
 
 常用环境变量：
 
 ```bash
-EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel   # 发行版来源仓库（推荐显式指定）
+EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel   # 发行版来源仓库（推荐显式指定）
 EYVESCLOUD_VERSION=latest            # 或 v1.x.x 固定版本
 EYVESCLOUD_LANG=zh|en                # 面板语言
 EYVESCLOUD_LXC_SUBNET=10.0.3.0/24    # 手动指定 LXC NAT 网段

@@ -130,7 +130,9 @@ func privateInterfaceIPv4(t *testing.T) netip.Addr {
 	t.Helper()
 	addresses, err := net.InterfaceAddrs()
 	if err != nil {
-		t.Fatal(err)
+		// 受限环境（容器 / PRoot / 无 NETLINK 权限）无法枚举本机地址：
+		// 这是环境能力缺失而非被测代码缺陷，跳过而不是判失败。
+		t.Skipf("cannot enumerate local interfaces in this environment: %v", err)
 	}
 	for _, rawAddress := range addresses {
 		prefix, err := netip.ParsePrefix(rawAddress.String())

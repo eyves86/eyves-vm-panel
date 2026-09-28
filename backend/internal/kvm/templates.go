@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 
 	"eyvescloud/internal/config"
 )
@@ -22,16 +23,18 @@ type Image struct {
 	Custom      bool   `json:"custom,omitempty"`
 }
 
-func GetImages() []Image {
+// ImagesForArch 返回指定架构的内置镜像 + 该架构的自定义镜像。
+// 供面板展示/校验"另一架构"的镜像定义（GetImages 只返回本机架构）。
+func ImagesForArch(arch string) []Image {
 	var images []Image
-	switch runtime.GOARCH {
+	switch arch {
 	case "arm64":
 		images = arm64Images()
 	default:
 		images = amd64Images()
 	}
 	for _, custom := range config.ListCustomKVMImages() {
-		if custom.Arch != runtime.GOARCH {
+		if custom.Arch != arch {
 			continue
 		}
 		images = append(images, Image{
@@ -48,6 +51,10 @@ func GetImages() []Image {
 		})
 	}
 	return images
+}
+
+func GetImages() []Image {
+	return ImagesForArch(runtime.GOARCH)
 }
 
 func amd64Images() []Image {
@@ -253,14 +260,24 @@ func (image Image) IsWindows11() bool {
 }
 
 // IsWindowsImage returns true if the image uses Windows unattended installation.
+// IsWindowsImage 判断镜像是否为 Windows。
+//
+// 注意：镜像表按架构过滤（arm64 无 Windows 镜像），但**资源校验不应因此变成
+// 架构相关**——否则 arm64 上同一 ID 会跳过 Windows 的最小磁盘/内存检查。
+// 因此镜像表未命中时按 ID 前缀回退识别。
 func IsWindowsImage(id string) bool {
-	img := FindImage(id)
-	return img != nil && img.IsWindows()
+	if img := FindImage(id); img != nil {
+		return img.IsWindows()
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(id)), "kvm-windows")
 }
 
+// IsWindows11Image 判断镜像是否为 Windows 11（含上一条的架构无关回退）。
 func IsWindows11Image(id string) bool {
-	img := FindImage(id)
-	return img != nil && img.IsWindows11()
+	if img := FindImage(id); img != nil {
+		return img.IsWindows11()
+	}
+	return strings.Contains(strings.ToLower(strings.TrimSpace(id)), "windows-11")
 }
 
 func virtioWinISOPath() string {

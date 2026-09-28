@@ -14,10 +14,10 @@ EyvesCloud provides a one-line install script. By default, the script installs t
 ## Install the Latest Version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo sh
 ```
 
-> Note: `install.sh` pulls releases from this repository (`FenhaoLost/eyves-vm-panel`) by default; set `EYVESCLOUD_REPO` to override the source.
+> Note: `install.sh` pulls releases from this repository (`codeberg:fenhaolost/eyves-vm-panel`) by default; set `EYVESCLOUD_REPO` to override the source.
 
 The installer asks separately for the LXC and KVM NAT private subnets. Press Enter to scan the host routes, interfaces, bridges, and libvirt networks and automatically select non-conflicting RFC1918 `/24` subnets; you can also enter a CIDR such as `172.28.40.0/24`. For unattended installation, set `EYVESCLOUD_LXC_SUBNET` and `EYVESCLOUD_KVM_SUBNET`.
 
@@ -26,7 +26,7 @@ The script defaults to `EYVESCLOUD_VERSION=latest` and downloads `eyvescloud-lin
 ## Install a Specific Version
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel EYVESCLOUD_VERSION=v1.1.29 sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel EYVESCLOUD_VERSION=v1.1.29 sh
 ```
 
 Replace `v1.1.29` with the Release tag you want to install.
@@ -67,7 +67,7 @@ Arguments:
 ## Uninstall
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh -s -- uninstall
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh -s -- uninstall
 ```
 
 Before uninstalling, decide whether you need to keep containers, image cache, database, and configuration files.

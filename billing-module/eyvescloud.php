@@ -39,7 +39,7 @@ function eyvescloud_MetaData()
     return [
         'DisplayName' => 'EYVESCLOUD 计费系统对接模块',
         'APIVersion'  => '1.1',
-        'HelpDoc'     => 'https://github.com/FenhaoLost/eyves-vm-panel',
+        'HelpDoc'     => 'https://codeberg.org/fenhaolost/eyves-vm-panel',
         'version'     => '1.0.12',
     ];
 }

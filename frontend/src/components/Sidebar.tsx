@@ -202,7 +202,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
   const [confirmUpdate, setConfirmUpdate] = useState(false)
 
   // 面板更新管理器：选择仓库（默认官方）与目标版本（默认最新），二次确认后升级。
-  const DEFAULT_REPO = 'FenhaoLost/eyves-vm-panel'
+  const DEFAULT_REPO = 'codeberg:fenhaolost/eyves-vm-panel'
   const [updateModalOpen, setUpdateModalOpen] = useState(false)
   const [repoInput, setRepoInput] = useState(DEFAULT_REPO)
   const [releases, setReleases] = useState<UpdateRelease[]>([])
