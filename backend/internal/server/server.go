@@ -719,6 +719,8 @@ func Run() error {
 
 	mux := http.NewServeMux()
 	setupRoutes(mux)
+	// API v2（集成专用，契约稳定）：/api/v2/...，见 docs/API-V2.md。
+	api.RegisterAPIV2(mux)
 
 	addr := fmt.Sprintf("0.0.0.0:%d", config.AppConfig.Port)
 	log.Printf("EyvesCloud Web Server starting on http://0.0.0.0:%d", config.AppConfig.Port)
