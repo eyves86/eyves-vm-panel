@@ -1264,10 +1264,43 @@ export interface ManagedNode {
   disk_used_gb?: number
   container_count?: number
   created_at?: string
+  // 维护模式下调度器不再把新容器放到该节点（升级/维修前开启）。
+  maintenance_mode?: boolean
 }
 
 export const getNodes = () =>
   api.get<APIResponse<ManagedNode[]>>('/nodes')
+
+// 在指定被控节点上创建容器（主控代理到该节点 agent 执行）。
+// 用于创建页「目标节点」选择：把实例下发到其它节点，而不是只落在主控本机。
+export const createContainerOnNode = (nodeId: string, payload: CreateContainerRequest) =>
+  api.post<APIResponse<Container>>(`/nodes/${encodeURIComponent(nodeId)}/containers`, payload)
+
+// 放置调度：按「过滤（在线/容量/存储后端）→ 评分（剩余内存 60% + 剩余磁盘 40%）」
+// 自动挑选目标节点。只做决策、不创建资源，因此可安全地反复调用。
+export interface NodeScheduleCandidate {
+  node_id: string
+  node_name?: string
+  passed: boolean
+  score: number
+  filter_reasons?: string[]
+  score_reasons?: string[]
+}
+
+export interface NodeScheduleResult {
+  chosen?: ManagedNode
+  reason?: string
+  candidates?: NodeScheduleCandidate[]
+}
+
+export const scheduleNode = (params: {
+  ram_mb?: number
+  disk_gb?: number
+  virt?: string
+  storage?: string
+  count?: number
+  tenant?: string
+}) => api.get<APIResponse<NodeScheduleResult>>('/nodes/schedule', { params })
 
 // 创建被控节点：bindIP 可选（把一次性 install_key 绑定到被控出口 IP）。
 // quick 模式响应包含 node（脱敏）+ install_key（一次性，注册即焚，TTL 24h）。

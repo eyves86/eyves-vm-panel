@@ -246,6 +246,8 @@ func setupRoutes(mux *http.ServeMux) {
 
 	// 主控（Controller）节点管理
 	mux.HandleFunc("/api/nodes", corsMiddleware(api.AdminMiddleware(api.HandleNodes)))
+	// 放置调度决策（创建容器时「自动选择节点」用）：仅做决策，不创建资源。
+	mux.HandleFunc("/api/nodes/schedule", corsMiddleware(api.AdminMiddleware(api.HandleNodeSchedule)))
 	mux.HandleFunc("/api/nodes/", corsMiddleware(api.HandleNodeSubRoutes))
 	mux.HandleFunc("/api/node-groups", corsMiddleware(api.AdminMiddleware(api.HandleNodeGroups)))
 	mux.HandleFunc("/api/node-groups/", corsMiddleware(api.AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {

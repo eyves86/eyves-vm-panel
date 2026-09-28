@@ -343,6 +343,8 @@ func collectNodeStatus() map[string]interface{} {
 			Name           string `json:"name"`
 			Status         string `json:"status"`
 			Virtualization string `json:"virtualization"`
+			IP             string `json:"ip,omitempty"`
+			SSHPort        int    `json:"ssh_port,omitempty"`
 			Suspended      bool   `json:"suspended,omitempty"`
 			VCPU           float64 `json:"vcpu"`
 			RAMMB          int    `json:"ram_mb"`
@@ -364,6 +366,7 @@ func collectNodeStatus() map[string]interface{} {
 			s := containerSummary{
 				ID: c.ID, UUID: c.UUID, Name: c.Name, Status: c.Status,
 				Virtualization: c.Virtualization, Suspended: c.Suspended,
+				IP: c.IP, SSHPort: c.SSHPort,
 				VCPU: c.VCPU, RAMMB: c.RAMMB, DiskGB: c.DiskGB,
 				ExpiresAt: c.ExpiresAt, TrafficUsedRX: c.TrafficUsedRX,
 				TrafficUsedTX: c.TrafficUsedTX,
