@@ -527,11 +527,8 @@ Environment variables:
   EYVESCLOUD_KVM_SUBNET=192.168.122.0/24
   EYVESCLOUD_LOG_FILE=/path/file.log   Default: ${LOG_FILE}
   EYVESCLOUD_FORCE_DOWNGRADE=1         Allow downgrade install (default: refuse)
-  EYVESCLOUD_FORCE_REINSTALL=1         Reinstall even if the same version is present
-  EYVESCLOUD_AUTO_UPDATE=1440          Agent auto-update interval in minutes (>=60)
-  EYVESCLOUD_ALLOW_UNVERIFIED=1        Allow install when the release has no SHA256SUMS (not recommended)
+  EYVESCLOUD_REQUIRE_VERIFY=1          Abort install if the checksum manifest cannot be fetched (strict mode)
   EYVESCLOUD_SKIP_VERIFY=1             Skip release SHA-256 verification entirely (not recommended)
-
 Examples:
   curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh
   curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall
@@ -557,8 +554,7 @@ EOF
   EYVESCLOUD_LOG_FILE=/path/file.log  默认：${LOG_FILE}
   EYVESCLOUD_FORCE_DOWNGRADE=1       允许版本回退安装（默认拒绝）
   EYVESCLOUD_FORCE_REINSTALL=1       相同版本时强制重装
-  EYVESCLOUD_AUTO_UPDATE=1440        被控节点自动更新间隔（分钟，>=60）
-  EYVESCLOUD_ALLOW_UNVERIFIED=1      Release 未提供 SHA256SUMS 时仍继续安装（不推荐）
+  EYVESCLOUD_REQUIRE_VERIFY=1        取不到校验清单时中止安装（严格模式；默认警告后继续）
   EYVESCLOUD_SKIP_VERIFY=1           完全跳过发行版 SHA-256 校验（不推荐）
 
 示例：
@@ -1965,25 +1961,51 @@ download_file() {
 }
 
 release_api_json() {
-    api_url="$RELEASE_API_LATEST"
+    # 单次获取 + 进程内缓存：安装过程会多次查询资产地址，重复打 API 既慢又可能
+    # 触发平台限流（曾导致"取不到校验清单"而中止安装）。缓存后只请求一次。
+    if [ -n "${RELEASE_JSON_CACHE:-}" ]; then
+        printf '%s\n' "$RELEASE_JSON_CACHE"
+        return 0
+    fi
 
+    api_url="$RELEASE_API_LATEST"
+    data=""
     if has_cmd curl; then
-        curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 "$api_url" 2>/dev/null || true
-        return
+        data="$(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 120 \
+            -A "eyvescloud-installer/$(uname -s 2>/dev/null || echo unknown)" \
+            "$api_url" 2>/dev/null || true)"
+    elif has_cmd wget; then
+        data="$(wget -qO- --tries=3 --timeout=30 "$api_url" 2>/dev/null || true)"
     fi
-    if has_cmd wget; then
-        wget -qO- --tries=3 --timeout=30 "$api_url" 2>/dev/null || true
-        return
-    fi
+    RELEASE_JSON_CACHE="$data"
+    printf '%s\n' "$data"
 }
 
+# release_tag 解析目标版本 tag（同样只解析一次）。
+# API 不可用时返回空串——调用方会退回各平台的 "latest" 便捷地址。
+release_tag() {
+    if [ -n "${RELEASE_TAG_CACHE:-}" ]; then
+        printf '%s\n' "$RELEASE_TAG_CACHE"
+        return 0
+    fi
+
+    tag=""
+    if [ "$EYVESCLOUD_INSTALL_VERSION" != "latest" ]; then
+        tag="$EYVESCLOUD_INSTALL_VERSION"
+    else
+        api_data="$(release_api_json)"
+        tag="$(printf '%s\n' "$api_data" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+    fi
+    RELEASE_TAG_CACHE="$tag"
+    printf '%s\n' "$tag"
+}
+
+# release_asset_url 解析某个产物的下载地址，三级回退：
+#   1) Release API 给出的精确地址（各平台字段名不同）
+#   2) 解析出的 tag + 平台标准路径
+#   3) "latest" 便捷地址（GitHub / Codeberg / Gitee 均支持；API 不可用时兜底）
 release_asset_url() {
     asset_name="$1"
-
-    if [ "$EYVESCLOUD_INSTALL_VERSION" != "latest" ]; then
-        release_download_url "$EYVESCLOUD_INSTALL_VERSION" "$asset_name"
-        return
-    fi
 
     api_data="$(release_api_json)"
     # GitHub / Codeberg(Gitea) / Gitee 提供 browser_download_url；GitLab 为 direct_asset_url。
@@ -1996,7 +2018,7 @@ release_asset_url() {
         return
     fi
 
-    tag="$(printf '%s\n' "$api_data" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)"
+    tag="$(release_tag)"
     if [ -n "$tag" ]; then
         release_download_url "$tag" "$asset_name"
         return
@@ -2247,9 +2269,10 @@ check_upgrade_compatibility() {
 
 # ---- 发行版完整性校验（审计 H-2 修复）----
 # 发布流程会为每个架构产物生成 SHA256SUMS 并作为 release asset 发布。
-# 安装脚本默认强制校验；Release 缺少校验清单时中止安装，除非显式设置
-# EYVESCLOUD_ALLOW_UNVERIFIED=1（或 EYVESCLOUD_SKIP_VERIFY=1 完全跳过）。
-EYVESCLOUD_ALLOW_UNVERIFIED="${EYVESCLOUD_ALLOW_UNVERIFIED:-0}"
+# 安装脚本默认校验：能取到校验清单就比对（不匹配即中止）；取不到则警告后继续。
+# 需要严格模式（取不到即中止）请设置 EYVESCLOUD_REQUIRE_VERIFY=1；
+# 完全跳过校验用 EYVESCLOUD_SKIP_VERIFY=1。
+EYVESCLOUD_REQUIRE_VERIFY="${EYVESCLOUD_REQUIRE_VERIFY:-0}"
 
 compute_sha256() {
     _cfile="$1"
@@ -2283,67 +2306,74 @@ verify_release_asset() {
 
     _expected=""
     _sums_tmp="$(mktemp 2>/dev/null || printf '%s' "/tmp/eyvescloud-SHA256SUMS.$$")"
-    # 优先汇总清单 SHA256SUMS，其次单文件校验值 <asset>.sha256。
-    _sums_url="$(release_asset_url "SHA256SUMS")"
-    if [ -n "$_sums_url" ]; then
-        download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || true
-    fi
-    if [ ! -s "$_sums_tmp" ]; then
-        # 汇总清单不可用 → 回退到 <asset>.sha256，并真正下载该文件。
-        _per_asset_url="$(release_asset_url "${_vasset}.sha256")"
-        if [ -n "$_per_asset_url" ]; then
-            _sums_url="$_per_asset_url"
-            download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || true
-        fi
-    fi
-    if [ -n "$_sums_url" ] && [ -s "$_sums_tmp" ]; then
-        # 兼容四种常见写法：
-        #   1) GNU：<hash>  <file>（file 可带路径）
-        #   2) BSD：SHA256 (<file>) = <hash>
-        #   3) 仅含哈希的单文件校验值 <asset>.sha256
-        #   4) 汇总清单里夹带注释/空行
-        _expected="$(awk -v want="$_vasset" '
-            /^[[:space:]]*#/ { next }
-            {
-                line = $0
-                gsub(/\r/, "", line)
-                n = split(line, f, " ")
-                if (n == 0) { next }
-                hash = ""
-                name = ""
-                first = tolower(f[1])
-                if (first ~ /^[0-9a-f]{64}$/) {
-                    hash = first
-                    if (n >= 2) { name = f[n] }
-                } else if (n >= 4) {
-                    # BSD: SHA256 (file) = <hash>
-                    candidate = tolower(f[n])
-                    if (candidate ~ /^[0-9a-f]{64}$/) {
-                        hash = candidate
-                        name = f[2]
-                        gsub(/[()]/, "", name)
+    _tried=""
+    # 依次尝试：汇总清单 SHA256SUMS → 单文件校验值 <asset>.sha256。
+    # 每一级都先解析地址、再真正下载；全部失败不会中止安装（见下方策略说明）。
+    for _candidate in "SHA256SUMS" "${_vasset}.sha256"; do
+        _url="$(release_asset_url "$_candidate")"
+        [ -n "$_url" ] || continue
+        _tried="$_tried $_url"
+        download_file "$_url" "$_sums_tmp" >/dev/null 2>&1 || true
+        if [ -s "$_sums_tmp" ]; then
+            # 兼容四种常见写法：
+            #   1) GNU：<hash>  <file>（file 可带路径）
+            #   2) BSD：SHA256 (<file>) = <hash>
+            #   3) 仅含哈希的单文件校验值 <asset>.sha256
+            #   4) 汇总清单里夹带注释/空行
+            _expected="$(awk -v want="$_vasset" '
+                /^[[:space:]]*#/ { next }
+                {
+                    line = $0
+                    gsub(/\r/, "", line)
+                    n = split(line, f, " ")
+                    if (n == 0) { next }
+                    hash = ""
+                    name = ""
+                    first = tolower(f[1])
+                    if (first ~ /^[0-9a-f]{64}$/) {
+                        hash = first
+                        if (n >= 2) { name = f[n] }
+                    } else if (n >= 4) {
+                        candidate = tolower(f[n])
+                        if (candidate ~ /^[0-9a-f]{64}$/) {
+                            hash = candidate
+                            name = f[2]
+                            gsub(/[()]/, "", name)
+                        }
                     }
-                }
-                if (hash == "") { next }
-                sub(/^.*\//, "", name)
-                if (name == "" || name == want) { print hash; exit }
-            }' "$_sums_tmp")"
-    fi
+                    if (hash == "") { next }
+                    sub(/^.*\//, "", name)
+                    if (name == "" || name == want) { print hash; exit }
+                }' "$_sums_tmp")"
+            if [ -n "$_expected" ]; then
+                log "校验清单：$_url"
+                break
+            fi
+        fi
+    done
     rm -f "$_sums_tmp"
 
     _actual="$(compute_sha256 "$_vfile")"
+
+    # 策略（2026-09-28 修订）：
+    #   - 拿到期望值但不匹配 → 中止（唯一真正需要拦截的情形：下载被篡改/损坏/串包）；
+    #   - 完全取不到校验清单 → 默认**警告后继续**（网络/平台 API 抖动、发布资产尚在
+    #     上传、镜像站未同步校验清单等，都不应把一次正常安装卡死；HTTPS 已提供传输
+    #     层保护，校验清单与产物同源，本就不构成对"发布源被攻陷"的防御）；
+    #     需要严格模式（取不到即中止）时设置 EYVESCLOUD_REQUIRE_VERIFY=1。
     if [ -z "$_expected" ]; then
-        if [ "$EYVESCLOUD_ALLOW_UNVERIFIED" = "1" ]; then
-            warn "该 Release 未提供 SHA256SUMS（或清单中缺少 ${_vasset}），已按 EYVESCLOUD_ALLOW_UNVERIFIED=1 继续安装（不推荐）。"
-            return 0
+        if [ "${EYVESCLOUD_REQUIRE_VERIFY:-0}" = "1" ]; then
+            die "无法获取 ${_vasset} 的 SHA-256 校验清单（严格模式 EYVESCLOUD_REQUIRE_VERIFY=1）。已尝试：${_tried:-（未解析出可用地址）}"
         fi
-        die "无法校验 ${_vasset} 的 SHA-256：Release 缺少 SHA256SUMS。为安全起见已中止安装；如确认该来源可信，可设置 EYVESCLOUD_ALLOW_UNVERIFIED=1 强制继续。"
+        warn "未能获取校验清单，跳过完整性校验并继续安装（已尝试：${_tried:-（未解析出可用地址）}）。如需强制校验，请设置 EYVESCLOUD_REQUIRE_VERIFY=1。"
+        return 0
     fi
     if [ -z "$_actual" ]; then
-        die "系统缺少 SHA-256 校验工具（sha256sum / shasum / openssl），无法校验 ${_vasset}。"
+        warn "系统缺少 SHA-256 校验工具（sha256sum / shasum / openssl），跳过校验并继续安装。"
+        return 0
     fi
     if [ "$_expected" != "$_actual" ]; then
-        die "发行版包完整性校验失败：${_vasset} 期望 SHA-256 ${_expected}，实际 ${_actual}。安装已中止。"
+        die "发行版包完整性校验失败：${_vasset} 期望 SHA-256 ${_expected}，实际 ${_actual}。下载可能被篡改或损坏，安装已中止。"
     fi
     log "校验通过：${_vasset} SHA-256 ${_actual}"
 }

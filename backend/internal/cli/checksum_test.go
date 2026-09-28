@@ -33,10 +33,18 @@ func TestVerifyReleaseArchiveEnforced(t *testing.T) {
 		}))
 	}
 
-	t.Run("missing checksums is refused by default", func(t *testing.T) {
+	t.Run("missing checksums continues with warning by default", func(t *testing.T) {
 		t.Setenv(updateAllowUnverifiedEnv, "")
+		t.Setenv(updateRequireVerifyEnv, "")
+		if err := verifyReleaseArchive(archive, assetName, ""); err != nil {
+			t.Fatalf("missing manifest must not block the upgrade by default: %v", err)
+		}
+	})
+
+	t.Run("missing checksums aborts in strict mode", func(t *testing.T) {
+		t.Setenv(updateRequireVerifyEnv, "1")
 		if err := verifyReleaseArchive(archive, assetName, ""); err == nil {
-			t.Fatal("expected refusal when no checksums asset exists")
+			t.Fatal("expected strict mode to abort when no checksums asset exists")
 		}
 	})
 
@@ -71,11 +79,23 @@ func TestVerifyReleaseArchiveEnforced(t *testing.T) {
 		}
 	})
 
-	t.Run("asset missing from checksum file aborts", func(t *testing.T) {
+	t.Run("asset missing from checksum file continues by default, aborts in strict mode", func(t *testing.T) {
 		srv := serve(strings.Repeat("c", 64) + "  unrelated.tar.gz\n")
 		defer srv.Close()
+		t.Setenv(updateRequireVerifyEnv, "")
+		if err := verifyReleaseArchive(archive, assetName, srv.URL); err != nil {
+			t.Fatalf("manifest without our asset must not block the upgrade by default: %v", err)
+		}
+		t.Setenv(updateRequireVerifyEnv, "1")
 		if err := verifyReleaseArchive(archive, assetName, srv.URL); err == nil {
-			t.Fatal("expected missing entry to abort the upgrade")
+			t.Fatal("expected strict mode to abort when the manifest lacks our asset")
+		}
+	})
+
+	t.Run("unreachable checksum manifest continues by default", func(t *testing.T) {
+		t.Setenv(updateRequireVerifyEnv, "")
+		if err := verifyReleaseArchive(archive, assetName, "http://127.0.0.1:1/SHA256SUMS"); err != nil {
+			t.Fatalf("unreachable manifest must not block the upgrade by default: %v", err)
 		}
 	})
 
