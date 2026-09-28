@@ -1941,8 +1941,22 @@ download_file() {
         return
     fi
     if has_cmd wget; then
-        wget --tries=6 --timeout=30 --waitretry=2 -O "$dest" "$url"
-        return
+        # GNU wget 支持 --waitretry；BusyBox wget 不支持（会直接报 usage 错误），
+        # 因此先按 GNU 参数尝试（失败时的 usage 噪声抑制掉），再退回最简参数
+        # （Alpine/OpenWrt 等最小系统常只有 BusyBox wget）。
+        if wget --tries=6 --timeout=30 --waitretry=2 -O "$dest" "$url" 2>/dev/null; then
+            return 0
+        fi
+        rm -f "$dest"
+        if wget -q -T 30 -O "$dest" "$url"; then
+            return 0
+        fi
+    fi
+    if has_cmd busybox; then
+        rm -f "$dest"
+        if busybox wget -q -T 30 -O "$dest" "$url"; then
+            return 0
+        fi
     fi
     return 127
 }
@@ -2268,25 +2282,48 @@ verify_release_asset() {
     _sums_tmp="$(mktemp 2>/dev/null || printf '%s' "/tmp/eyvescloud-SHA256SUMS.$$")"
     # 优先汇总清单 SHA256SUMS，其次单文件校验值 <asset>.sha256。
     _sums_url="$(release_asset_url "SHA256SUMS")"
-    if [ -z "$_sums_url" ] || ! download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || [ ! -s "$_sums_tmp" ]; then
+    if [ -n "$_sums_url" ]; then
+        download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || true
+    fi
+    if [ ! -s "$_sums_tmp" ]; then
+        # 汇总清单不可用 → 回退到 <asset>.sha256，并真正下载该文件。
         _per_asset_url="$(release_asset_url "${_vasset}.sha256")"
         if [ -n "$_per_asset_url" ]; then
             _sums_url="$_per_asset_url"
-            rm -f "$_sums_tmp"
-            _sums_tmp="$(mktemp 2>/dev/null || printf '%s' "/tmp/eyvescloud-SHA256SUMS.$$")"
+            download_file "$_sums_url" "$_sums_tmp" >/dev/null 2>&1 || true
         fi
     fi
     if [ -n "$_sums_url" ] && [ -s "$_sums_tmp" ]; then
+        # 兼容四种常见写法：
+        #   1) GNU：<hash>  <file>（file 可带路径）
+        #   2) BSD：SHA256 (<file>) = <hash>
+        #   3) 仅含哈希的单文件校验值 <asset>.sha256
+        #   4) 汇总清单里夹带注释/空行
         _expected="$(awk -v want="$_vasset" '
+            /^[[:space:]]*#/ { next }
             {
                 line = $0
                 gsub(/\r/, "", line)
                 n = split(line, f, " ")
-                if (n >= 2) {
-                    name = f[n]
-                    sub(/^.*\//, "", name)
-                    if (name == want) { print tolower(f[1]); exit }
+                if (n == 0) { next }
+                hash = ""
+                name = ""
+                first = tolower(f[1])
+                if (first ~ /^[0-9a-f]{64}$/) {
+                    hash = first
+                    if (n >= 2) { name = f[n] }
+                } else if (n >= 4) {
+                    # BSD: SHA256 (file) = <hash>
+                    candidate = tolower(f[n])
+                    if (candidate ~ /^[0-9a-f]{64}$/) {
+                        hash = candidate
+                        name = f[2]
+                        gsub(/[()]/, "", name)
+                    }
                 }
+                if (hash == "") { next }
+                sub(/^.*\//, "", name)
+                if (name == "" || name == want) { print hash; exit }
             }' "$_sums_tmp")"
     fi
     rm -f "$_sums_tmp"

@@ -44,8 +44,20 @@
   归档与裸二进制两条下载路径都强制校验；`EYVESCLOUD_ALLOW_UNVERIFIED=1` /
   `EYVESCLOUD_SKIP_VERIFY=1` 为显式豁免开关（默认关闭）。
 - **发布侧**：workflow 为每个架构产物生成 `*.sha256` 并汇总 `SHA256SUMS` 一起发布。
+- 校验清单格式兼容：GNU（`<hash>  <file>`，可带路径）、BSD（`SHA256 (file) = <hash>`）、
+  以及仅含哈希的单文件校验值 `<asset>.sha256`。
 - 兼容：`install.sh` 同时接受 `eyvescloud-linux-<arch>/eyvescloud` 与扁平
-  `./eyvescloud` 两种历史包布局。
+  `./eyvescloud` 两种历史包布局；`download_file` 增加 BusyBox wget 回退
+  （最小系统 / Alpine 上无 curl 时也能安装）。
+- **行为矩阵实测**（`verify_release_asset`，本地 HTTP 源 + 真实产物）：
+  | 场景 | 期望 | 实测 |
+  | --- | --- | --- |
+  | 汇总清单存在且哈希匹配 | 通过 | ✅ rc=0 |
+  | 哈希不匹配 | 中止 | ✅ rc=1 |
+  | 清单全部缺失（fail closed） | 中止 | ✅ rc=1 |
+  | 清单缺失 + `EYVESCLOUD_ALLOW_UNVERIFIED=1` | 通过并告警 | ✅ rc=0 |
+  | `EYVESCLOUD_SKIP_VERIFY=1` | 通过并告警 | ✅ rc=0 |
+  | 汇总缺失但有 `<asset>.sha256` | 通过 | ✅ rc=0 |
 
 ### H-3 审计主体可伪造（`X-Original-Actor`）
 - 主控侧（`api/nodes.go`）：始终用服务端判定的 actor 覆盖该 header，不再透传客户端值。
