@@ -14,10 +14,10 @@ EyvesCloud 提供一键安装脚本。脚本默认安装 GitHub Releases 的最�
 ## 安装最新版本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo sh
 ```
 
-> 说明：`install.sh` 默认从本仓库 Release（`FenhaoLost/eyves-vm-panel`）拉取发行版；如需覆盖来源，可设置 `EYVESCLOUD_REPO`。
+> 说明：`install.sh` 默认从本仓库 Release（`codeberg:fenhaolost/eyves-vm-panel`）拉取发行版；如需覆盖来源，可设置 `EYVESCLOUD_REPO`。
 
 安装器会分别询问 LXC 与 KVM 的 NAT 私网网段。直接回车时，脚本会扫描宿主机路由、网卡、网桥和 libvirt 网络，自动选择未冲突的 RFC1918 `/24` 网段；也可以输入 `172.28.40.0/24` 这类 CIDR。非交互安装可设置 `EYVESCLOUD_LXC_SUBNET` 和 `EYVESCLOUD_KVM_SUBNET`。
 
@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/inst
 ## 安装指定版本
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel EYVESCLOUD_VERSION=v1.1.32 sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel EYVESCLOUD_VERSION=v1.1.32 sh
 ```
 
 把 `v1.1.32` 替换成需要安装的 Release 标签即可。
@@ -86,9 +86,9 @@ eyvescloud agent --controller=http://MASTER_IP:8999 --install-key=INSTALL_KEY --
 ## 卸载
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh -s -- uninstall
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh -s -- uninstall
 # 非交互卸载
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel EYVESCLOUD_UNINSTALL_CONFIRM=1 sh -s -- uninstall
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel EYVESCLOUD_UNINSTALL_CONFIRM=1 sh -s -- uninstall
 ```
 
 卸载前请确认是否需要保留容器、镜像缓存、数据库和配置文件。

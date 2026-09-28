@@ -148,6 +148,10 @@ func HandleContainerMigrateExport(w http.ResponseWriter, r *http.Request, id int
 		ExportedAt: time.Now().Format(time.RFC3339),
 		Container:  buildMigrateContainer(*c),
 	}
+	// 审计 H-5：迁移包含容器 SSH 口令等凭据，导出前加密（enc:v1:）——同面板
+	// 备份/还原可解密还原；跨面板迁移若密钥不同，导入端会将其置空并在响应中提示，
+	// 绝不会把明文口令写进迁移文件。
+	bundle.Container.SSHPassword = config.EncryptSecretAtRest(bundle.Container.SSHPassword)
 	if sum, err := checksumMigrateContainer(bundle.Container); err == nil {
 		bundle.ChecksumSHA256 = sum
 	}
@@ -188,6 +192,16 @@ func HandleMigrateImport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	mc := bundle.Container
+	// 审计 H-5：迁移包中的 SSH 口令为 enc:v1: 密文，解密回明文供开通流程使用；
+	// 跨面板迁移（密钥不同）解密失败时置空，由下方提示管理员重新设置。
+	sshPasswordUnavailable := false
+	if mc.SSHPassword != "" {
+		plain := config.DecryptSecretAtRest(mc.SSHPassword)
+		if plain == "" {
+			sshPasswordUnavailable = true
+		}
+		mc.SSHPassword = plain
+	}
 	if strings.TrimSpace(mc.Name) == "" || strings.TrimSpace(mc.Template) == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Migration bundle is missing name or template"})
 		return
@@ -283,7 +297,11 @@ func HandleMigrateImport(w http.ResponseWriter, r *http.Request) {
 		config.SetContainerTenant(created.ID, mc.Tenant)
 	}
 	auditRequest(r, "container.migrate_import", mc.Name, fmt.Sprintf("从迁移包导入 (format=%s)", bundle.Format), true, "")
-	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Message: "Container imported successfully", Data: map[string]string{"name": mc.Name}})
+	msg := "Container imported successfully"
+	if sshPasswordUnavailable {
+		msg += "；迁移包中的 SSH 口令无法在本面板解密（加密密钥不同），已清空——请在容器详情中重置 SSH 口令"
+	}
+	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Message: msg, Data: map[string]string{"name": mc.Name}})
 }
 
 func publicIPv4Addresses(assignments []config.PublicIPv4Assignment) []string {

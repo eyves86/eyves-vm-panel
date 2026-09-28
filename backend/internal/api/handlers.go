@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -1874,9 +1873,10 @@ func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
 	newSSHPort := config.AppConfig.NextSSHPort
 	config.AppConfig.NextSSHPort++
 	newUUID := "c-" + randomHex(12) + "-" + randomHex(4) + "-" + randomHex(4) + "-" + randomHex(4) + "-" + randomHex(12)
-	// 新 MAC（前缀 02:00:00 保留给虚拟化）
-	newMAC := fmt.Sprintf("02:00:00:%02x:%02x:%02x",
-		rand.Intn(256), rand.Intn(256), rand.Intn(256))
+	// 新 MAC（前缀 02:00:00 保留给虚拟化）。
+	// 审计 H-8：改用 crypto/rand 生成，避免 math/rand 可预测（同宿主多租户下
+	// 可预测的 MAC 便于伪造/碰撞，尤其在按 MAC 做 DHCP/IPv6 绑定的场景）。
+	newMAC := randomVirtualMAC()
 	config.AppConfigMu.Unlock()
 
 	newLxcName := fmt.Sprintf("ct-%d", newID)

@@ -56,6 +56,9 @@ const (
 	authTypeAdmin   = "admin"
 	authTypeSubUser = "sub_user"
 	authTypeAPIKey  = "api_key"
+	// authTypeAgent 表示请求已通过节点 token 校验（主控 → 被控的 agent API）。
+	// 仅该类型允许采信 X-Original-Actor（见 requestActor 的安全约束）。
+	authTypeAgent = "agent"
 
 	// jwtIssuer / jwtAudience 用于校验令牌签发方与用途，防止跨服务令牌重放。
 	jwtIssuer   = "eyvescloud"
@@ -74,9 +77,15 @@ func authContextFromRequest(r *http.Request) (AuthContext, bool) {
 func requestActor(r *http.Request) string {
 	// 多节点转发场景：主控 → agent 转发时把原始请求的 actor 写到 X-Original-Actor。
 	// agent 端审计时应优先使用这个值，避免把"agent 自身 token"记成操作人。
-	// 仅当 header 非空时使用（直连到 agent 的请求不会有这个 header，自然 fallback）。
-	if orig := r.Header.Get("X-Original-Actor"); orig != "" {
-		return orig
+	//
+	// 安全约束（审计 H-3）：该 header 只在**请求已通过节点 token 校验**
+	// （AgentTokenMiddleware 注入标记）时才被采信——主控是唯一持有节点 token 的
+	// 调用方，因此该值可信；其余路径（浏览器 / API Key / 未认证）一律忽略客户端
+	// 传入的 header，防止把操作伪造成他人名下。
+	if ctx, ok := authContextFromRequest(r); ok && ctx.Type == authTypeAgent {
+		if orig := strings.TrimSpace(r.Header.Get("X-Original-Actor")); orig != "" {
+			return orig
+		}
 	}
 	if ctx, ok := authContextFromRequest(r); ok && ctx.Actor != "" {
 		return ctx.Actor
@@ -222,6 +231,11 @@ func tokenFromRequest(r *http.Request) string {
 	authHeader := r.Header.Get("Authorization")
 	if strings.HasPrefix(authHeader, "Bearer ") {
 		return strings.TrimPrefix(authHeader, "Bearer ")
+	}
+	// 浏览器场景（审计 H-6）：会话令牌由服务端以 HttpOnly Cookie 承载，
+	// JS 读不到、XSS 偷不走；CLI / API Key / 第三方集成仍走 Authorization。
+	if cookie, err := r.Cookie(sessionCookieName); err == nil {
+		return strings.TrimSpace(cookie.Value)
 	}
 	return ""
 }
@@ -424,6 +438,9 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		config.DeleteFirstBootCredentialsIfExists()
 	}
 
+	// 会话令牌同时以 HttpOnly Cookie 下发（审计 H-6）：浏览器不再需要把 JWT
+	// 存进 localStorage；响应体里的 token 保留给 CLI / 旧客户端兼容。
+	setSessionCookie(w, r, tokenString)
 	jsonResponse(w, http.StatusOK, APIResponse{
 		Success: true,
 		Data: LoginResponse{
@@ -487,6 +504,7 @@ func handleExtraAdminLogin(w http.ResponseWriter, r *http.Request, username, pas
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to generate token"})
 		return true
 	}
+	setSessionCookie(w, r, tokenString)
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: LoginResponse{Token: tokenString, Username: acct.Username}})
 	return true
 }
@@ -613,6 +631,11 @@ func authContextFromClaims(claims jwt.MapClaims) AuthContext {
 // AuthMiddleware extracts JWT from cookies or Authorization header
 func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// CSRF 纵深防御（审计 H-6）：Cookie 认证的状态变更请求必须来自本站来源。
+		if !cookieCSRFGuard(r) {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Cross-site request rejected"})
+			return
+		}
 		tokenString := tokenFromRequest(r)
 		if claims, ok := claimsFromToken(tokenString); ok {
 			next(w, withAuthContext(r, authContextFromClaims(claims)))

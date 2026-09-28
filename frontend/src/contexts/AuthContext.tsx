@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-import api, { login as apiLogin, checkAuth, LoginResponse } from '../services/api'
+import api, { login as apiLogin, checkAuth, setAuthToken, logoutRequest, LoginResponse } from '../services/api'
 import { adminUrl } from '../services/panelPath'
 
 // CheckAuthData 与服务端 /check-auth 返回的解析结果对应。
@@ -48,8 +48,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
   const saveAuth = (t: string, u: string, sub: boolean, ids: string[], readOnly = false) => {
-    localStorage.setItem('eyvescloud_token', t)
-    localStorage.setItem('eyvescloud_username', u)
+    // 审计 H-6：不再写入 localStorage。令牌由服务端 HttpOnly Cookie 承载
+    // （刷新页面仍保持登录），内存副本仅用于需要在头部显式带 Bearer 的场景。
+    setAuthToken(t)
     setToken(t)
     setUsername(u)
     setIsSubUser(sub)
@@ -59,44 +60,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('eyvescloud_token')
+    // 刷新后：Cookie 仍在（HttpOnly），直接向服务端确认会话有效性并由其返回
+    // 权威的角色/只读态/绑定容器；不再依赖 localStorage 中的令牌。
     const savedUsername = localStorage.getItem('eyvescloud_username')
-    if (savedToken) {
-      setToken(savedToken)
-      // 刷新时以服务端 /check-auth 为唯一权威重建角色/只读态/绑定容器，
-      // 而非仅凭可能过期的 JWT claims，避免旧 role 导致 UI 状态失真。
-      checkAuth()
-        .then((res) => {
-          const data = (res.data as { data?: CheckAuthData }).data
-          if (data) {
-            setUsername(data.username || savedUsername || null)
-            setIsSubUser(!!data.sub_user)
-            setIsReadOnly(!!data.sub_user && (data.role || '') === 'viewer')
-            setAdminRole(data.admin_role || '')
-            setContainerIdentifiers(Array.isArray(data.container_uuids) ? data.container_uuids : [])
-          } else {
-            const payload = decodeTokenPayload(savedToken)
-            setUsername(payload?.username || payload?.sub_user || savedUsername || null)
-            setIsSubUser(!!payload?.sub_user)
-            setIsReadOnly(!!payload?.sub_user && payload?.role === 'viewer')
-            setAdminRole(payload?.sub_user ? '' : (payload?.role || ''))
-            setContainerIdentifiers(Array.isArray(payload?.container_uuids) ? payload.container_uuids : [])
-          }
-          setIsAuthenticated(true)
-        })
-        .catch(() => {
-          localStorage.removeItem('eyvescloud_token')
-          localStorage.removeItem('eyvescloud_username')
-          setToken(null)
-          setUsername(null)
-          setIsSubUser(false)
-          setIsReadOnly(false)
-          setContainerIdentifiers([])
-        })
-        .finally(() => setIsLoading(false))
-    } else {
-      setIsLoading(false)
-    }
+    checkAuth()
+      .then((res) => {
+        const data = (res.data as { data?: CheckAuthData }).data
+        if (data) {
+          setUsername(data.username || savedUsername || null)
+          setIsSubUser(!!data.sub_user)
+          setIsReadOnly(!!data.sub_user && (data.role || '') === 'viewer')
+          setAdminRole(data.admin_role || '')
+          setContainerIdentifiers(Array.isArray(data.container_uuids) ? data.container_uuids : [])
+        } else {
+          setUsername(savedUsername || null)
+        }
+        setIsAuthenticated(true)
+      })
+      .catch(() => {
+        setAuthToken(null)
+        localStorage.removeItem('eyvescloud_username')
+        setToken(null)
+        setUsername(null)
+        setIsSubUser(false)
+        setIsReadOnly(false)
+        setContainerIdentifiers([])
+      })
+      .finally(() => setIsLoading(false))
   }, [navigate])
 
   // 管理员入口：只认 /api/login，不尝试子用户，避免两个门户互相穿透。
@@ -133,7 +123,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     const wasSubUser = isSubUser
-    localStorage.removeItem('eyvescloud_token')
+    // 清除服务端 HttpOnly Cookie（审计 H-6）并丢弃内存令牌。
+    void logoutRequest()
+    setAuthToken(null)
     localStorage.removeItem('eyvescloud_username')
     setToken(null)
     setUsername(null)

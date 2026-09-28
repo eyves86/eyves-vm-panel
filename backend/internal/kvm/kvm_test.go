@@ -31,7 +31,16 @@ func TestImagePathUsesAllowlistedImageID(t *testing.T) {
 }
 
 func TestWindows11ImageDefinition(t *testing.T) {
-	image := FindImage("kvm-windows-11")
+	// Windows 镜像只有 amd64 定义（arm64 无官方 Windows 云镜像），
+	// 因此断言针对 amd64 镜像表，跑在 arm64 上同样成立（审计：测试不应架构相关）。
+	var image *Image
+	for _, candidate := range ImagesForArch("amd64") {
+		if candidate.ID == "kvm-windows-11" {
+			found := candidate
+			image = &found
+			break
+		}
+	}
 	if image == nil {
 		t.Fatal("Windows 11 image is missing from the amd64 image list")
 	}
@@ -41,8 +50,16 @@ func TestWindows11ImageDefinition(t *testing.T) {
 	if !strings.Contains(image.URL, "microsoft.com/fwlink/") {
 		t.Fatalf("Windows 11 image does not use an official Microsoft URL: %s", image.URL)
 	}
-	if got := filepath.Base(ImagePath(image.ID)); got != "kvm-windows-11.iso" {
-		t.Fatalf("Windows 11 image basename = %q", got)
+	// 产物路径校验：Windows 镜像用 .iso；该断言只在"当前架构确实提供该镜像"时
+	// 有意义（arm64 上 Windows 镜像不存在，ImagePath 会按设计返回 invalid 占位名）。
+	if FindImage(image.ID) != nil {
+		if got := filepath.Base(ImagePath(image.ID)); got != "kvm-windows-11.iso" {
+			t.Fatalf("Windows 11 image basename = %q", got)
+		}
+	} else {
+		if got := filepath.Base(ImagePath(image.ID)); got != "__invalid_image_id__.qcow2" {
+			t.Fatalf("non-native arch image must use the invalid placeholder, got %q", got)
+		}
 	}
 }
 

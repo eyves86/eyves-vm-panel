@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -136,7 +137,9 @@ func HandleAgentRegister(w http.ResponseWriter, r *http.Request) {
 	viaPairingKey := false
 	if !isAdmin {
 		expected, ok := agentPairingKeyValid()
-		if !ok || strings.TrimSpace(req.PairingKey) != expected {
+		// 常量时间比较（审计 H-8）：对接密钥是 64 位 hex 的一次性凭据，
+		// 但计时侧信道应一律按统一姿势消除，与其他凭据校验保持一致。
+		if !ok || subtle.ConstantTimeCompare([]byte(strings.TrimSpace(req.PairingKey)), []byte(expected)) != 1 {
 			auditRequest(r, "agent.register", "", "对接密钥无效或已过期", false, "")
 			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "对接密钥无效或已过期"})
 			return

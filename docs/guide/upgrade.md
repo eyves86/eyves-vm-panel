@@ -26,13 +26,13 @@ curl http://127.0.0.1:8999/api/version
 安装脚本默认使用最新 Release；在交互终端不指定版本时，会列出项目全部版本供选择：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel sh
 ```
 
 指定版本：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/FenhaoLost/eyves-vm-panel/main/install.sh | sudo EYVESCLOUD_REPO=FenhaoLost/eyves-vm-panel EYVESCLOUD_VERSION=v1.1.32 sh
+curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel EYVESCLOUD_VERSION=v1.1.32 sh
 ```
 
 交互式选择详情见「安装 → 列出所有版本并交互式选择」。

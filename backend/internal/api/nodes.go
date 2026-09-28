@@ -1586,14 +1586,14 @@ func proxyNodeRequest(r *http.Request, node config.Node, method, path string, bo
 	}
 	req.Header.Set("Authorization", "Bearer "+node.Token)
 	req.Header.Set("Content-Type", "application/json")
-	// 多节点转发：把原始请求的 actor（API Key / 子用户 / admin）写到
+	// 多节点转发：把**服务端判定**的 actor（API Key / 子用户 / admin）写到
 	// X-Original-Actor header，agent 端审计时优先使用，避免把操作记到 agent token 名下。
+	//
+	// 安全约束（审计 H-3）：该 header 属于服务端可信值，绝不能采信客户端传入的同名
+	// header——否则任意已认证调用方都能在被控节点上把操作伪造成他人（含 admin）名下，
+	// 破坏审计可信度。这里始终用 requestActor(r) 覆盖。
 	if r != nil {
-		if orig := r.Header.Get("X-Original-Actor"); orig != "" {
-			req.Header.Set("X-Original-Actor", orig)
-		} else {
-			req.Header.Set("X-Original-Actor", requestActor(r))
-		}
+		req.Header.Set("X-Original-Actor", requestActor(r))
 	}
 
 	resp, err := nodeHTTPClient(node, 15*time.Second).Do(req)

@@ -1,9 +1,23 @@
 import axios from 'axios'
 import { adminUrl } from './panelPath'
 
+// 审计 H-6：会话令牌不再写入 localStorage（XSS 可直接窃取 24h 管理令牌）。
+// 令牌由服务端以 HttpOnly Cookie 下发，浏览器自动携带；这里仅在内存里保留
+// 一份（登录响应里的 token），供需要在请求头显式带 Bearer 的场景使用。
+let inMemoryToken: string | null = null
+
+export function setAuthToken(token: string | null) {
+  inMemoryToken = token
+}
+
+export function getAuthToken(): string | null {
+  return inMemoryToken
+}
+
 const api = axios.create({
   baseURL: '/api',
   timeout: 30000,
+  withCredentials: true,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -11,12 +25,21 @@ const api = axios.create({
 
 // Request interceptor to add auth token
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('eyvescloud_token')
+  const token = inMemoryToken
   if (token) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
 })
+
+// 登出时通知服务端清除 HttpOnly Cookie。
+export async function logoutRequest(): Promise<void> {
+  try {
+    await api.post('/logout')
+  } catch {
+    // 忽略：本地状态照常清理
+  }
+}
 
 // Response interceptor to handle auth errors
 api.interceptors.response.use(
@@ -26,8 +49,7 @@ api.interceptors.response.use(
     const isLoginRequest = ['/login', '/sub-user/login', '/sub-user/access']
       .some((path) => requestURL === path || requestURL.endsWith(path))
     if (error.response?.status === 401 && !isLoginRequest) {
-      localStorage.removeItem('eyvescloud_token')
-      localStorage.removeItem('eyvescloud_username')
+      inMemoryToken = null
       // 管理端登录页可能挂在自定义入口路径下；用户门户固定在 /user。
       // 依据当前所在门户选择正确的登录页，避免跳错门户导致重复登录失败。
       const loginPath = window.location.pathname.startsWith('/user')

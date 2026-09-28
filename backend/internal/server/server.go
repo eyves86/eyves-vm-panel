@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"eyvescloud/internal/api"
 	"eyvescloud/internal/config"
@@ -85,6 +86,8 @@ func setupRoutes(mux *http.ServeMux) {
 	// 登录页底部版权栏（自定义文字/隐藏）：GET 公开（登录页未认证需读取），PUT 仅管理员。
 	mux.HandleFunc("/api/login-footer", corsMiddleware(api.HandleLoginFooter))
 	mux.HandleFunc("/api/check-auth", corsMiddleware(api.AuthMiddleware(api.HandleCheckAuth)))
+	// 登出：清除服务端下发的 HttpOnly 会话 Cookie（审计 H-6）。
+	mux.HandleFunc("/api/logout", corsMiddleware(api.HandleLogout))
 	mux.HandleFunc("/api/change-password", corsMiddleware(api.AdminSessionMiddleware(api.HandleAdminPasswordChange)))
 	mux.HandleFunc("/api/change-username", corsMiddleware(api.AdminSessionMiddleware(api.HandleAdminUsernameChange)))
 	mux.HandleFunc("/api/login-logs", corsMiddleware(api.AdminMiddleware(api.HandleLoginLogs)))
@@ -722,6 +725,14 @@ func Run() error {
 	server := &http.Server{
 		Addr:    addr,
 		Handler: recoverPanicMiddleware(limitRequestBody(panelAccessMiddleware(apiRateLimitMiddleware(gzipMiddleware(mux))))),
+		// 超时基线（审计 H-7）：公网暴露面的面板必须有读头/读/空闲超时，否则
+		// 慢速连接（Slowloris）可用极低成本占满连接与 goroutine。
+		// WriteTimeout 不设置：WebSSH/VNC/终端中继与日志流是长连接，写超时会
+		// 误杀正常会话；连接级保护由 ReadHeaderTimeout + IdleTimeout 提供。
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	if sslEnabled() {

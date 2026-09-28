@@ -32,7 +32,13 @@ func AgentTokenMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid agent token"})
 			return
 		}
-		next(w, r)
+		// 标记认证类型：仅此类型的请求允许采信 X-Original-Actor（审计 H-3）。
+		// actor 直接取主控写入的 header（agent 侧不解析 JWT），空值回退 "agent"。
+		actor := strings.TrimSpace(r.Header.Get("X-Original-Actor"))
+		if actor == "" {
+			actor = "agent"
+		}
+		next(w, withAuthContext(r, AuthContext{Type: authTypeAgent, Actor: actor}))
 	}
 }
 

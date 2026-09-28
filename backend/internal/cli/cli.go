@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -125,8 +127,8 @@ var cliTranslations = map[string]string{
 	"升级只会替换 /usr/local/bin/eyvescloud，并保留 /root/.eyvescloud 里的配置、容器数据和任务记录。": "The upgrade only replaces /usr/local/bin/eyvescloud and keeps configuration, container data, and task records under /root/.eyvescloud.",
 	"升级需要 root 权限。请使用: sudo eyvescloud cli":                             "Upgrade requires root privileges. Use: sudo eyvescloud cli",
 	"检查仓库":             "Checking repository",
-	"检查 GitHub 最新版本失败": "Failed to check the latest GitHub version",
-	"GitHub Release 没有 tag_name，无法判断最新版本。": "GitHub Release has no tag_name, so the latest version cannot be determined.",
+	"检查最新版本失败": "Failed to check the latest version",
+	"GitHub Release 缺少 tag_name，无法判断最新版本。": "The release is missing tag_name; cannot determine the latest version.",
 	"最新版本":            "Latest version",
 	"发布页面":            "Release page",
 	"当前架构不支持自动升级":     "Automatic upgrade is not supported on the current architecture",
@@ -139,11 +141,11 @@ var cliTranslations = map[string]string{
 	"升级失败":                                  "Upgrade failed",
 	"升级完成":                                  "Upgrade completed",
 	"原有数据已保留，Web 服务已重启。":                    "Existing data has been kept and the web service has been restarted.",
-	"GitHub API 返回":                         "GitHub API returned",
+	"Release API 返回": "Release API returned",
 	"GitHub API 被限流，已切换到备用检查方式。":            "GitHub API rate limit reached; switched to fallback check.",
 	"GitHub API 不可用，已切换到备用检查方式。":            "GitHub API is unavailable; switched to fallback check.",
-	"GitHub releases/latest 返回":             "GitHub releases/latest returned",
-	"无法从 GitHub releases/latest 跳转结果解析最新版本": "Unable to parse the latest version from the GitHub releases/latest redirect",
+	"releases/latest 返回": "releases/latest returned",
+	"无法从 releases/latest 跳转结果解析最新版本": "Unable to parse the latest version from the GitHub releases/latest redirect",
 	"正在下载升级包...":                            "Downloading upgrade package...",
 	"正在解压升级包...":                            "Extracting upgrade package...",
 	"解压失败":                                  "Extraction failed",
@@ -662,13 +664,14 @@ type repoSource struct {
 
 // resolveRepoSource 把各种仓库标识格式归一化成 repoSource。
 // 规则：
-//   - 空 → 返回 github/FenhaoLost/eyves-vm-panel
+//   - 空 → 返回官方默认仓库（Codeberg: fenhaolost/eyves-vm-panel）
 //   - "github:" / "gh:" 前缀 → GitHub
 //   - "codeberg:" / "cb:" 前缀 → Codeberg
 //   - "gitee:" / "gt:" 前缀 → Gitee
 //   - "gitlab:" / "gl:" 前缀 → GitLab
 //   - 完整 URL（https://xxx）→ 从 host 推断
-//   - "owner/repo" → 默认 GitHub
+//   - "owner/repo" → 默认 GitHub（第三方镜像/自建发布场景；官方仓库请用
+//     "codeberg:fenhaolost/eyves-vm-panel" 或直接留空）
 func resolveRepoSource(repo string) repoSource {
 	raw := strings.TrimSpace(repo)
 	platform := "github"
@@ -728,10 +731,10 @@ func resolveRepoSource(repo string) repoSource {
 		name = parts[1]
 	}
 
-	// 回退：没解析出 owner/repo → 默认仓库。
+	// 回退：没解析出 owner/repo → 官方默认仓库（Codeberg）。
 	if owner == "" || name == "" {
-		platform = "github"
-		owner = "FenhaoLost"
+		platform = "codeberg"
+		owner = "fenhaolost"
 		name = "eyves-vm-panel"
 	}
 
@@ -1085,6 +1088,25 @@ func FetchReleasesList(repo string, limit int) ([]GithubReleaseListItem, error) 
 	return fetchReleasesList(repo, limit)
 }
 
+// resolveUpdateRepo 解析本次更新使用的仓库标识，优先级：
+//  1. 环境变量 EYVESCLOUD_REPO（部署级覆盖 / 紧急切换源）
+//  2. 面板配置 update_source（platform + owner/repo，管理员可在设置中指定镜像）
+//  3. 二进制内置官方仓库 version.Repo（codeberg:fenhaolost/eyves-vm-panel）
+//
+// 三者统一走 resolveRepoSource，因此都支持 "owner/name" 与 "platform:owner/name"。
+func resolveUpdateRepo() string {
+	if repo := strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO")); repo != "" {
+		return repo
+	}
+	config.AppConfigMu.RLock()
+	src := config.NormalizeUpdateSource(config.AppConfig.UpdateSource)
+	config.AppConfigMu.RUnlock()
+	if strings.TrimSpace(src.Platform) != "" && strings.TrimSpace(src.Owner) != "" && strings.TrimSpace(src.Repo) != "" {
+		return src.Platform + ":" + src.Owner + "/" + src.Repo
+	}
+	return version.Repo
+}
+
 func cliUpgradeSystem(reader *bufio.Reader) {
 	cliPrintln("\n--- 检查并升级 EyvesCloud ---")
 	cliPrintln("升级只会替换 /usr/local/bin/eyvescloud，并保留 /root/.eyvescloud 里的配置、容器数据和任务记录。")
@@ -1094,10 +1116,7 @@ func cliUpgradeSystem(reader *bufio.Reader) {
 		return
 	}
 
-	repo := strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO"))
-	if repo == "" {
-		repo = version.Repo
-	}
+	repo := resolveUpdateRepo()
 	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
 	if err != nil {
 		cliPrintf("当前架构不支持自动升级: %s\n", runtime.GOARCH)
@@ -1105,16 +1124,16 @@ func cliUpgradeSystem(reader *bufio.Reader) {
 	}
 	current := version.Current()
 	cliPrintf("当前版本: %s\n", current)
-	cliPrintf("检查仓库: https://github.com/%s\n", repo)
+	cliPrintf("检查仓库: %s\n", buildRepoURL(resolveRepoSource(repo)))
 
 	release, err := fetchLatestRelease(repo, assetName)
 	if err != nil {
-		cliPrintf("检查 GitHub 最新版本失败: %v\n", err)
+		cliPrintf("检查最新版本失败: %v\n", err)
 		return
 	}
 	latest := strings.TrimSpace(release.TagName)
 	if latest == "" {
-		cliPrintln("GitHub Release 没有 tag_name，无法判断最新版本。")
+		cliPrintln("GitHub Release 缺少 tag_name，无法判断最新版本。")
 		return
 	}
 	cliPrintf("最新版本: %s\n", latest)
@@ -1143,7 +1162,7 @@ func cliUpgradeSystem(reader *bufio.Reader) {
 		}
 	}
 
-	if err := upgradeFromReleaseAsset(assetURL, latest, assetName); err != nil {
+	if err := upgradeFromReleaseAsset(assetURL, latest, assetName, findChecksumsURL(release, assetName)); err != nil {
 		cliPrintf("升级失败: %v\n", err)
 		return
 	}
@@ -1206,7 +1225,16 @@ func fetchLatestRelease(repo, assetName string) (*githubRelease, error) {
 func readAllString(r io.Reader) string { b, _ := io.ReadAll(r); return string(b) }
 
 func fetchLatestReleaseFallback(repo, assetName string) (*githubRelease, error) {
-	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("https://github.com/%s/releases/latest", repo), nil)
+	src := resolveRepoSource(repo)
+	web := buildRepoURL(src)
+
+	// GitLab 无 /releases/latest；用 permalink/latest，其余平台用 /releases/latest 302。
+	latestPath := "/releases/latest"
+	if src.Platform == "gitlab" {
+		latestPath = "/-/releases/permalink/latest"
+	}
+
+	req, err := http.NewRequest(http.MethodGet, web+latestPath, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1219,41 +1247,72 @@ func fetchLatestReleaseFallback(repo, assetName string) (*githubRelease, error) 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("GitHub releases/latest 返回 %s", resp.Status)
+		return nil, fmt.Errorf("%s releases/latest 返回 %s", web, resp.Status)
 	}
 
 	tag := latestTagFromPath(resp.Request.URL.Path)
 	if tag == "" {
-		return nil, fmt.Errorf("无法从 GitHub releases/latest 跳转结果解析最新版本")
+		return nil, fmt.Errorf("无法从 %s releases/latest 跳转结果解析最新版本", web)
 	}
 
 	return &githubRelease{
 		TagName: tag,
 		Name:    tag,
-		HTMLURL: fmt.Sprintf("https://github.com/%s/releases/tag/%s", repo, tag),
+		HTMLURL: releaseTagPageURL(src, tag),
 		Assets: []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
 		}{
 			{
 				Name:               assetName,
-				BrowserDownloadURL: fmt.Sprintf("https://github.com/%s/releases/latest/download/%s", repo, assetName),
+				BrowserDownloadURL: platformReleaseDownloadURL(src, "latest", assetName),
 			},
 		},
 	}, nil
 }
 
+// platformReleaseDownloadURL 返回某平台 Releases 产物的下载地址。
+// tag 传 "latest" 时使用各平台的 latest 便捷路径。
+func platformReleaseDownloadURL(s repoSource, tag, asset string) string {
+	web := buildRepoURL(s)
+	if s.Platform == "gitlab" {
+		// GitLab：/‑/releases/{tag}/downloads/{asset}（tag 为 latest 时用 permalink）。
+		if tag == "latest" {
+			return web + "/-/releases/permalink/latest/downloads/" + asset
+		}
+		return web + "/-/releases/" + tag + "/downloads/" + asset
+	}
+	return web + "/releases/download/" + tag + "/" + asset
+}
+
+// releaseTagPageURL 返回某个 release tag 的网页地址（GitLab 路径不同）。
+func releaseTagPageURL(s repoSource, tag string) string {
+	web := buildRepoURL(s)
+	if s.Platform == "gitlab" {
+		return web + "/-/releases/" + tag
+	}
+	return web + "/releases/tag/" + tag
+}
+
 func latestTagFromPath(path string) string {
-	const marker = "/releases/tag/"
-	idx := strings.Index(path, marker)
-	if idx < 0 {
-		return ""
+	for _, marker := range []string{"/releases/tag/", "/-/releases/", "/releases/"} {
+		if marker == "/releases/" && strings.Contains(path, "/releases/tag/") {
+			continue
+		}
+		idx := strings.Index(path, marker)
+		if idx < 0 {
+			continue
+		}
+		tag := strings.TrimSpace(path[idx+len(marker):])
+		if slash := strings.Index(tag, "/"); slash >= 0 {
+			tag = tag[:slash]
+		}
+		if tag == "" || tag == "latest" || tag == "permalink" {
+			continue
+		}
+		return tag
 	}
-	tag := strings.TrimSpace(path[idx+len(marker):])
-	if slash := strings.Index(tag, "/"); slash >= 0 {
-		tag = tag[:slash]
-	}
-	return tag
+	return ""
 }
 
 func setGitHubRequestHeaders(req *http.Request) {
@@ -1285,7 +1344,147 @@ func findReleaseAsset(release *githubRelease, name string) string {
 	return ""
 }
 
-func upgradeFromReleaseAsset(assetURL, latest, assetName string) error {
+// ---- 升级包完整性校验（审计 H-2 修复）----
+//
+// 发行版流程会为每个架构产物生成 SHA256SUMS 并作为 release asset 发布。
+// 升级路径强制校验：下载校验清单 → 比对归档 SHA-256 → 不匹配立即中止
+// （绝不覆盖正在运行的二进制）。若目标 Release 未提供校验清单：
+//   - 默认 fail closed，拒绝安装未校验的包；
+//   - 仅当显式设置 EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED=1 时放行，并打印警告。
+const updateAllowUnverifiedEnv = "EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED"
+
+// checksumAssetNames 是各平台可能使用的校验清单文件名的候选（大小写不敏感）。
+var checksumAssetNames = []string{"SHA256SUMS", "SHA256SUMS.txt", "sha256sums.txt", "checksums.txt", "checksums.sha256"}
+
+// findChecksumsURL 从 release 产物中找出校验清单下载地址；没有则返回空串。
+// 支持两种发布习惯：汇总清单（SHA256SUMS 等）与单文件校验值（<asset>.sha256）。
+func findChecksumsURL(release *githubRelease, assetName string) string {
+	if release == nil {
+		return ""
+	}
+	perAsset := strings.ToLower(strings.TrimSpace(assetName)) + ".sha256"
+	for _, asset := range release.Assets {
+		name := strings.TrimSpace(asset.Name)
+		if strings.EqualFold(name, perAsset) {
+			return strings.TrimSpace(asset.BrowserDownloadURL)
+		}
+		for _, candidate := range checksumAssetNames {
+			if strings.EqualFold(name, candidate) {
+				return strings.TrimSpace(asset.BrowserDownloadURL)
+			}
+		}
+	}
+	return ""
+}
+
+func updateAllowUnverified() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(updateAllowUnverifiedEnv))) {
+	case "1", "true", "yes":
+		return true
+	}
+	return false
+}
+
+// verifyReleaseArchive 强制校验升级包 SHA-256；checksumsURL 为空表示该 Release
+// 未发布校验清单（默认拒绝，除非显式豁免）。
+func verifyReleaseArchive(archivePath, assetName, checksumsURL string) error {
+	if strings.TrimSpace(checksumsURL) == "" {
+		if updateAllowUnverified() {
+			cliPrintf("警告：该 Release 未提供 %s 校验清单，已按 %s=1 跳过完整性校验（不推荐）。\n",
+				checksumAssetNames[0], updateAllowUnverifiedEnv)
+			return nil
+		}
+		return fmt.Errorf("目标 Release 未提供校验清单（%s），已拒绝安装未校验的升级包；如确需继续请设置 %s=1",
+			checksumAssetNames[0], updateAllowUnverifiedEnv)
+	}
+	expected, err := fetchExpectedChecksum(checksumsURL, assetName)
+	if err != nil {
+		return err
+	}
+	actual, err := fileSHA256(archivePath)
+	if err != nil {
+		return fmt.Errorf("计算升级包校验值失败: %w", err)
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("升级包完整性校验失败（SHA-256 不匹配）：期望 %s，实际 %s，已中止升级", expected, actual)
+	}
+	cliPrintf("升级包校验通过（SHA-256 %s）\n", actual)
+	return nil
+}
+
+// fetchExpectedChecksum 下载校验清单并取出 assetName 的期望 SHA-256。
+func fetchExpectedChecksum(checksumsURL, assetName string) (string, error) {
+	req, err := http.NewRequest(http.MethodGet, checksumsURL, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("User-Agent", "eyvescloud-updater/"+version.Current())
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("下载校验清单失败: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("下载校验清单失败：HTTP %s", resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("读取校验清单失败: %w", err)
+	}
+	want := strings.TrimSpace(filepath.Base(assetName))
+	for _, line := range strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) >= 2 && isHexSHA256(fields[0]):
+			// 标准格式：<hash>  <filename>（filename 可能带路径，按 basename 比较）
+			if strings.TrimSpace(filepath.Base(fields[len(fields)-1])) == want {
+				return strings.ToLower(fields[0]), nil
+			}
+		case len(fields) == 4 && strings.EqualFold(fields[1], "("+want+")") && strings.HasSuffix(fields[2], "="):
+			// BSD 格式：SHA256 (filename) = <hash>
+			if isHexSHA256(fields[3]) {
+				return strings.ToLower(fields[3]), nil
+			}
+		}
+	}
+	return "", fmt.Errorf("校验清单中未找到 %s 的 SHA-256 记录，已中止升级", want)
+}
+
+func isHexSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, ch := range value {
+		switch {
+		case ch >= '0' && ch <= '9', ch >= 'a' && ch <= 'f', ch >= 'A' && ch <= 'F':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// fileSHA256 计算本地文件 SHA-256（小写 hex）。
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func upgradeFromReleaseAsset(assetURL, latest, assetName, checksumsURL string) error {
 	tmpDir, err := os.MkdirTemp("", "eyvescloud-upgrade-*")
 	if err != nil {
 		return err
@@ -1295,6 +1494,9 @@ func upgradeFromReleaseAsset(assetURL, latest, assetName string) error {
 	archivePath := filepath.Join(tmpDir, assetName)
 	cliPrintln("正在下载升级包...")
 	if err := downloadFile(assetURL, archivePath); err != nil {
+		return err
+	}
+	if err := verifyReleaseArchive(archivePath, assetName, checksumsURL); err != nil {
 		return err
 	}
 
@@ -1346,10 +1548,7 @@ func upgradeFromReleaseAsset(assetURL, latest, assetName string) error {
 // 与菜单的「检查并升级」复用同一套逻辑，但不需要终端确认。
 // 返回 latestVersion 表示升级完成，nil 表示无需升级或已是最新。
 func SelfUpdateOnce() (newVersion string, upgraded bool, err error) {
-	repo := strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO"))
-	if repo == "" {
-		repo = version.Repo
-	}
+	repo := resolveUpdateRepo()
 	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
 	if err != nil {
 		return "", false, err
@@ -1358,11 +1557,11 @@ func SelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 
 	release, err := fetchLatestRelease(repo, assetName)
 	if err != nil {
-		return "", false, fmt.Errorf("检查 GitHub 最新版本失败: %w", err)
+		return "", false, fmt.Errorf("检查最新版本失败: %w", err)
 	}
 	latest := strings.TrimSpace(release.TagName)
 	if latest == "" {
-		return "", false, fmt.Errorf("GitHub Release 没有 tag_name，无法判断最新版本")
+		return "", false, fmt.Errorf("GitHub Release 缺少 tag_name，无法判断最新版本")
 	}
 	if sameVersion(current, latest) {
 		return latest, false, nil
@@ -1371,7 +1570,7 @@ func SelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 	if assetURL == "" {
 		return "", false, fmt.Errorf("最新 Release 没有找到 %s，无法自动升级", assetName)
 	}
-	if err := upgradeFromReleaseAsset(assetURL, latest, assetName); err != nil {
+	if err := upgradeFromReleaseAsset(assetURL, latest, assetName, findChecksumsURL(release, assetName)); err != nil {
 		return "", false, err
 	}
 	return latest, true, nil
@@ -1383,10 +1582,7 @@ func SelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 // 因此这里采用「先就地替换二进制、再 detached 式触发 systemctl restart」，
 // 由 systemd 统一完成"停旧起新"，新二进制在重启前就已就位。
 func PanelSelfUpdateOnce() (newVersion string, upgraded bool, err error) {
-	repo := strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO"))
-	if repo == "" {
-		repo = version.Repo
-	}
+	repo := resolveUpdateRepo()
 	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
 	if err != nil {
 		return "", false, err
@@ -1395,11 +1591,11 @@ func PanelSelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 
 	release, err := fetchLatestRelease(repo, assetName)
 	if err != nil {
-		return "", false, fmt.Errorf("检查 GitHub 最新版本失败: %w", err)
+		return "", false, fmt.Errorf("检查最新版本失败: %w", err)
 	}
 	latest := strings.TrimSpace(release.TagName)
 	if latest == "" {
-		return "", false, fmt.Errorf("GitHub Release 没有 tag_name，无法判断最新版本")
+		return "", false, fmt.Errorf("GitHub Release 缺少 tag_name，无法判断最新版本")
 	}
 	if sameVersion(current, latest) {
 		return latest, false, nil
@@ -1408,7 +1604,7 @@ func PanelSelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 	if assetURL == "" {
 		return "", false, fmt.Errorf("最新 Release 没有找到 %s，无法自动升级", assetName)
 	}
-	if err := upgradeFromReleaseAssetInPlace(assetURL, latest, assetName); err != nil {
+	if err := upgradeFromReleaseAssetInPlace(assetURL, latest, assetName, findChecksumsURL(release, assetName)); err != nil {
 		return "", false, err
 	}
 	return latest, true, nil
@@ -1419,10 +1615,7 @@ func PanelSelfUpdateOnce() (newVersion string, upgraded bool, err error) {
 // 显式指定 tag 时允许同版本重装（用户主动选择的回滚/修复场景）。
 func PanelSelfUpdateTo(repo, tag string) (newVersion string, upgraded bool, err error) {
 	if repo == "" {
-		repo = strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO"))
-		if repo == "" {
-			repo = version.Repo
-		}
+		repo = resolveUpdateRepo()
 	}
 	if !validateRepoSlug(repo) {
 		return "", false, fmt.Errorf("无效的仓库标识: %q", repo)
@@ -1457,7 +1650,7 @@ func PanelSelfUpdateTo(repo, tag string) (newVersion string, upgraded bool, err 
 	if assetURL == "" {
 		return "", false, fmt.Errorf("目标 Release %s 没有找到 %s，无法升级", target, assetName)
 	}
-	if err := upgradeFromReleaseAssetInPlace(assetURL, target, assetName); err != nil {
+	if err := upgradeFromReleaseAssetInPlace(assetURL, target, assetName, findChecksumsURL(release, assetName)); err != nil {
 		return "", false, err
 	}
 	return target, true, nil
@@ -1467,7 +1660,7 @@ func PanelSelfUpdateTo(repo, tag string) (newVersion string, upgraded bool, err 
 // 但先替换二进制、后触发 systemctl restart，避免先停服务导致自身进程被杀、
 // 替换动作无法完成。替换成功后用 detached 命令触发 restart（不阻塞、不等待），
 // 由 systemd 完成新旧进程切换。
-func upgradeFromReleaseAssetInPlace(assetURL, latest, assetName string) error {
+func upgradeFromReleaseAssetInPlace(assetURL, latest, assetName, checksumsURL string) error {
 	if !commandExists("systemctl") {
 		return fmt.Errorf("未检测到 systemctl，无法在面板内自动重启服务；请使用 install.sh 或 CLI 升级")
 	}
@@ -1480,6 +1673,9 @@ func upgradeFromReleaseAssetInPlace(assetURL, latest, assetName string) error {
 	archivePath := filepath.Join(tmpDir, assetName)
 	cliPrintln("正在下载升级包...")
 	if err := downloadFile(assetURL, archivePath); err != nil {
+		return err
+	}
+	if err := verifyReleaseArchive(archivePath, assetName, checksumsURL); err != nil {
 		return err
 	}
 
@@ -1541,10 +1737,7 @@ type CheckUpdateResult struct {
 // CheckForUpdate 只做版本检测，不下载、不替换、不重启。
 // 该函数供面板「系统设置」的版本检测使用；真正的升级由菜单或 install.sh 完成。
 func CheckForUpdate() CheckUpdateResult {
-	repo := strings.TrimSpace(os.Getenv("EYVESCLOUD_REPO"))
-	if repo == "" {
-		repo = version.Repo
-	}
+	repo := resolveUpdateRepo()
 	current := version.Current()
 	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
 	if err != nil {
