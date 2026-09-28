@@ -2191,6 +2191,45 @@ EOF
     fi
 }
 
+# reconcile_local_agent_service：同机 panel+agent 端口冲突自愈。
+#
+# 旧版安装脚本在 controller-agent 模式下会同时安装本机 agent，而 agent 自身也会
+# 起一个完整面板并监听同一端口（8999），导致主控面板服务永远起不来
+# （systemd 无限重启 status=1/FAILURE）。升级到本版本时，这里主动停用
+# 「指向本机回环主控」的 agent 服务；指向外部主控的 agent 不受影响（那是真正的
+# 被控节点场景，由安装模式 3 显式安装）。
+reconcile_local_agent_service() {
+    unit="/etc/systemd/system/eyvescloud-agent.service"
+    if [ ! -f "$unit" ]; then
+        log "未发现同机 agent 服务，无需处理。"
+        return 0
+    fi
+    # 仅处理"agent 且 controller 指向本机回环"的情况。
+    if ! grep -qE '^ExecStart=.*eyvescloud[[:space:]]+agent' "$unit" 2>/dev/null; then
+        log "已存在的 agent 服务不是被控 agent，跳过。"
+        return 0
+    fi
+    if ! grep -qE '--controller="?https?://(127\.0\.0\.1|localhost|\[::1\])' "$unit" 2>/dev/null; then
+        log "agent 指向外部主控（非本机回环），保留不动。"
+        return 0
+    fi
+
+    warn "检测到指向本机主控的 agent 服务：它会再起一个面板抢占同一端口，导致主控服务无法启动。正在停用…"
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl stop eyvescloud-agent >/dev/null 2>&1 || true
+        systemctl disable eyvescloud-agent >/dev/null 2>&1 || true
+    elif command -v rc-service >/dev/null 2>&1; then
+        rc-service eyvescloud-agent stop >/dev/null 2>&1 || true
+        rc-update del eyvescloud-agent default >/dev/null 2>&1 || true
+    fi
+    # 保留单元文件（便于回溯），但改名为 .disabled 以免误启动。
+    if [ -f "$unit" ]; then
+        mv -f "$unit" "${unit}.disabled" 2>/dev/null || true
+        command -v systemctl >/dev/null 2>&1 && systemctl daemon-reload >/dev/null 2>&1 || true
+    fi
+    log "已停用同机 agent 服务（同机被控能力由主控面板自带的 /api/agent/* 端点承担）。"
+}
+
 # 读取已安装可执行文件的版本号（`eyvescloud --version` 输出形如 "EyvesCloud 1.1.29"）。
 installed_eyvescloud_version() {
     if [ -x /usr/local/bin/eyvescloud ]; then
@@ -2699,12 +2738,35 @@ svc_cli() {
 
 svc_status() {
     if command -v systemctl >/dev/null 2>&1; then
-        systemctl status eyvescloud --no-pager
-    elif command -v rc-service >/dev/null 2>&1; then
-        rc-service eyvescloud status
-    else
-        echo "未识别服务管理器。"
+        systemctl status eyvescloud --no-pager || true
+        # 服务未运行时自动附上最近日志与端口占用情况：最常见的故障是
+        # "旧面板实例（非 systemd 管理）仍占用 8999 端口"，只看到一句 bind error
+        # 很难定位，这里直接把证据摆出来。
+        if ! systemctl is-active --quiet eyvescloud 2>/dev/null; then
+            echo
+            echo "--- 最近 10 行服务日志 ---"
+            journalctl -u eyvescloud -n 10 --no-pager 2>/dev/null || true
+            echo
+            echo "--- 端口占用检查（默认 8999） ---"
+            if command -v ss >/dev/null 2>&1; then
+                ss -ltnp 2>/dev/null | grep ':8999' || echo "端口 8999 未被占用"
+            elif command -v netstat >/dev/null 2>&1; then
+                netstat -ltnp 2>/dev/null | grep ':8999' || echo "端口 8999 未被占用"
+            fi
+            echo
+            echo "--- 当前 eyvescloud 进程 ---"
+            ps -ef 2>/dev/null | grep -i '[e]yvescloud' || echo "无 eyvescloud 进程"
+            echo
+            echo "若端口被残留实例占用，执行："
+            echo "  systemctl stop eyvescloud && pkill -9 -f eyvescloud && systemctl start eyvescloud"
+        fi
+        return
     fi
+    if command -v rc-service >/dev/null 2>&1; then
+        rc-service eyvescloud status
+        return
+    fi
+    echo "未识别服务管理器。"
 }
 
 svc_logs() {
@@ -2845,24 +2907,19 @@ case "$install_mode" in
         ;;
     controller-agent|"")
         run_step "安装并启动主控服务" install_service
-        # 同时安装 agent 服务（主控+被控模式）
-        if [ -n "${EYVESCLOUD_CONTROLLER:-}" ] || [ "$install_mode" = "controller-agent" ]; then
-            install_agent_service_from_self() {
-                # 主控+被控模式下 agent 自动连本机回环。
-                # 默认 http：主控开箱默认无 TLS，而 agent 强制 https 会导致连不上；
-                # 回环明文可接受（install_agent_service 对 http 自动加 --allow-insecure-http）。
-                # 若主控已配置 TLS，可通过 EYVESCLOUD_CONTROLLER 显式指定 https 地址。
-                local old_ctrl="${EYVESCLOUD_CONTROLLER:-}"
-                EYVESCLOUD_CONTROLLER="${old_ctrl:-http://127.0.0.1:8999}"
-                install_agent_service
-                if [ -n "$old_ctrl" ]; then
-                    export EYVESCLOUD_CONTROLLER="$old_ctrl"
-                else
-                    unset EYVESCLOUD_CONTROLLER
-                fi
-            }
-            run_step "安装本机被控 Agent" install_agent_service_from_self
-        fi
+        # 主控+被控同机模式：**不再安装本机 agent 服务**。
+        #
+        # 原因（实机故障）：agent 模式会再起一个完整面板（agent.go 末尾 server.Run()），
+        # 与本机主控抢同一个监听端口 → 谁先绑定谁赢，另一个永远起不来
+        # （systemd 无限重启，status=1/FAILURE）。实机表现为：面板服务一直
+        # activating (auto-restart)，vm 改密码/生成对接密钥也失败。
+        #
+        # 同机"被控"能力由主控面板自带的 /api/agent/* 端点承担（server.go 已注册，
+        # AgentTokenMiddleware 鉴权），无需第二个进程：
+        #   - 被其他主控纳管：用「节点管理 → 对接已有面板」+ 对接密钥（vm 菜单 7）
+        #   - 本机容器生命周期：主控自身已运行 expiry scanner / 流量统计等循环
+        # 需要独立 agent 的场景是"纯被控节点（不装面板）"，请用安装模式 3。
+        run_step "确认同机 Agent 无需安装" reconcile_local_agent_service
         ;;
 esac
 

@@ -735,6 +735,17 @@ func Run() error {
 		MaxHeaderBytes:    1 << 20,
 	}
 
+	// 先显式监听：失败时给出可操作的提示。最常见的升级故障是"旧面板实例
+	// （不受 systemd 管理）仍占用端口"，此前只会在日志里留一句 bind error，
+	// 表现为服务无限重启（status=1/FAILURE），极难定位。
+	listener, listenErr := net.Listen("tcp", addr)
+	if listenErr != nil {
+		return fmt.Errorf("无法监听 %s：%v\n"+
+			"提示：端口可能被残留的 EyvesCloud 实例占用。请执行：\n"+
+			"  systemctl stop eyvescloud && pkill -9 -f eyvescloud && systemctl start eyvescloud\n"+
+			"（或在设置中改用其它端口）", addr, listenErr)
+	}
+
 	if sslEnabled() {
 		certPath, keyPath, err := config.ResolveSSLConfigPaths(config.AppConfig.SSL)
 		if err != nil {
@@ -759,10 +770,10 @@ func Run() error {
 			},
 		}
 		log.Printf("EyvesCloud Web Server SSL enabled on https://0.0.0.0:%d", config.AppConfig.Port)
-		return server.ListenAndServeTLS("", "")
+		return server.ServeTLS(listener, "", "")
 	}
 
-	return server.ListenAndServe()
+	return server.Serve(listener)
 }
 
 func sslEnabled() bool {
