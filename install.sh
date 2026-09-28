@@ -446,11 +446,14 @@ run_step() {
     step_name="$1"
     shift
     log "开始：$step_name"
-    if ( "$@" ) >> "$LOG_FILE" 2>&1; then
+    # 注意：不能用 `if ( "$@" ); then ... fi` 之后再取 $?——失败的 if 复合命令其
+    # 退出码恒为 0，会把真实错误码报成"退出码：0"（误导排查）。这里显式捕获。
+    rc=0
+    ( "$@" ) >> "$LOG_FILE" 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ]; then
         log "完成：$step_name"
         return 0
     fi
-    rc="$?"
     echo "" >&2
     echo "[eyvescloud][$(tr_msg "错误")] $(tr_msg "步骤失败：")$(tr_msg "$step_name")$(tr_msg "，")$(tr_msg "退出码：")$rc" >&2
     echo "[eyvescloud][$(tr_msg "错误")] $(tr_msg "最近 80 行日志：")$LOG_FILE" >&2
@@ -2368,11 +2371,17 @@ download_release_if_needed() {
     fi
 
     archive_path="$tmp_dir/$ASSET"
-    archive_urls="$download_url"
+    # 优先使用 Release API 解析出的"确定 tag"地址（与 SHA256SUMS 同属一个发布，
+    # 校验语义明确）；"latest" 便捷地址作为回退（并非所有平台都提供该别名）。
+    archive_urls=""
     resolved_archive_url="$(release_asset_url "$ASSET")"
-    if [ "$resolved_archive_url" != "$download_url" ]; then
-        archive_urls="$archive_urls $resolved_archive_url"
+    if [ -n "$resolved_archive_url" ]; then
+        archive_urls="$resolved_archive_url"
     fi
+    case " $archive_urls " in
+        *" $download_url "*) ;;
+        *) archive_urls="$archive_urls $download_url" ;;
+    esac
 
     archive_ok=0
     for url in $archive_urls; do
@@ -2395,11 +2404,15 @@ download_release_if_needed() {
         else
             binary_url="$(release_download_url "$EYVESCLOUD_INSTALL_VERSION" "$binary_asset")"
         fi
-        binary_urls="$binary_url"
+        binary_urls=""
         resolved_binary_url="$(release_asset_url "$binary_asset")"
-        if [ "$resolved_binary_url" != "$binary_url" ]; then
-            binary_urls="$binary_urls $resolved_binary_url"
+        if [ -n "$resolved_binary_url" ]; then
+            binary_urls="$resolved_binary_url"
         fi
+        case " $binary_urls " in
+            *" $binary_url "*) ;;
+            *) binary_urls="$binary_urls $binary_url" ;;
+        esac
 
         binary_path="$tmp_dir/$binary_asset"
         binary_ok=0
