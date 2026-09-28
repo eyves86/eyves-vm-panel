@@ -259,7 +259,9 @@ func ensureSchema() error {
 			optional_iso_path TEXT,
 			suspended INTEGER NOT NULL DEFAULT 0,
 			suspended_at TEXT,
-			suspended_reason TEXT
+			suspended_reason TEXT,
+			remark TEXT,
+			locked INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE IF NOT EXISTS port_mappings (
 			container_id INTEGER NOT NULL,
@@ -604,6 +606,9 @@ func ensureSchemaMigrations() error {
 		{"containers", "suspended", "INTEGER NOT NULL DEFAULT 0"},
 		{"containers", "suspended_at", "TEXT"},
 		{"containers", "suspended_reason", "TEXT"},
+		// 实例备注与锁定（企业面板通用属性：备注用于运维标注，锁定后禁止删除/重装等破坏性操作）。
+		{"containers", "remark", "TEXT"},
+		{"containers", "locked", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		wasAdded, err := ensureColumn(column.table, column.name, column.def)
 		if err != nil {
@@ -1170,8 +1175,8 @@ func saveContainers(tx *sql.Tx) error {
 			firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 			tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
 			rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
-			suspended, suspended_at, suspended_reason
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
+			suspended, suspended_at, suspended_reason, remark, locked
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
 			c.ID, c.UUID, c.Name, c.Virtualization, c.LXCName, c.KVMName, c.DiskImage, c.StoragePoolID, c.StoragePath, c.MACAddress, c.Template,
 			c.VCPU, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
 			c.MonthlyTrafficGB, c.TrafficMode, c.TrafficInGB,
@@ -1188,7 +1193,7 @@ func saveContainers(tx *sql.Tx) error {
 			boolInt(c.RescueEnabled), c.RescueISOID, c.RescueISOPath,
 			c.OptionalISOID, c.OptionalISOPath,
 			c.RootVolumeID, encodeStringSlice(c.DataVolumeIDs),
-			boolInt(c.Suspended), c.SuspendedAt, c.SuspendedReason,
+			boolInt(c.Suspended), c.SuspendedAt, c.SuspendedReason, c.Remark, boolInt(c.Locked),
 		); err != nil {
 			return err
 		}
@@ -1558,7 +1563,7 @@ func loadContainers() ([]Container, error) {
 		firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 		tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
 		rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
-		suspended, suspended_at, suspended_reason
+		suspended, suspended_at, suspended_reason, remark, locked
 		FROM containers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1584,6 +1589,8 @@ func loadContainers() ([]Container, error) {
 		var rootVolumeID, dataVolumeIDs sql.NullString
 		var suspended int
 		var suspendedAt, suspendedReason sql.NullString
+		var remarkCol sql.NullString
+		var lockedCol int
 		// ssh_password 以 enc:v1: 密文落库（审计 H-5）：先扫进临时变量再解密。
 		var sshPasswordCol sql.NullString
 		if err := rows.Scan(
@@ -1603,7 +1610,7 @@ func loadContainers() ([]Container, error) {
 			&rescueEnabled, &rescueISOID, &rescueISOPath,
 			&optionalISOID, &optionalISOPath,
 			&rootVolumeID, &dataVolumeIDs,
-			&suspended, &suspendedAt, &suspendedReason,
+			&suspended, &suspendedAt, &suspendedReason, &remarkCol, &lockedCol,
 		); err != nil {
 			return nil, err
 		}
@@ -1622,6 +1629,8 @@ func loadContainers() ([]Container, error) {
 		c.Suspended = suspended != 0
 		c.SuspendedAt = suspendedAt.String
 		c.SuspendedReason = suspendedReason.String
+		c.Remark = remarkCol.String
+		c.Locked = lockedCol != 0
 		c.Tenant = tenant.String
 		c.StoragePoolID = storagePoolID.String
 		c.StoragePath = storagePath.String

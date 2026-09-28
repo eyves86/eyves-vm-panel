@@ -212,6 +212,10 @@ type Container struct {
 	// DetachISO 会清空这两个字段；ExitRescue 不清空（可能同时有 rescue ISO + 可选 ISO）。
 	OptionalISOID   string `json:"optional_iso_id,omitempty"`
 	OptionalISOPath string `json:"optional_iso_path,omitempty"`
+	// Remark 是实例备注（运维标注，供列表检索）；Locked 锁定后禁止删除/重装等
+	// 破坏性操作（企业面板通用属性，Virtualizor/SolusVM 均提供）。
+	Remark string `json:"remark,omitempty"`
+	Locked bool   `json:"locked,omitempty"`
 	// RootVolumeID 根卷 ID（P0-1 存储抽象层）：新容器在 dir 后端池上创建的根目录卷。
 	// 为空表示旧数据直连路径模式（沿用 StoragePath，读路径完全向后兼容，不做迁移）。
 	RootVolumeID string `json:"root_volume_id,omitempty"`

@@ -307,7 +307,7 @@ func (cfg *ContainerConfig) UnmarshalJSON(data []byte) error {
 		Alias: (*Alias)(cfg),
 	}
 	if err := json.Unmarshal(data, aux); err != nil {
-		return err
+
 	}
 	if aux.VCPU != nil {
 		switch v := aux.VCPU.(type) {
@@ -563,7 +563,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 		return fmt.Errorf("template not found: %s", cfg.TemplateID)
 	}
 	if err := cfg.NormalizeCreateNATMappings(); err != nil {
-		return err
+
 	}
 	if cfg.SnapshotLimit <= 0 {
 		cfg.SnapshotLimit = config.DefaultSnapshotLimit
@@ -581,7 +581,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	}
 	sshAccess, err := ResolveCreateSSHAccess(cfg)
 	if err != nil {
-		return err
+
 	}
 	sshPort := 0
 	releaseNATReservation := func() {}
@@ -640,7 +640,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	storagePoolID, storagePath, rootVolumeID, err := m.moveContainerToStoragePool(lxcName, id, cfg.StoragePoolID, cfg.DiskGB)
 	if err != nil {
 		_ = m.cleanupContainerStorage(lxcName)
-		return err
+
 	}
 	// P0-1：容器创建流程已为 dir 后端池建立根卷记录（status=attached）。
 	// 此后任何失败路径（含 AddContainer 之后的回滚）都必须同步删除卷记录，
@@ -655,7 +655,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	cfg.ReportProgress("disk", "创建容量限制磁盘并复制 rootfs")
 	if err := m.applyDiskLimit(lxcName, cfg.DiskGB); err != nil {
 		_ = m.cleanupContainerStorage(lxcName)
-		return err
+
 	}
 	cfg.ReportProgress("resources", "配置 CPU、内存与网络限制")
 	if cfg.WantsLANIPv4() {
@@ -670,7 +670,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	// Apply resource limits and mandatory security hardening.
 	if err := m.applyResourceLimits(lxcName, cfg); err != nil {
 		_ = m.cleanupContainerStorage(lxcName)
-		return err
+
 	}
 
 	if cfg.DataDiskGB > 0 {
@@ -685,7 +685,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	publicIPv4s, err := AllocatePublicIPv4Assignments(id, cfg.PublicIPv4s, cfg.IPv4Count, cfg.AssignIPv4)
 	if err != nil {
 		_ = m.cleanupContainerStorage(lxcName)
-		return err
+
 	}
 
 	ipv6Assignments := []config.IPv6Assignment{}
@@ -807,7 +807,7 @@ func (m *Manager) CreateContainer(cfg ContainerConfig) error {
 	if err := m.shiftRootfsForUnprivileged(lxcName); err != nil {
 		_ = m.cleanupContainerStorage(lxcName)
 		config.RemoveContainer(id)
-		return err
+
 	}
 
 	// Set root password AFTER shiftRootfsForUnprivileged,
@@ -1194,7 +1194,7 @@ func (m *Manager) preconfigureSSH(rootfsPath, templateID string, sshAuthMode str
 	defer cancel()
 	cmd, err := m.rootfsCommand(rootfsPath, "sh", "-c", sshSetupScript(false, disablePubkey))
 	if err != nil {
-		return err
+
 	}
 	cmd = exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
 	output, err := cmd.CombinedOutput()
@@ -1260,15 +1260,15 @@ func (m *Manager) applyResourceLimits(lxcName string, cfg ContainerConfig) error
 
 	seccompProfile, err := findSeccompProfile()
 	if err != nil {
-		return err
+
 	}
 	apparmorProfile, err := appArmorProfileForTemplate(cfg.TemplateID)
 	if err != nil {
-		return err
+
 	}
 	uidBase, gidBase, err := unprivilegedIDMap()
 	if err != nil {
-		return err
+
 	}
 
 	newLines = append(newLines, "", "# eyvescloud managed: lxcfs virtualized /proc")
@@ -1481,7 +1481,7 @@ func (m *Manager) applyLoopbackDiskLimit(lxcName string, diskGB float64) error {
 	tmpMount := filepath.Join(containerDir, ".rootfs-image")
 	backupRootfs := filepath.Join(containerDir, "rootfs.dir")
 	if err := os.MkdirAll(tmpMount, 0755); err != nil {
-		return err
+
 	}
 	defer os.RemoveAll(tmpMount)
 
@@ -1521,12 +1521,12 @@ func (m *Manager) applyLoopbackDiskLimit(lxcName string, diskGB float64) error {
 	}
 	if err := os.MkdirAll(rootfsPath, 0755); err != nil {
 		os.Rename(backupRootfs, rootfsPath)
-		return err
+
 	}
 	if err := m.ensureDiskImageMounted(lxcName); err != nil {
 		os.RemoveAll(rootfsPath)
 		os.Rename(backupRootfs, rootfsPath)
-		return err
+
 	}
 	if err := os.RemoveAll(backupRootfs); err != nil {
 		fmt.Printf("Warning: failed to remove old rootfs backup %s: %v\n", backupRootfs, err)
@@ -1672,7 +1672,7 @@ func (m *Manager) ensureDiskImageMounted(lxcName string) error {
 		return nil
 	}
 	if err := os.MkdirAll(rootfsPath, 0755); err != nil {
-		return err
+
 	}
 	output, err := exec.Command("mount", "-o", "loop", imagePath, rootfsPath).CombinedOutput()
 	if err != nil {
@@ -1722,18 +1722,18 @@ func (m *Manager) writeLXCConfigEntry(lxcName, entry string) error {
 	configFile := filepath.Join(m.LxcPath, lxcName, "config")
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return err
+
 	}
 	if strings.Contains(string(data), entry) {
 		return nil
 	}
 	f, err := os.OpenFile(configFile, os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return err
+
 	}
 	defer f.Close()
 	if _, err := f.WriteString("\n# eyvescloud managed: data disk\n" + entry + "\n"); err != nil {
-		return err
+
 	}
 	return nil
 }
@@ -1898,19 +1898,19 @@ func sameFilesystemPath(left, right string) bool {
 func applyXFSProjectQuota(rootfsPath, lxcName string, diskGB float64) error {
 	options, err := findmntValue(rootfsPath, "OPTIONS")
 	if err != nil {
-		return err
+
 	}
 	if !hasProjectQuotaOption(options) {
 		return errors.New("xfs project quota is not enabled; remount with prjquota before creating containers")
 	}
 	mountPoint, err := findmntValue(rootfsPath, "TARGET")
 	if err != nil {
-		return err
+
 	}
 	projectID := projectQuotaID(lxcName)
 	projectName := "eyvescloud-" + lxcName
 	if err := ensureProjectQuotaFiles(projectID, projectName, rootfsPath); err != nil {
-		return err
+
 	}
 	diskMB := int(math.Round(diskGB * 1024))
 	if diskMB < 128 {
@@ -1930,14 +1930,14 @@ func applyXFSProjectQuota(rootfsPath, lxcName string, diskGB float64) error {
 func applyExt4ProjectQuota(rootfsPath, lxcName string, diskGB float64) error {
 	options, err := findmntValue(rootfsPath, "OPTIONS")
 	if err != nil {
-		return err
+
 	}
 	if !hasProjectQuotaOption(options) {
 		return errors.New("ext4 project quota is not enabled; remount with prjquota before creating containers")
 	}
 	mountPoint, err := findmntValue(rootfsPath, "TARGET")
 	if err != nil {
-		return err
+
 	}
 	projectID := projectQuotaID(lxcName)
 	output, err := exec.Command("chattr", "-p", strconv.Itoa(projectID), rootfsPath).CombinedOutput()
@@ -1986,7 +1986,7 @@ func projectQuotaID(lxcName string) int {
 func ensureProjectQuotaFiles(projectID int, projectName, rootfsPath string) error {
 	projectsLine := fmt.Sprintf("%d:%s", projectID, rootfsPath)
 	if err := appendUniqueLine("/etc/projects", projectsLine); err != nil {
-		return err
+
 	}
 	projidLine := fmt.Sprintf("%s:%d", projectName, projectID)
 	return appendUniqueLine("/etc/projid", projidLine)
@@ -2001,7 +2001,7 @@ func appendUniqueLine(path, line string) error {
 	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
-		return err
+
 	}
 	defer f.Close()
 	if len(data) > 0 && !strings.HasSuffix(string(data), "\n") {
@@ -2226,12 +2226,12 @@ func (m *Manager) ensureUnprivilegedLXCPathAccess(lxcName string) error {
 func (m *Manager) shiftRootfsForUnprivileged(lxcName string) error {
 	uidBase, gidBase, err := unprivilegedIDMap()
 	if err != nil {
-		return err
+
 	}
 	rootfsPath := filepath.Join(m.LxcPath, lxcName, "rootfs")
 	marker := filepath.Join(rootfsPath, ".eyvescloud-unprivileged-shifted")
 	if err := m.ensureUnprivilegedLXCPathAccess(lxcName); err != nil {
-		return err
+
 	}
 	if _, err := os.Stat(marker); err == nil {
 		return nil
@@ -2239,7 +2239,7 @@ func (m *Manager) shiftRootfsForUnprivileged(lxcName string) error {
 	m.unmountRootfsChildMounts(rootfsPath)
 	rootInfo, err := os.Lstat(rootfsPath)
 	if err != nil {
-		return err
+
 	}
 	rootDev, _, _, ok := fileStatFields(rootInfo)
 	if !ok {
@@ -2279,10 +2279,10 @@ func (m *Manager) shiftRootfsForUnprivileged(lxcName string) error {
 	}
 
 	if err := os.WriteFile(marker, []byte("1\n"), 0644); err != nil {
-		return err
+
 	}
 	if err := os.Lchown(marker, uidBase, gidBase); err != nil {
-		return err
+
 	}
 
 	// Fix container directory permissions: unprivileged init runs as ns UID 0
@@ -2390,7 +2390,7 @@ func (m *Manager) StartContainer(id int) error {
 	lxcName := c.LxcName()
 
 	if err := m.ensureDiskImageMounted(lxcName); err != nil {
-		return err
+
 	}
 	if c.DataDiskGB > 0 {
 		if err := m.ensureDataDiskMounted(lxcName, c.DataDiskMountPath); err != nil {
@@ -2440,7 +2440,7 @@ func (m *Manager) StartContainer(id int) error {
 	}
 	if err := m.waitForLXCStartup(lxcName, logFile, consoleLog); err != nil {
 		config.UpdateContainerStatus(id, "stopped")
-		return err
+
 	}
 
 	config.UpdateContainerStatusAndRestore(id, "running", true)
@@ -2559,7 +2559,7 @@ func (m *Manager) ApplyContainerLimits(c *config.Container) error {
 		AssignIPv6:       c.IPv6 != "" || len(c.IPv6Addresses) > 0,
 		ExpiresAt:        c.ExpiresAt,
 	}); err != nil {
-		return err
+
 	}
 	if c.Status != "running" {
 		return nil
@@ -2588,7 +2588,7 @@ func (m *Manager) ApplyContainerLimits(c *config.Container) error {
 	// IO speed: write io.max, including max values to clear old per-direction limits.
 	ioLines, err := m.ioLimitLines(lxcName, c.IOReadMBps, c.IOWriteMBps)
 	if err != nil {
-		return err
+
 	}
 	ioLine := strings.Join(ioLines, "\n")
 	for _, path := range []string{
@@ -2816,7 +2816,7 @@ func loopDeviceForImage(imagePath string) string {
 func (m *Manager) setLXCConfigValue(configPath string, key string, value string) error {
 	content, err := os.ReadFile(configPath)
 	if err != nil {
-		return err
+
 	}
 	lines := strings.Split(string(content), "\n")
 	found := false
@@ -3030,7 +3030,7 @@ func (m *Manager) DestroyContainer(id int) error {
 		if destroyErr != nil {
 			return fmt.Errorf("%v; cleanup also failed: %v", destroyErr, err)
 		}
-		return err
+
 	}
 	if status, err := m.GetContainerStatus(lxcName); err == nil {
 		if destroyErr != nil {
@@ -3125,7 +3125,7 @@ func (m *Manager) EnsureSSH(id int) error {
 
 func (m *Manager) quickEnsureSSHPassword(lxcName, password string) error {
 	if err := validateRootPassword(password); err != nil {
-		return err
+
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
@@ -3436,18 +3436,18 @@ func (m *Manager) rootfsCommand(rootfsPath string, args ...string) (*exec.Cmd, e
 func (m *Manager) runRootfsCommand(rootfsPath string, args ...string) error {
 	cmd, err := m.rootfsCommand(rootfsPath, args...)
 	if err != nil {
-		return err
+
 	}
 	return cmd.Run()
 }
 
 func (m *Manager) setRootfsPassword(rootfsPath, password string) error {
 	if err := validateRootPassword(password); err != nil {
-		return err
+
 	}
 	cmd, err := m.rootfsCommand(rootfsPath, "chpasswd")
 	if err != nil {
-		return err
+
 	}
 	cmd.Stdin = strings.NewReader(rootPasswordInput(password))
 	output, err := cmd.CombinedOutput()
@@ -3462,14 +3462,14 @@ func (m *Manager) setRootfsPassword(rootfsPath, password string) error {
 func installCloudInitSeed(rootfsPath, lxcName, userData string) error {
 	seedDir := filepath.Join(rootfsPath, "var", "lib", "cloud", "seed", "nocloud-net")
 	if err := os.MkdirAll(seedDir, 0755); err != nil {
-		return err
+
 	}
 	if err := os.WriteFile(filepath.Join(seedDir, "user-data"), []byte(userData), 0600); err != nil {
-		return err
+
 	}
 	metaData := fmt.Sprintf("instance-id: %s\nlocal-hostname: %s\n", lxcName, lxcName)
 	if err := os.WriteFile(filepath.Join(seedDir, "meta-data"), []byte(metaData), 0600); err != nil {
-		return err
+
 	}
 	// Reset ownership so an unprivileged container can still read the seed.
 	if out, err := exec.Command("chown", "-R", "0:0", seedDir).CombinedOutput(); err != nil {
@@ -3481,14 +3481,14 @@ func installCloudInitSeed(rootfsPath, lxcName, userData string) error {
 func (m *Manager) installRootAuthorizedKey(rootfsPath, publicKey string) error {
 	key, err := NormalizeSSHPublicKey(publicKey)
 	if err != nil {
-		return err
+
 	}
 	if key == "" {
 		return nil
 	}
 	sshDir := filepath.Join(rootfsPath, "root", ".ssh")
 	if err := os.MkdirAll(sshDir, 0700); err != nil {
-		return err
+
 	}
 	authPath := filepath.Join(sshDir, "authorized_keys")
 	existing, _ := os.ReadFile(authPath)
@@ -3508,7 +3508,7 @@ func (m *Manager) installRootAuthorizedKey(rootfsPath, publicKey string) error {
 	}
 	content += key + "\n"
 	if err := os.WriteFile(authPath, []byte(content), 0600); err != nil {
-		return err
+
 	}
 	_ = os.Chmod(sshDir, 0700)
 	_ = os.Chmod(authPath, 0600)
@@ -3981,17 +3981,17 @@ func (m *Manager) replaceRootfsFromTemplate(lxcName string, tmpl *Template) erro
 
 	rootfsPath := filepath.Join(m.LxcPath, lxcName, "rootfs")
 	if err := m.ensureDiskImageMounted(lxcName); err != nil {
-		return err
+
 	}
 	m.unmountRootfsChildMounts(rootfsPath)
 	if err := os.MkdirAll(rootfsPath, 0755); err != nil {
-		return err
+
 	}
 	if err := removeDirectoryContents(rootfsPath); err != nil {
 		return fmt.Errorf("failed to clear old rootfs: %v", err)
 	}
 	if err := copyRootfsContents(tmpRootfs, rootfsPath); err != nil {
-		return err
+
 	}
 	if !rootfsHasInit(rootfsPath) {
 		return fmt.Errorf("replacement rootfs copy failed: init not found")
@@ -4008,7 +4008,7 @@ func (m *Manager) cleanupTemporaryContainer(lxcName string) {
 func removeDirectoryContents(dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+
 	}
 	for _, entry := range entries {
 		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
@@ -4060,7 +4060,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 	}
 	sshAccess, err := ResolveReinstallSSHAccess(c.SSHPassword, authCfg)
 	if err != nil {
-		return err
+
 	}
 
 	lxcName := c.LxcName()
@@ -4078,11 +4078,11 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 	// Download the new OS into a temporary container, then replace only the
 	// existing rootfs. The target container directory and config are preserved.
 	if err := m.replaceRootfsFromTemplate(lxcName, tmpl); err != nil {
-		return err
+
 	}
 
 	if err := m.applyDiskLimit(lxcName, c.DiskGB); err != nil {
-		return err
+
 	}
 
 	// full 模式：连同数据盘一起重建。system 模式（默认）保留数据盘。
@@ -4114,7 +4114,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 		ExpiresAt:        c.ExpiresAt,
 	}
 	if err := m.applyResourceLimits(lxcName, cfg); err != nil {
-		return err
+
 	}
 	if c.IPv6 != "" || len(c.IPv6Addresses) > 0 {
 		c.NormalizeNetworkAssignments()
@@ -4143,7 +4143,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 		}
 	}
 	if err := m.shiftRootfsForUnprivileged(lxcName); err != nil {
-		return err
+
 	}
 	if err := m.setRootfsPassword(rootfsPath, c.SSHPassword); err != nil {
 		fmt.Printf("Warning: failed to set root password in %s after reinstall: %v\n", lxcName, err)
@@ -4159,7 +4159,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...Co
 	if err := m.ensureDiskImageMounted(lxcName); err != nil {
 		config.SetContainerStatusAndNotify(c, "stopped")
 		config.SaveConfig()
-		return err
+
 	}
 	logFile, consoleLog, output, err := m.startLXCContainerDaemon(lxcName)
 	if err != nil {
@@ -4769,4 +4769,22 @@ func execWithTimeout(timeout time.Duration, name string, args ...string) *exec.C
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	_ = cancel // 有意丢弃；见上方注释
 	return exec.CommandContext(ctx, name, args...)
+}
+
+// SetRootPasswordByID 供 API v2 使用：按容器 ID 直接设置 LXC 容器的 root 密码
+// （chpasswd 通道），不经过任务队列，便于同步返回结果。
+// KVM 实例请由上层调用 kvm.Manager.ResetSSHPassword（kvm 包依赖 lxc 包，
+// 反向依赖会形成循环）。
+func (m *Manager) SetRootPasswordByID(id int, password string) error {
+	c := config.FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if err := validateRootPassword(password); err != nil {
+		return err
+	}
+	if c.IsKVM() {
+		return fmt.Errorf("KVM 实例请使用 KVM 管理器重置密码")
+	}
+	return m.quickEnsureSSHPassword(c.LxcName(), password)
 }
