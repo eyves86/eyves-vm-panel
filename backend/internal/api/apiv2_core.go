@@ -399,3 +399,28 @@ func v2SortKey(raw string) (string, bool) {
 	}
 	return raw, false
 }
+
+// v2TokenTTL 是 access_token 有效期（24h，与面板登录一致）。
+const v2TokenTTL = 24 * time.Hour
+
+// v2IssueToken 签发 access_token：管理员复用面板 admin token（含 token_version
+// 吊销语义），子用户复用子用户 token（含容器绑定与角色）。
+func v2IssueToken(username string, isAdmin bool, adminID, role string, subUserUUIDs []string, subUserRole string, tokenVersion int) (string, error) {
+	if isAdmin {
+		return signAdminToken(username, adminID, role, tokenVersion)
+	}
+	return newSubUserTokenWithRole(username, subUserUUIDs, subUserRole, time.Now().Add(v2TokenTTL), tokenVersion), nil
+}
+
+// v2ScopeAllowedForCtx 在认证上下文上判断 scope（与 v1 权限语义完全一致）。
+func v2ScopeAllowedForCtx(ctx AuthContext, scope string) bool {
+	switch ctx.Type {
+	case authTypeAdmin:
+		return true
+	case authTypeSubUser:
+		return subUserScopeAllowed(scope, ctx.Role)
+	case authTypeAPIKey:
+		return scopeAllowed(ctx.Scopes, scope)
+	}
+	return false
+}
