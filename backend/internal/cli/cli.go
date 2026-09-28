@@ -1099,7 +1099,11 @@ func resolveUpdateRepo() string {
 		return repo
 	}
 	config.AppConfigMu.RLock()
-	src := config.NormalizeUpdateSource(config.AppConfig.UpdateSource)
+	var src config.UpdateSource
+	if config.AppConfig != nil {
+		// 防御性判空：配置尚未加载（CLI 早期路径 / 测试）或加载失败时不能 panic。
+		src = config.NormalizeUpdateSource(config.AppConfig.UpdateSource)
+	}
 	config.AppConfigMu.RUnlock()
 	if strings.TrimSpace(src.Platform) != "" && strings.TrimSpace(src.Owner) != "" && strings.TrimSpace(src.Repo) != "" {
 		return src.Platform + ":" + src.Owner + "/" + src.Repo
