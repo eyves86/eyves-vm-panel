@@ -204,6 +204,28 @@ func register(controller, installKey, name, addr string, allowInsecureHTTP bool)
 	}, nil
 }
 
+// StartEmbeddedNodeSide 让"面板即被控节点"成为可能（同机部署）。
+//
+// 背景：agent 模式末尾会启动一个完整面板（server.Run），因此**无法与主控面板
+// 同机共存**——两个进程抢同一个监听端口，谁先绑定谁赢，另一个无限重启。
+// 同机场景改由主控面板自身承担被控职责：
+//   - 从 agent.json 读取节点 token 并注入本进程，使面板自带的 /api/agent/*
+//     端点可用（否则 AgentTokenMiddleware 因 token 为空返回 403）；
+//   - 启动心跳循环，让主控把节点标记为在线并同步容器摘要。
+//
+// 未注册（无 agent.json）时不做任何事。由 main.go 的 server 模式调用。
+func StartEmbeddedNodeSide() {
+	ac := config.LoadAgentConfig()
+	if ac == nil || strings.TrimSpace(ac.Token) == "" {
+		return
+	}
+	config.SetAgentToken(ac.Token)
+	fmt.Printf("被控注册信息已加载：主控 %s，节点 %s；面板内置被控端点已启用（心跳 10s）\n",
+		ac.Controller, ac.Name)
+	go heartbeatLoop(ac)
+}
+
+// heartbeatLoop 每 10s 上报一次心跳（主控据此判定节点在线并同步容器摘要）。
 func heartbeatLoop(ac *agentConfig) {
 	for {
 		sendHeartbeat(ac)
