@@ -760,14 +760,17 @@ type heartbeatContainerSummary struct {
 	Name           string `json:"name"`
 	Status         string `json:"status"`
 	Virtualization string `json:"virtualization"`
-	Suspended      bool   `json:"suspended,omitempty"`
+	// IP / SSHPort 由被控上报，供主控列表直接展示节点容器地址（此前主控侧为空）。
+	IP             string  `json:"ip,omitempty"`
+	SSHPort        int     `json:"ssh_port,omitempty"`
+	Suspended      bool    `json:"suspended,omitempty"`
 	VCPU           float64 `json:"vcpu"`
-	RAMMB          int    `json:"ram_mb"`
+	RAMMB          int     `json:"ram_mb"`
 	DiskGB         float64 `json:"disk_gb"`
-	ExpiresAt      string `json:"expires_at,omitempty"`
-	TrafficUsedRX  int64  `json:"traffic_used_rx,omitempty"`
-	TrafficUsedTX  int64  `json:"traffic_used_tx,omitempty"`
-	TrafficLimit   int64  `json:"traffic_limit,omitempty"`
+	ExpiresAt      string  `json:"expires_at,omitempty"`
+	TrafficUsedRX  int64   `json:"traffic_used_rx,omitempty"`
+	TrafficUsedTX  int64   `json:"traffic_used_tx,omitempty"`
+	TrafficLimit   int64   `json:"traffic_limit,omitempty"`
 	// 最新实时指标（agent 本机 metric 尾采样点）
 	CPU       float64 `json:"cpu,omitempty"`
 	Memory    float64 `json:"memory,omitempty"`
@@ -827,6 +830,12 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 					cfg.Containers[i].RAMMB = s.RAMMB
 					cfg.Containers[i].DiskGB = s.DiskGB
 					cfg.Containers[i].ExpiresAt = s.ExpiresAt
+					if s.IP != "" {
+						cfg.Containers[i].IP = s.IP
+					}
+					if s.SSHPort > 0 {
+						cfg.Containers[i].SSHPort = s.SSHPort
+					}
 					cfg.Containers[i].TrafficUsedRX = s.TrafficUsedRX
 					cfg.Containers[i].TrafficUsedTX = s.TrafficUsedTX
 					orphaned[s.UUID] = false
@@ -841,6 +850,7 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 					Status: s.Status, Virtualization: s.Virtualization,
 					Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
 					DiskGB: s.DiskGB, NodeID: nodeID,
+					IP: s.IP, SSHPort: s.SSHPort,
 					ExpiresAt: s.ExpiresAt, TrafficUsedRX: s.TrafficUsedRX,
 					TrafficUsedTX: s.TrafficUsedTX,
 				}

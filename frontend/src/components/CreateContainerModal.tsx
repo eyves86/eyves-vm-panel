@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, CalendarClock, Check, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
-import { batchCreate, getIPv6Status, getEnabledImages, getHostInfo, getHostReport, getRoutingInfo, getStorageInfo, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
+import { batchCreate, createContainerOnNode, getEnabledImages, getHostInfo, getHostReport, getIPv6Status, getNodes, getRoutingInfo, getStorageInfo, scheduleNode, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, ManagedNode, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
 import { useDialog } from './Dialog'
+import { useAuth } from '../contexts/AuthContext'
 import { useLanguage, type Language } from '../contexts/LanguageContext'
 import { generateSSHPassword, sshPasswordError, sshPublicKeyError, type SSHAuthMode } from '../utils/sshAuth'
 
@@ -60,9 +61,31 @@ const defaultForm: CreateContainerRequest = {
   expires_at: '',
 }
 
+// nodeSelectable：节点是否可作为发机目标（在线且非维护模式）。
+function nodeSelectable(node: ManagedNode): boolean {
+  if (node.maintenance_mode) return false
+  return (node.status || '') === 'online'
+}
+
+// nodeUsageText：节点资源占用摘要（内存/磁盘）。
+function nodeUsageText(node: ManagedNode): string {
+  const parts: string[] = []
+  if (node.ram_total_mb) {
+    const used = node.ram_used_mb || 0
+    parts.push(`内存 ${(used / 1024).toFixed(1)}/${(node.ram_total_mb / 1024).toFixed(0)}GB`)
+  }
+  if (node.disk_total_gb) {
+    const used = node.disk_used_gb || 0
+    parts.push(`磁盘 ${used.toFixed(0)}/${node.disk_total_gb.toFixed(0)}GB`)
+  }
+  parts.push(`容器 ${node.container_count || 0}`)
+  return parts.join(' · ')
+}
+
 export default function CreateContainerModal({ isOpen, onClose, onSuccess, existingNames = [] }: CreateContainerModalProps) {
   const navigate = useNavigate()
   const dialog = useDialog()
+  const { isAdmin } = useAuth()
   const { language, t } = useLanguage()
   const networkText = createNetworkText[language]
   const wizardSteps = [t('基础信息'), t('镜像选择'), t('网络配置'), t('预览清单')]
@@ -71,6 +94,10 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
   const [loading, setLoading] = useState(false)
   const [batchCount, setBatchCount] = useState(1)
   const [form, setForm] = useState<CreateContainerRequest>(defaultForm)
+  // 目标节点：'local' = 主控本机；'auto' = 由调度器按剩余资源自动挑选；其余为节点 ID。
+  const [nodes, setNodes] = useState<ManagedNode[]>([])
+  const [nodesLoading, setNodesLoading] = useState(false)
+  const [targetNode, setTargetNode] = useState<string>('local')
   const [hostInfo, setHostInfo] = useState<HostInfo | null>(null)
   const [hostReport, setHostReport] = useState<HostProbeReport | null>(null)
   const [storageInfo, setStorageInfo] = useState<StorageInfo | null>(null)
@@ -82,6 +109,26 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
   useEffect(() => {
     if (isOpen) setCurrentStep(0)
   }, [isOpen])
+
+  // 目标节点列表：仅管理员可见（子用户不能跨节点发机）。打开弹窗时拉取一次。
+  useEffect(() => {
+    if (!isOpen || !isAdmin) return
+    setNodesLoading(true)
+    getNodes()
+      .then((res) => {
+        const list = res.data.data || []
+        setNodes(list)
+        // 选中的节点若已不可用（下线/维护/被删），回退到本机，避免提交时才报错。
+        setTargetNode((prev) => {
+          if (prev === 'local' || prev === 'auto') return prev
+          const found = list.find((n) => n.id === prev)
+          if (!found || !nodeSelectable(found)) return 'local'
+          return prev
+        })
+      })
+      .catch(() => setNodes([]))
+      .finally(() => setNodesLoading(false))
+  }, [isOpen, isAdmin])
 
   useEffect(() => {
     if (!isOpen) return
@@ -389,6 +436,11 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
 
     setLoading(true)
     try {
+      // 目标节点：非「本机」时走节点下发路径（主控代理到被控 agent 执行）。
+      if (isAdmin && targetNode !== 'local') {
+        await submitToRemoteNode(containers)
+        return
+      }
       await batchCreate(containers)
       await onSuccess(containers)
       onClose()
@@ -400,6 +452,82 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
     } finally {
       setLoading(false)
     }
+  }
+
+  // submitToRemoteNode 把批次下发到被控节点：
+  //   - 'auto'：先调用调度接口挑节点（过滤在线/容量/存储后端 → 按剩余资源评分）；
+  //   - 指定节点：直接下发。
+  // 被控侧逐个同步创建，这里收集每个实例的结果并汇总提示；容器随后由节点心跳
+  // 上报同步到主控列表（约 10 秒），因此这里额外安排一次延迟刷新。
+  const submitToRemoteNode = async (containers: CreateContainerRequest[]) => {
+    let nodeId = targetNode
+    let nodeLabel = nodes.find((n) => n.id === nodeId)?.name || nodeId
+
+    if (targetNode === 'auto') {
+      try {
+        const res = await scheduleNode({
+          ram_mb: containers[0]?.ram_mb,
+          disk_gb: containers[0]?.disk_gb,
+          virt: containers[0]?.virtualization,
+          count: containers.length,
+        })
+        const chosen = res.data.data?.chosen
+        if (!res.data.success || !chosen) {
+          dialog.alert('没有可用节点', res.data.message || '调度器未找到满足条件的节点（需在线、未维护、容量足够）')
+          return
+        }
+        nodeId = chosen.id
+        nodeLabel = chosen.name || chosen.id
+      } catch (err: unknown) {
+        const error = err as { response?: { data?: { message?: string } } }
+        dialog.alert('调度失败', error.response?.data?.message || '请稍后重试或手动选择节点')
+        return
+      }
+    }
+
+    // 本机专属字段不下发：存储池 ID、公网 IP 池分配由目标节点自行处理。
+    const stripLocalOnly = (item: CreateContainerRequest): CreateContainerRequest => ({
+      ...item,
+      storage_pool_id: '',
+      assign_ipv4: false,
+      ipv4_count: 0,
+      public_ipv4s: [],
+      assign_ipv6: false,
+      ipv6_count: 0,
+      ipv6_addresses: [],
+    })
+
+    const failures: string[] = []
+    let created = 0
+    for (const item of containers) {
+      try {
+        const res = await createContainerOnNode(nodeId, stripLocalOnly(item))
+        if (res.data.success) {
+          created++
+        } else {
+          failures.push(`${item.name}：${res.data.message || '创建失败'}`)
+        }
+      } catch (err: unknown) {
+        const error = err as { response?: { data?: { message?: string } } }
+        failures.push(`${item.name}：${error.response?.data?.message || '请求失败'}`)
+      }
+    }
+
+    await onSuccess([])
+    // 节点容器经心跳上报（≤10s）后才出现在主控列表，这里补一次延迟刷新。
+    window.setTimeout(() => { void onSuccess([]) }, 12000)
+
+    if (failures.length > 0) {
+      dialog.alert(
+        created > 0 ? '部分创建成功' : '创建失败',
+        `节点「${nodeLabel}」：成功 ${created} 个，失败 ${failures.length} 个\n\n${failures.join('\n')}`,
+      )
+    } else {
+      await dialog.alert('已下发到节点', `已在节点「${nodeLabel}」创建 ${created} 个实例，约 10 秒后同步到列表。`)
+    }
+    onClose()
+    setBatchCount(1)
+    setForm({ ...defaultForm, template_id: templates[0]?.id || '', allowed_image_ids: templates[0]?.id ? [templates[0].id] : [], image_limit_configured: true })
   }
 
   if (!isOpen) return null
@@ -464,6 +592,64 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
             </Field>
           </div>
           {batchCount > 1 && <p className="text-xs text-gray-400">将创建 {batchCount} 个容器：{form.name}-{batchStartIndex} 至 {form.name}-{batchStartIndex + batchCount - 1}</p>}
+
+          {isAdmin && (
+            <Field label="目标节点">
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setTargetNode('local')}
+                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${targetNode === 'local' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    本机（主控）
+                  </button>
+                  <button
+                    type="button"
+                    disabled={nodes.filter(nodeSelectable).length === 0}
+                    title={nodes.filter(nodeSelectable).length === 0 ? '没有可用的在线节点' : '按剩余内存/磁盘自动评分挑选'}
+                    onClick={() => setTargetNode('auto')}
+                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${targetNode === 'auto' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                  >
+                    自动选择（按剩余资源）
+                  </button>
+                  {nodesLoading && <span className="self-center text-xs text-gray-400">正在加载节点…</span>}
+                </div>
+                {nodes.length > 0 && (
+                  <div className="grid grid-cols-2 gap-2">
+                    {nodes.map((node) => {
+                      const selectable = nodeSelectable(node)
+                      const active = targetNode === node.id
+                      return (
+                        <button
+                          key={node.id}
+                          type="button"
+                          disabled={!selectable}
+                          onClick={() => selectable && setTargetNode(node.id)}
+                          className={`rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 ${active ? 'border-brand-600 bg-brand-50' : 'border-gray-300 hover:bg-gray-50'}`}
+                        >
+                          <span className="flex items-center gap-2">
+                            <span className={`text-sm font-medium ${selectable ? 'text-gray-800' : 'text-gray-400'}`}>{node.name || node.id}</span>
+                            <span className={`rounded px-1.5 py-0.5 text-[10px] ${selectable ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                              {node.maintenance_mode ? '维护中' : (node.status === 'online' ? '在线' : '离线')}
+                            </span>
+                          </span>
+                          <span className="mt-0.5 block text-xs text-gray-500">{nodeUsageText(node)}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                {targetNode !== 'local' && (
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                    实例将下发到{targetNode === 'auto' ? '调度器挑选的节点' : `节点「${nodes.find((n) => n.id === targetNode)?.name || targetNode}」`}：
+                    存储盘与网络（NAT 端口 / IP 分配）由该节点自动处理，本页「存储磁盘」「网络配置」中的本机专属选项不会生效。
+                    创建后容器由该节点上报同步到主控，列表约 10 秒内出现。
+                  </p>
+                )}
+              </div>
+            </Field>
+          )}
 
           <Field label="虚拟化架构">
             <div className="grid grid-cols-2 gap-2">
