@@ -105,6 +105,11 @@ func main() {
 	if isServerMode || (!isTerminal && !isCliMode) {
 		installShutdownStateCapture()
 
+		// 同机"面板即被控节点"：若本机已通过配对/安装注册为被控节点，
+		// 由面板进程承担被控职责（注入节点 token + 心跳），无需独立 agent 进程
+		// （独立 agent 会再起一个面板并抢占同一端口）。
+		agent.StartEmbeddedNodeSide()
+
 		// Restore persisted state
 		api.ConfigureTaskQueue(cfg.TaskConcurrency)
 		api.RestoreTasks()

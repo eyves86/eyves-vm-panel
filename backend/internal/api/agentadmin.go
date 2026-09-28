@@ -54,12 +54,20 @@ func consumeAgentPairingKey() {
 	_ = config.SaveConfig()
 }
 
-// scheduleAgentRestart 延迟 restartDelay 后重启 eyvescloud-agent 服务：
-// 先让 HTTP 响应完整落回客户端，再执行 systemctl。
-func scheduleAgentRestart() {
+// scheduleNodeSideRestart 让"节点侧"在被控注册/切换主控后生效：
+//   - 独立 agent 部署（安装了 eyvescloud-agent 服务）：重启该服务；
+//   - 面板即被控节点（同机部署，无独立 agent 服务）：重启面板本身——
+//     面板启动时会读取 agent.json、注入节点 token 并启动心跳。
+//
+// 先让 HTTP 响应完整落回客户端，再执行重启，避免响应被自身重启打断。
+func scheduleNodeSideRestart() {
 	go func() {
 		time.Sleep(2 * time.Second)
-		_ = exec.Command("systemctl", "restart", "eyvescloud-agent").Run()
+		if exec.Command("systemctl", "is-active", "--quiet", "eyvescloud-agent").Run() == nil {
+			_ = exec.Command("systemctl", "restart", "eyvescloud-agent").Run()
+			return
+		}
+		_ = exec.Command("systemctl", "restart", "eyvescloud").Run()
 	}()
 }
 
@@ -220,10 +228,13 @@ func HandleAgentRegister(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "保存 agent.json 失败: " + err.Error()})
 		return
 	}
+	// 立即注入节点 token：同机部署时面板自身就是被控端点（/api/agent/*），
+	// 不等服务重启即可接受主控调用；否则主控会收到 403（Agent API is not enabled）。
+	config.SetAgentToken(out.Data.Token)
 	if viaPairingKey {
 		// 主控服务端调用路径：密钥即焚 + 自动重启（面板会话路径由前端调 /api/agent/restart）。
 		consumeAgentPairingKey()
-		scheduleAgentRestart()
+		scheduleNodeSideRestart()
 	}
 	auditRequest(r, "agent.register", name, "controller "+controller, true, "registered/switched")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "已接入主控 " + controller, Data: map[string]bool{"restart_required": true}})
@@ -237,6 +248,6 @@ func HandleAgentRestart(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "未找到 systemctl；请手动重启 agent 服务（systemctl restart eyvescloud-agent）"})
 		return
 	}
-	scheduleAgentRestart()
+	scheduleNodeSideRestart()
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "重启指令已下发，服务约 3-5 秒后恢复", Data: map[string]bool{"restart_initiated": true}})
 }
