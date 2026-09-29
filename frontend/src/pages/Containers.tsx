@@ -47,6 +47,8 @@ export default function Containers() {
   // 创建按钮：v2 功能点可用时以后者为准（更精确，含 API Key scope）；
   // v2 不可用（features 为空）时退回"非子用户即可创建"的旧判断，避免误伤。
   const canCreateContainer = Object.keys(features).length === 0 ? !isSubUser : can('instance_create')
+  // featureGate：v2 功能点可用时以其为准，否则回退旧的非子用户判断。
+  const featureGate = (name: string, fallback: boolean) => (Object.keys(features).length === 0 ? fallback : can(name))
   const [containers, setContainers] = useState<Container[]>([])
   // containersRef 镜像 containers，用于不触发轮询 interval 重建的读取（L8 优化）。
   const containersRef = useRef<Container[]>([])
@@ -501,18 +503,26 @@ export default function Containers() {
           {selected.size > 0 && (
             <div className="flex flex-wrap items-center justify-end gap-1.5">
               <span className="text-xs text-gray-500">{selected.size} 个</span>
-              <button onClick={() => handleBatchAction('start')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-gray-700 hover:bg-gray-100 rounded border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Play className="w-3 h-3" />{batchLoading ? '执行中...' : '开机'}
-              </button>
-              <button onClick={() => handleBatchAction('stop')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-gray-700 hover:bg-gray-100 rounded border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Square className="w-3 h-3" />{batchLoading ? '执行中...' : '关机'}
-              </button>
-              <button onClick={() => handleBatchAction('restart')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-gray-700 hover:bg-gray-100 rounded border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                <RotateCcw className="w-3 h-3" />{batchLoading ? '执行中...' : '重启'}
-              </button>
-              <button onClick={() => handleBatchAction('delete')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-red-600 hover:bg-red-50 rounded border border-red-200 disabled:opacity-50 disabled:cursor-not-allowed">
-                <Trash2 className="w-3 h-3" />{batchLoading ? '执行中...' : '删除'}
-              </button>
+              {/* 批量操作按功能点门禁：无权限时直接隐藏，避免"点了才 403"。
+                  v2 不可用（features 为空）时退回"非子用户即可"的旧判断。 */}
+              {featureGate('instance_power', !isSubUser) && (
+                <>
+                  <button onClick={() => handleBatchAction('start')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-gray-700 hover:bg-gray-100 rounded border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <Play className="w-3 h-3" />{batchLoading ? '执行中...' : '开机'}
+                  </button>
+                  <button onClick={() => handleBatchAction('stop')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-gray-700 hover:bg-gray-100 rounded border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <Square className="w-3 h-3" />{batchLoading ? '执行中...' : '关机'}
+                  </button>
+                  <button onClick={() => handleBatchAction('restart')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-gray-700 hover:bg-gray-100 rounded border border-gray-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <RotateCcw className="w-3 h-3" />{batchLoading ? '执行中...' : '重启'}
+                  </button>
+                </>
+              )}
+              {featureGate('instance_delete', !isSubUser) && (
+                <button onClick={() => handleBatchAction('delete')} disabled={batchLoading || hasActiveTasks(tasks)} className="inline-flex h-8 items-center gap-1 px-2.5 text-xs text-red-600 hover:bg-red-50 rounded border border-red-200 disabled:opacity-50 disabled:cursor-not-allowed">
+                  <Trash2 className="w-3 h-3" />{batchLoading ? '执行中...' : '删除'}
+                </button>
+              )}
             </div>
           )}
         </div>

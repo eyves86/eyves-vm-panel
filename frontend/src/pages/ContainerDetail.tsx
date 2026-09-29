@@ -1767,17 +1767,17 @@ export default function ContainerDetail() {
 
           <div className="flex items-center gap-1.5 flex-wrap justify-end">
             {!isRunning ? (
-              <ActionButton dark disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly} onClick={() => handleAction('start')}>
+              <ActionButton dark disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly || !featureGate('instance_power', true)} onClick={() => handleAction('start')}>
                 <Play className="w-3.5 h-3.5" />
                 {isSubUserPolicyBlocked ? '已封禁' : isExpired ? '已到期' : taskStatus === 'start' ? taskActionLabels['start'] : '开机'}
               </ActionButton>
             ) : (
               <>
-                <ActionButton disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly} onClick={() => handleAction('stop')}>
+                <ActionButton disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly || !featureGate('instance_power', true)} onClick={() => handleAction('stop')}>
                   <Square className="w-3.5 h-3.5" />
                   {isSubUserPolicyBlocked ? '已封禁' : isExpired ? '已到期' : taskStatus === 'stop' ? taskActionLabels['stop'] : '关机'}
                 </ActionButton>
-                <ActionButton disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly} onClick={() => handleAction('restart')}>
+                <ActionButton disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly || !featureGate('instance_power', true)} onClick={() => handleAction('restart')}>
                   <RefreshCw className="w-3.5 h-3.5" />
                   {isSubUserPolicyBlocked ? '已封禁' : isExpired ? '已到期' : taskStatus === 'restart' ? taskActionLabels['restart'] : '重启'}
                 </ActionButton>
