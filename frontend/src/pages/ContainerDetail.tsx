@@ -1739,7 +1739,7 @@ export default function ContainerDetail() {
         <div />
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg p-5">
+      <div className="bg-white border border-gray-200 rounded-xl p-5">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div className="flex items-start gap-4">
             <div className="w-14 h-14 flex items-center justify-center">
@@ -1893,7 +1893,7 @@ export default function ContainerDetail() {
       </div>
 
       {isSubUserPolicyBlocked && (
-        <div className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <div>
             <div className="font-medium">虚拟机被策略临时封禁</div>
@@ -2055,7 +2055,7 @@ export default function ContainerDetail() {
 
       {/* Container resource ring stats (matching host dashboard style) */}
       {container && (
-        <div className="bg-white border border-gray-200 rounded-lg p-5">
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
           <h2 className="text-sm font-semibold text-black mb-4">状态</h2>
           <div className="grid grid-cols-2 gap-3 sm:gap-4 sm:grid-cols-4">
             <RingStat
@@ -2084,7 +2084,7 @@ export default function ContainerDetail() {
 
       {/* Traffic usage bar */}
       {container && (
-        <div className="bg-white border border-gray-200 rounded-lg p-5">
+        <div className="bg-white border border-gray-200 rounded-xl p-5">
           <div className="flex items-center justify-between mb-3">
             <h2 className="text-sm font-semibold text-black">月流量</h2>
             {!isSubUser && (
@@ -2366,20 +2366,20 @@ export default function ContainerDetail() {
         >
           <div className="space-y-4">
             {storageLoading && !isSubUser && (
-              <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+              <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
                 <RefreshCw className="h-4 w-4 animate-spin" />
                 正在检查存储配置...
               </div>
             )}
             {!storageLoading && !snapshotStorageReady && (
-              <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 <span>尚未开启快照存储，无法新建或启用定时快照。</span>
                 <button onClick={() => { setShowSnapshots(false); navigate('/storage') }} className="shrink-0 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-amber-100">
                   去开启
                 </button>
               </div>
             )}
-            <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600">
               <div>
                 快照数量：
                 <span className="font-mono text-gray-900">
@@ -2415,7 +2415,7 @@ export default function ContainerDetail() {
             </div>
 
             {!isSubUser && snapshotStoragePools.length > 0 && (
-              <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
+              <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <Field label="新建快照存储磁盘">
                   <select
                     value={snapshotStoragePoolID}
@@ -2435,7 +2435,7 @@ export default function ContainerDetail() {
             )}
 
             {editingSnapshotQuota && !isSubUser && (
-              <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-white px-4 py-3">
+              <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3">
                 <Field label="子用户每台容器快照上限">
                   <input
                     type="number"
@@ -2506,9 +2506,9 @@ export default function ContainerDetail() {
             </div>
 
             {backups.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无备份</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无备份</p>
             ) : (
-              <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
                     <tr>
@@ -3027,7 +3027,7 @@ export default function ContainerDetail() {
 
       {showSubUser && subUser && (
         <Modal title="管理链接" onClose={() => setShowSubUser(false)}>
-          <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4 text-sm space-y-3">
+          <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 text-sm space-y-3">
             <div className="flex items-start justify-between gap-3">
               <span className="shrink-0 text-gray-500 dark:text-gray-400">地址</span>
               <div className="flex min-w-0 items-center gap-1">
@@ -3334,13 +3334,13 @@ export default function ContainerDetail() {
             </div>
 
             {processesError ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{processesError}</p>
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{processesError}</p>
             ) : processesLoading ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
             ) : processes.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无进程数据</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无进程数据</p>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
                     <tr>
@@ -3404,11 +3404,11 @@ export default function ContainerDetail() {
             </div>
 
             {servicesError ? (
-              <p className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{servicesError}</p>
+              <p className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">{servicesError}</p>
             ) : servicesLoading ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
             ) : (
-              <div className="max-h-96 overflow-y-auto rounded-lg border border-gray-200">
+              <div className="max-h-96 overflow-y-auto rounded-xl border border-gray-200">
                 <table className="w-full text-left text-sm">
                   <thead className="sticky top-0 border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
                     <tr>
@@ -3464,7 +3464,7 @@ export default function ContainerDetail() {
       {showScheduled && (
         <Modal title={`定时任务 - ${container.name}`} onClose={() => setShowScheduled(false)}>
           <div className="space-y-4">
-            <div className="flex flex-wrap items-end gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+            <div className="flex flex-wrap items-end gap-3 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3">
               <Field label="操作类型">
                 <select
                   value={scheduledForm.type}
@@ -3508,11 +3508,11 @@ export default function ContainerDetail() {
             </div>
 
             {scheduledLoading ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
             ) : scheduledActions.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无定时任务（单容器最多 10 条）</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无定时任务（单容器最多 10 条）</p>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
                     <tr>
@@ -3593,13 +3593,13 @@ export default function ContainerDetail() {
             </div>
 
             {bandwidthLoading ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">加载中...</p>
             ) : !bandwidth || !bandwidth.series || bandwidth.series.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
+              <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">
                 暂无流量数据（被控节点未部署流量采集时不可用）
               </p>
             ) : (
-              <div className="overflow-x-auto rounded-lg border border-gray-200">
+              <div className="overflow-x-auto rounded-xl border border-gray-200">
                 <table className="w-full text-left text-sm">
                   <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
                     <tr>
@@ -3629,7 +3629,7 @@ export default function ContainerDetail() {
       {showHVM && (
         <Modal title={`HVM 设置 - ${container.name}`} onClose={() => setShowHVM(false)}>
           <div className="space-y-4">
-            {hvmError && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hvmError}</p>}
+            {hvmError && <p className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{hvmError}</p>}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <Field label="启动顺序" hint="cda=硬盘优先 / dca=光驱优先 / cd=仅光驱">
                 <select value={hvmDraft.bootOrder} onChange={(e) => setHvmDraft({ ...hvmDraft, bootOrder: e.target.value })} className={inputClass}>
@@ -3719,7 +3719,7 @@ export default function ContainerDetail() {
             {(recipeOutput || recipeExecuting) && (
               <div>
                 <p className="mb-1 text-xs font-medium text-gray-600">执行输出</p>
-                <pre className="max-h-64 overflow-auto rounded-lg border border-gray-200 bg-gray-900 p-3 text-xs text-gray-100 whitespace-pre-wrap">
+                <pre className="max-h-64 overflow-auto rounded-xl border border-gray-200 bg-gray-900 p-3 text-xs text-gray-100 whitespace-pre-wrap">
                   {recipeExecuting ? '脚本执行中，耗时较长请耐心等待...' : recipeOutput}
                 </pre>
               </div>
@@ -3806,7 +3806,7 @@ function MetricChart({ icon, title, value, detail, points, percent, color }: { i
   }
   const palette = colors[color]
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4">
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
       <div className="flex items-center justify-between">
         <div className={`w-9 h-9 rounded-md ${palette.bg} ${palette.text} flex items-center justify-center`}>{icon}</div>
         <Cpu className="w-4 h-4 text-gray-300" />
@@ -3845,7 +3845,7 @@ function MiniChart({ points, stroke, fill }: { points: number[]; stroke: string;
 
 function Panel({ title, children, extra }: { title: string; children: ReactNode; extra?: ReactNode }) {
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-5">
+    <div className="bg-white border border-gray-200 rounded-xl p-5">
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-sm font-semibold text-black">{title}</h2>
         {extra}
@@ -3879,11 +3879,11 @@ function SnapshotTable({ snapshots, busy, onRestore, onDelete }: {
   onDelete: (snapshot: Snapshot) => void
 }) {
   if (snapshots.length === 0) {
-    return <p className="rounded-lg border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无快照</p>
+    return <p className="rounded-xl border border-dashed border-gray-200 px-4 py-8 text-center text-sm text-gray-400">暂无快照</p>
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-gray-200">
+    <div className="overflow-x-auto rounded-xl border border-gray-200">
       <table className="w-full min-w-[760px] text-sm">
         <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
           <tr>
@@ -4065,7 +4065,7 @@ function MappingTable({ mappings, publicHost, onEdit, onDelete, compact = false,
   }
 
   return (
-    <div className="overflow-x-auto border border-gray-200 rounded-lg">
+    <div className="overflow-x-auto border border-gray-200 rounded-xl">
       <table className="w-full min-w-[680px]">
         <thead className="bg-gray-50 border-b border-gray-200">
           <tr>
@@ -4152,7 +4152,7 @@ function Segmented({ value, onChange }: { value: IPAssignMode; onChange: (value:
 function Modal({ title, children, onClose, wide = false, extra, flush = false }: { title: string; children: ReactNode; onClose: () => void; wide?: boolean; extra?: ReactNode; flush?: boolean }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className={`bg-white rounded-lg shadow-xl border border-gray-200 w-full ${wide ? 'max-w-5xl' : 'max-w-md'} max-h-[92vh] overflow-hidden flex flex-col`}>
+      <div className={`bg-white rounded-xl shadow-xl border border-gray-200 w-full ${wide ? 'max-w-5xl' : 'max-w-md'} max-h-[92vh] overflow-hidden flex flex-col`}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200">
           <h2 className="text-sm font-semibold text-black">{title}</h2>
           <div className="flex items-center gap-2">

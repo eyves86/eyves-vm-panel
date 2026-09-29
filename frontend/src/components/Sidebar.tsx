@@ -565,7 +565,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     {/* 面板更新管理器：选择仓库 → 拉取版本列表 → 选择目标版本（默认最新） */}
     {updateModalOpen && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-        <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-xl dark:bg-gray-900">
+        <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-xl dark:bg-gray-900">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('面板更新')}</h3>
             <button
@@ -706,7 +706,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
     {/* 升级二次确认 */}
     {confirmUpdate && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
-        <div className="w-full max-w-md rounded-lg bg-white p-5 shadow-xl dark:bg-gray-900">
+        <div className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl dark:bg-gray-900">
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('确认升级面板？')}</h3>
           <div className="mt-3 space-y-2 text-xs text-gray-600 dark:text-gray-300">
             <div className="rounded-md bg-gray-50 px-3 py-2 dark:bg-gray-800">

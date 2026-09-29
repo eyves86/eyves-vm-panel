@@ -70,10 +70,10 @@ export default function Snapshots() {
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
         {snapshots.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100">
               <Camera className="h-7 w-7 text-gray-400" />
             </div>
             <div className="text-sm font-medium text-gray-700">暂无快照</div>

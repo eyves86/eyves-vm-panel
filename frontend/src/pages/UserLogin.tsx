@@ -86,7 +86,7 @@ export default function UserLogin() {
   }
 
   const inputClass =
-    'block w-full rounded-lg border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 transition-colors focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-900'
+    'block w-full rounded-xl border border-gray-200 bg-gray-50 py-2.5 pl-10 pr-3 text-sm text-black placeholder-gray-400 transition-colors focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30 dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-900'
 
   return (
     <AuthLayout
@@ -116,7 +116,7 @@ export default function UserLogin() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         {error && (
-          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-400">
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900/60 dark:bg-red-900/30 dark:text-red-400">
             {error}
           </div>
         )}
@@ -192,7 +192,7 @@ export default function UserLogin() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full rounded-lg bg-brand-600 py-2.5 text-sm font-medium text-white transition-all hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-gray-950"
+          className="w-full rounded-xl bg-brand-600 py-2.5 text-sm font-medium text-white transition-all hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-gray-950"
         >
           {loading ? t('登录中...') : t('登录')}
         </button>

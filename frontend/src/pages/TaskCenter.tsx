@@ -248,7 +248,7 @@ export default function TaskCenter() {
       </div>
 
       {/* 运行中 / 排队 */}
-      <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <section className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
             <Loader2 className={`h-4 w-4 ${activeTasks.length ? 'animate-spin text-blue-500' : 'text-gray-400'}`} />
@@ -312,7 +312,7 @@ export default function TaskCenter() {
       </section>
 
       {/* 历史记录 */}
-      <section className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <section className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <h2 className="text-sm font-semibold text-black dark:text-white">历史执行记录</h2>
           <div className="flex items-center gap-2">
@@ -467,7 +467,7 @@ export default function TaskCenter() {
           onClick={() => !detailLoading && setDetail(null)}
         >
           <div
-            className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-lg bg-white shadow-xl dark:bg-gray-900"
+            className="max-h-[85vh] w-full max-w-2xl overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-gray-700">
@@ -579,7 +579,7 @@ function StatCard({
         ? 'text-red-600 dark:text-red-400'
         : 'text-black dark:text-white'
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 dark:border-gray-700 dark:bg-gray-900">
       <div className="flex items-center gap-1 text-[11px] text-gray-500 dark:text-gray-400">
         {Icon && <Icon className="h-3.5 w-3.5" />}
         {label}

@@ -299,20 +299,20 @@ export default function Security() {
       </div>
 
       {!abuseDetection && (
-        <div className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+        <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
           滥用行为检测已关闭：不会再产生挖矿、BT/PT、VPN/代理、25 端口、DDoS/CC、爆破、后门、内网横向移动等告警。
         </div>
       )}
 
       {abuseDetection && conntrackAvailable === false && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           未检测到连接跟踪数据源（conntrack / <span className="font-mono">/proc/net/nf_conntrack</span>）。
           基于出站/入站连接的滥用检测（挖矿、VPN/代理、BT/PT、CC、25 端口、爆破、后门等）<strong>当前不会生效</strong>，
           请安装 <span className="font-mono">conntrack</span> 工具或启用内核 nf_conntrack 模块。
         </div>
       )}
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-black">滥用用户记录（按用户 / 租户归因）</h2>
           <span className="text-xs text-gray-500">共 {abuse?.total_alerts ?? 0} 条告警</span>
@@ -357,7 +357,7 @@ export default function Security() {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h2 className="text-sm font-semibold text-black">告警列表 ({alerts.length})</h2>
         </div>
@@ -422,7 +422,7 @@ export default function Security() {
 
       {logAlert && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-4xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+          <div className="w-full max-w-4xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <div>
                 <h3 className="text-sm font-semibold text-black">相关连接记录</h3>
@@ -485,7 +485,7 @@ export default function Security() {
 
       {checkOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+          <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <div>
                 <h3 className="text-sm font-semibold text-black">容器安全检查</h3>

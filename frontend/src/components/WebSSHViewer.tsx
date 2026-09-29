@@ -166,7 +166,7 @@ export default function WebSSHViewer({ containerName, onClose }: WebSSHViewerPro
   }, [containerName])
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg overflow-hidden h-full flex flex-col">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden h-full flex flex-col">
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-200 bg-gray-50 shrink-0">
         <div className="flex items-center gap-2">
           <TerminalSquare className="w-4 h-4 text-gray-600" />

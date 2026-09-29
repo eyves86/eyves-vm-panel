@@ -85,7 +85,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
           const style = toastStyles[toast.tone]
           const ToastIcon = style.icon
           return (
-            <div key={toast.id} className={`pointer-events-auto rounded-lg border bg-white shadow-lg dark:bg-gray-900 dark:shadow-black/40 ${style.borderClass}`} role="status">
+            <div key={toast.id} className={`pointer-events-auto rounded-xl border bg-white shadow-lg dark:bg-gray-900 dark:shadow-black/40 ${style.borderClass}`} role="status">
               <div className="flex items-start gap-3 p-3.5">
                 <div className={`mt-0.5 flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-full ${style.iconClass}`}>
                   <ToastIcon className="h-4 w-4" />
@@ -104,7 +104,7 @@ export function DialogProvider({ children }: { children: ReactNode }) {
       </div>
       {dialog.open && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="w-full max-w-sm overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="w-full max-w-sm overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center gap-3 border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-300">
                 <AlertTriangle className="h-4 w-4" />

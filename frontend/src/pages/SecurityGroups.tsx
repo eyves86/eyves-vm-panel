@@ -477,10 +477,10 @@ export default function SecurityGroups() {
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{error}</div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {groups.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><ShieldCheck className="h-7 w-7" /></div>
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><ShieldCheck className="h-7 w-7" /></div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无安全组</div>
             <div className="mt-1 text-xs text-gray-400">点击「新建安全组」创建第一个安全组</div>
           </div>
@@ -544,7 +544,7 @@ export default function SecurityGroups() {
       {/* 新建安全组 Modal */}
       {createOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">新建安全组</h3>
               <button onClick={() => setCreateOpen(false)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
@@ -605,7 +605,7 @@ export default function SecurityGroups() {
       {/* 编辑安全组 Modal */}
       {editGroup && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">编辑安全组</h3>
               <button onClick={() => setEditGroup(null)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
@@ -652,7 +652,7 @@ export default function SecurityGroups() {
       {/* 安全组详情（规则列表）Modal */}
       {detailId && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 安全组详情{detail ? ` - ${detail.group.name}` : ''}
@@ -670,7 +670,7 @@ export default function SecurityGroups() {
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{detailError}</div>
               ) : detail ? (
                 <>
-                  <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
                     <span>租户：<span className="font-medium text-black dark:text-white">{tenantLabel(detail.group.tenant_id)}</span></span>
                     <span>默认动作：<ActionBadge action={detail.group.default_action} /></span>
                     <span className="font-mono text-gray-400">{detail.group.id}</span>
@@ -684,7 +684,7 @@ export default function SecurityGroups() {
                   </div>
 
                   {showRuleForm && (
-                    <div className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
+                    <div className="mb-4 rounded-xl border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-800/60">
                       {ruleError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{ruleError}</div>}
                       <div className="grid gap-3 md:grid-cols-3">
                         <div>
@@ -742,7 +742,7 @@ export default function SecurityGroups() {
                     </div>
                   )}
 
-                  <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-700">
+                  <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-700">
                     <table className="w-full min-w-[760px] text-sm">
                       <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                         <tr>
@@ -792,7 +792,7 @@ export default function SecurityGroups() {
       {/* 容器绑定管理 Modal */}
       {bindOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">容器安全组绑定</h3>
               <button onClick={closeBind} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">

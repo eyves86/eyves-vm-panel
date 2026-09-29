@@ -286,7 +286,7 @@ export default function BackupPlans() {
       )}
 
       {remote && (
-        <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
           <div className="flex items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
             <div>
               <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
@@ -423,7 +423,7 @@ export default function BackupPlans() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {plans.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-gray-400">
             暂无备份计划，点击「新建计划」创建第一个定时备份任务
@@ -532,7 +532,7 @@ export default function BackupPlans() {
       {form && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !saving && setForm(null)}>
           <div
-            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-lg bg-white p-5 shadow-xl dark:bg-gray-900"
+            className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-xl bg-white p-5 shadow-xl dark:bg-gray-900"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between">
@@ -656,7 +656,7 @@ export default function BackupPlans() {
       {historyPlan && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistoryPlan(null)}>
           <div
-            className="max-h-[85vh] w-full max-w-xl overflow-hidden rounded-lg bg-white shadow-xl dark:bg-gray-900"
+            className="max-h-[85vh] w-full max-w-xl overflow-hidden rounded-xl bg-white shadow-xl dark:bg-gray-900"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-gray-700">

@@ -504,7 +504,7 @@ export default function ApiIntegration() {
       </div>
 
       {newKey && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <div className="mb-3 flex items-center justify-between gap-3">
             <div className="text-sm font-semibold text-amber-800">新的 API Key 已生成</div>
             <button onClick={() => setNewKey('')} className="rounded p-1 text-amber-700 hover:bg-amber-100" title="关闭">
@@ -526,7 +526,7 @@ export default function ApiIntegration() {
         </div>
       )}
 
-      <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="rounded-xl border border-gray-200 bg-white">
         <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black">
             <Key className="h-4 w-4" />
@@ -600,7 +600,7 @@ export default function ApiIntegration() {
         )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="rounded-xl border border-gray-200 bg-white">
         <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black">
             <Package className="h-4 w-4" />
@@ -640,13 +640,13 @@ export default function ApiIntegration() {
               </button>
             </div>
 
-            <div className="rounded-lg bg-gray-50 p-3 text-xs text-gray-600">
+            <div className="rounded-xl bg-gray-50 p-3 text-xs text-gray-600">
               <div className="mb-1 font-medium text-gray-700">安装方式</div>
               <div>解压下载的 zip 到 WHMCS 根目录（顶层目录为 <code className="font-mono">{whmcs.install_path}</code>），然后在 WHMCS 后台添加服务器并选择 <code className="font-mono">eyvescloud</code> 模块，API Key 填入服务器 Access Hash 或密码字段。</div>
             </div>
 
             {whmcs.files.length > 0 && (
-              <details className="rounded-lg border border-gray-200">
+              <details className="rounded-xl border border-gray-200">
                 <summary className="cursor-pointer px-3 py-2 text-xs font-medium text-gray-700">
                   模块文件清单（{whmcs.files.length}）
                 </summary>
@@ -666,7 +666,7 @@ export default function ApiIntegration() {
         )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white">
+      <div className="rounded-xl border border-gray-200 bg-white">
         <button
           onClick={() => setShowDocs(value => !value)}
           className="flex w-full items-center justify-between gap-3 border-b border-gray-200 px-5 py-4 text-left"
@@ -680,7 +680,7 @@ export default function ApiIntegration() {
 
         {showDocs && (
           <div className="space-y-6 p-5">
-            <div className="rounded-lg bg-gray-900 p-4 font-mono text-xs text-gray-100">
+            <div className="rounded-xl bg-gray-900 p-4 font-mono text-xs text-gray-100">
               <div>curl -X GET {BASE_URL}/api/v1/containers -H "X-API-Key: eyvescloud_sk_xxxx"</div>
               <div className="mt-2 text-gray-400">curl -X GET {BASE_URL}/api/v1/dashboard -H "Authorization: Bearer eyvescloud_sk_xxxx"</div>
             </div>
@@ -688,7 +688,7 @@ export default function ApiIntegration() {
             {endpointGroups.map(group => (
               <section key={group.title}>
                 <h3 className="mb-2 text-sm font-semibold text-black">{group.title}</h3>
-                <div className="overflow-hidden rounded-lg border border-gray-200">
+                <div className="overflow-hidden rounded-xl border border-gray-200">
                   {group.endpoints.map(([method, path, desc]) => (
                     <div key={`${method}-${path}`} className="grid gap-2 border-b border-gray-100 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[72px_minmax(220px,1fr)_180px_72px]">
                       <span className="w-fit rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 font-mono font-bold text-blue-700">{method}</span>
@@ -714,7 +714,7 @@ export default function ApiIntegration() {
       {selectedEndpoint && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setSelectedEndpoint(null)} />
-          <div className="relative flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+          <div className="relative flex max-h-[90vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
@@ -743,7 +743,7 @@ export default function ApiIntegration() {
                       {copiedDoc ? '已复制' : '复制'}
                     </button>
                   </div>
-                  <pre className="max-h-[52vh] overflow-auto rounded-lg bg-gray-900 p-4 text-xs text-gray-100">
+                  <pre className="max-h-[52vh] overflow-auto rounded-xl bg-gray-900 p-4 text-xs text-gray-100">
                     <code>{buildPythonExample(selectedEndpoint)}</code>
                   </pre>
                 </section>
@@ -753,7 +753,7 @@ export default function ApiIntegration() {
                   {selectedEndpoint.note && (
                     <div className="mb-2 rounded border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-500">{selectedEndpoint.note}</div>
                   )}
-                  <pre className="max-h-[52vh] overflow-auto rounded-lg bg-gray-900 p-4 text-xs text-gray-100">
+                  <pre className="max-h-[52vh] overflow-auto rounded-xl bg-gray-900 p-4 text-xs text-gray-100">
                     <code>{formatJSON(selectedEndpoint.response)}</code>
                   </pre>
                 </section>
@@ -766,7 +766,7 @@ export default function ApiIntegration() {
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/50" onClick={() => setShowForm(false)} />
-          <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+          <div className="relative flex max-h-[90vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
               <h3 className="text-base font-semibold text-black">{editingKey ? '编辑 API Key' : '创建 API Key'}</h3>
               <button onClick={() => setShowForm(false)} className="rounded p-1 text-gray-400 hover:text-black" title="关闭">

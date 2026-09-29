@@ -102,7 +102,7 @@ export default function Regions() {
       </div>
 
       {creating && (
-        <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
           <h2 className="mb-4 text-sm font-semibold text-black dark:text-white">新建区域</h2>
           {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <div className="grid gap-4 md:grid-cols-2">
@@ -122,10 +122,10 @@ export default function Regions() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {regions.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Globe className="h-7 w-7" /></div>
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Globe className="h-7 w-7" /></div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无区域</div>
             <div className="mt-1 text-xs text-gray-400">点击「新建区域」创建第一个区域</div>
           </div>

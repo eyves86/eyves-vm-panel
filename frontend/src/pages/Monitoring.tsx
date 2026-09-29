@@ -144,28 +144,28 @@ export default function Monitoring() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-        <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <Server className="w-4 h-4" />
             容器总数
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{rows.length}</div>
         </div>
-        <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <Activity className="w-4 h-4" />
             运行中
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{running}</div>
         </div>
-        <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <ShieldAlert className="w-4 h-4" />
             涉及滥用容器
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{abusers}</div>
         </div>
-        <div className="bg-white border border-gray-200 rounded-lg p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <ShieldAlert className="w-4 h-4" />
             滥用告警总数
@@ -174,7 +174,7 @@ export default function Monitoring() {
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-black">全部容器实时指标（LXC / KVM）</h2>
           <span className="text-xs text-gray-500">更新于 {generatedAt || '-'}</span>

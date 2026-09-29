@@ -690,7 +690,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-semibold text-black">创建新容器</h2>
           <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded text-gray-500" title="关闭">
@@ -912,11 +912,15 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               className={inputClass}
             >
               <option value="">{t('请选择镜像')}</option>
-              {templates.map((template) => (
-                <option key={template.id} value={template.id}>
-                  {template.name}
-                </option>
-              ))}
+              {templates.map((template) => {
+                const missing = imageMissingOnTarget(template.id)
+                return (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                    {missing ? `（目标节点「${targetNodeName || '所选节点'}」未下载 · 提交时自动下载）` : ''}
+                  </option>
+                )
+              })}
             </select>
             </>
             )}

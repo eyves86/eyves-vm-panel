@@ -213,7 +213,7 @@ export default function ISOs() {
       </div>
 
       {creating && (
-        <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
           <h2 className="mb-4 text-sm font-semibold text-black dark:text-white">添加 ISO</h2>
           {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <div className="mb-4 flex gap-2">
@@ -265,10 +265,10 @@ export default function ISOs() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {isos.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Disc3 className="h-7 w-7" /></div>
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Disc3 className="h-7 w-7" /></div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无 ISO</div>
             <div className="mt-1 text-xs text-gray-400">点击「新建 ISO」添加第一个镜像</div>
           </div>
@@ -305,7 +305,7 @@ export default function ISOs() {
         )}
       </div>
 
-      <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
           <LifeBuoy className="h-4 w-4" />
           挂载到容器（救援模式）

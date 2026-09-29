@@ -169,7 +169,7 @@ export default function Storage() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white text-sm">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white text-sm">
         <div className="hidden grid-cols-[minmax(170px,0.65fr)_minmax(320px,1.2fr)_minmax(480px,1.8fr)] gap-4 border-b border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-500 2xl:grid">
           <div className="font-medium">{t('磁盘')}</div>
           <div className="font-medium">{t('空间分布')}</div>

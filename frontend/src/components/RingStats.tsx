@@ -101,7 +101,7 @@ export default function RingStats({
   const hasSwap = swapTotal > 0
 
   return (
-    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-5">
+    <div className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-xl p-5">
       <h2 className="text-sm font-semibold text-black dark:text-white mb-4">状态</h2>
       <div className={`grid grid-cols-2 gap-3 md:grid-cols-4 ${hasSwap ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
         <RingStat

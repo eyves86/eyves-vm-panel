@@ -201,10 +201,10 @@ export default function SSHKeys() {
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{error}</div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {keys.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><KeyRound className="h-7 w-7" /></div>
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><KeyRound className="h-7 w-7" /></div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无 SSH 公钥</div>
             <div className="mt-1 text-xs text-gray-400">点击「新建公钥」添加第一个公钥</div>
           </div>
@@ -266,7 +266,7 @@ export default function SSHKeys() {
       {/* 新建公钥 Modal */}
       {createOpen && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">新建 SSH 公钥</h3>
               <button onClick={() => setCreateOpen(false)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
@@ -313,7 +313,7 @@ export default function SSHKeys() {
       {/* 重命名 Modal */}
       {renameKey && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">重命名公钥</h3>
               <button onClick={() => setRenameKey(null)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
@@ -347,7 +347,7 @@ export default function SSHKeys() {
       {/* 公钥详情 Modal */}
       {viewTarget && (
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
-          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">公钥详情 - {viewTarget.name}</h3>
               <button onClick={closeView} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
@@ -363,7 +363,7 @@ export default function SSHKeys() {
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{viewError}</div>
               ) : viewDetail ? (
                 <>
-                  <div className="mb-4 grid gap-x-6 gap-y-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 sm:grid-cols-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+                  <div className="mb-4 grid gap-x-6 gap-y-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 sm:grid-cols-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
                     <div className="flex items-center gap-2">
                       <span className="text-gray-400">指纹：</span>
                       <span className="font-mono">{viewDetail.fingerprint || '—'}</span>
@@ -383,7 +383,7 @@ export default function SSHKeys() {
                   </div>
                   <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">公钥内容</label>
                   <div className="relative">
-                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 font-mono text-xs text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200">{viewDetail.public_key}</pre>
+                    <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 font-mono text-xs text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200">{viewDetail.public_key}</pre>
                   </div>
                 </>
               ) : null}

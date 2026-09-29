@@ -172,7 +172,7 @@ export default function NodeMigration() {
 
       {/* 方式一：在线迁移 */}
       <h2 className="text-sm font-semibold text-black">在线迁移</h2>
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
           <Info className="w-4 h-4 text-gray-500" />
           <p className="text-xs text-gray-600">
@@ -245,7 +245,7 @@ export default function NodeMigration() {
 
       {/* 方式二：文件迁移 */}
       <h2 className="text-sm font-semibold text-black">文件迁移</h2>
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
           <Info className="w-4 h-4 text-gray-500" />
           <p className="text-xs text-gray-600">
@@ -297,12 +297,12 @@ export default function NodeMigration() {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h2 className="text-sm font-semibold text-black">导入迁移包</h2>
         </div>
         <div className="p-4 space-y-3">
-          <label className="flex items-center justify-center gap-3 rounded-lg border-2 border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-50 cursor-pointer">
+          <label className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-50 cursor-pointer">
             <FileJson className="w-5 h-5" />
             {fileName ? <span className="font-mono">{fileName}</span> : <span>点击选择 .migrate.json 迁移包文件</span>}
             <input

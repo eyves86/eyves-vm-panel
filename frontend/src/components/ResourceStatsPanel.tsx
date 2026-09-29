@@ -56,7 +56,7 @@ export default function ResourceStatsPanel({
   charts: ResourceChartConfig[]
 }) {
   return (
-    <section className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 overflow-hidden">
+    <section className="border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-900 overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
         <h2 className="text-sm font-semibold text-gray-950 dark:text-white">统计信息</h2>
         <div className="flex items-center gap-1.5">

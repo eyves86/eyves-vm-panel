@@ -127,7 +127,7 @@ export default function AdminAccounts() {
       {notice && <div className="mb-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">{notice}</div>}
 
       {showCreate && canManage && (
-        <div className="mb-5 rounded-lg border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
+        <div className="mb-5 rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-800 dark:bg-gray-900">
           <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
             <input
               className="rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
@@ -167,7 +167,7 @@ export default function AdminAccounts() {
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
         </div>
       ) : (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-800">
+        <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-800">
           <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-800">
             <thead className="bg-gray-50 text-left text-xs uppercase text-gray-500 dark:bg-gray-900">
               <tr>
@@ -254,7 +254,7 @@ export default function AdminAccounts() {
 
       {pwdTarget && (
         <div className="fixed inset-0 z-30 flex items-center justify-center bg-black/40 px-4">
-          <div className="w-full max-w-sm rounded-lg bg-white p-5 shadow-lg dark:bg-gray-900">
+          <div className="w-full max-w-sm rounded-xl bg-white p-5 shadow-lg dark:bg-gray-900">
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
               {t('重置密码')}：{pwdTarget.username}
             </h3>

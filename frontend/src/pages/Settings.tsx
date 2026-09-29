@@ -922,7 +922,7 @@ export default function Settings() {
       </div>
 
       <div className="grid items-start gap-4 lg:grid-cols-[210px_minmax(0,1fr)]">
-        <aside className="overflow-x-auto rounded-lg border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-900 lg:sticky lg:top-4">
+        <aside className="overflow-x-auto rounded-xl border border-gray-200 bg-white p-2 dark:border-gray-700 dark:bg-gray-900 lg:sticky lg:top-4">
           <nav className="flex min-w-max gap-1 lg:min-w-0 lg:flex-col" aria-label="设置分类">
             {settingsSections.map((section) => {
               const Icon = section.icon
@@ -955,7 +955,7 @@ export default function Settings() {
           )}
 
           {activeSection === 'account' && (
-            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
               <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
                 <UserCog className="h-4 w-4" />账号设置
               </h2>
@@ -1081,7 +1081,7 @@ export default function Settings() {
           )}
 
           {activeSection === 'access' && (
-            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('管理员入口路径')}</h3>
               <p className="mt-1 text-xs text-gray-500">
                 {t('自定义管理后台的入口路径（用户门户固定为 /user）。只有访问到该路径时，页面才会包含管理端路由，其它路径不含任何管理入口，因此无法通过枚举 /login、/admin 等常见路径发现。')}
@@ -1124,7 +1124,7 @@ export default function Settings() {
           )}
 
           {activeSection === 'access' && (
-            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('面板绑定域名')}</h3>
               <p className="mt-1 text-xs text-gray-500">
                 {t('设置面板对外服务的域名（如 https://panel.example.com）。配置后，节点安装命令、agent 接入地址等对外 URL 一律使用该域名，反向代理 / 多入口环境下也能生成正确地址；留空则按访问地址自动推导。')}
@@ -1168,7 +1168,7 @@ export default function Settings() {
           )}
 
           {activeSection === 'access' && (
-            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('登录页版权栏')}</h3>
               <p className="mt-1 text-xs text-gray-500">
                 {t('自定义登录页底部的版权文字；留空显示默认版权（© 年份 EyvesCloud. All rights reserved.），勾选「隐藏」则完全不显示。')}
@@ -1215,7 +1215,7 @@ export default function Settings() {
 
 
           {activeSection === 'turnstile' && (
-            <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
+            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-800 dark:bg-gray-900">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white">{t('Cloudflare Turnstile 人机验证')}</h3>
               <p className="mt-1 text-xs text-gray-500">
                 {t('在 Cloudflare 控制台为面板域名创建 Turnstile 组件后，把 Site Key / Secret Key 填到这里。可分别对管理员登录页与用户登录页开启人机验证；两者可独立开关，密钥配置齐全后才会生效。')}
@@ -1415,7 +1415,7 @@ interface PanelAccessPolicyCardProps {
 
 function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
@@ -1506,7 +1506,7 @@ function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
 function TaskQueueCard(props: TaskQueueCardProps) {
   const setBounded = (value: number) => props.onConcurrencyChange(Math.max(1, Math.min(16, value)))
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black">
           <ListTodo className="h-4 w-4" />任务队列
@@ -1593,7 +1593,7 @@ function AuditComplianceCard(props: AuditComplianceCardProps) {
     }
   }
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
         <Clock className="h-4 w-4" />审计合规
       </h2>
@@ -1645,7 +1645,7 @@ interface InstanceBackupCardProps {
 
 function InstanceBackupCard(props: InstanceBackupCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
           <Database className="h-4 w-4" />实例磁盘自动备份
@@ -1711,7 +1711,7 @@ interface BackupCardProps {
 
 function BackupCard(props: BackupCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
           <Database className="h-4 w-4" />容灾备份（配置快照）
@@ -1818,7 +1818,7 @@ interface RateLimitCardProps {
 
 function RateLimitCard(props: RateLimitCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
@@ -1974,7 +1974,7 @@ function TwoFactorCard(props: TwoFactorCardProps) {
   const hasSecret = !!props.twoFA?.has_secret
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4 flex items-center justify-between gap-3">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
@@ -2157,7 +2157,7 @@ interface WebSSHOriginCardProps {
 
 function WebSSHOriginCard(props: WebSSHOriginCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
+    <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black">
           <Terminal className="h-4 w-4" />WebSSH Origin 白名单
@@ -2200,7 +2200,7 @@ function SSLCard(props: SSLCardProps) {
   ]
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5">
+    <div className="rounded-xl border border-gray-200 bg-white p-5">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black">
           <ShieldCheck className="h-4 w-4" />SSL 证书
@@ -2313,7 +2313,7 @@ interface LoginLogCardProps {
 
 function LoginLogCard({ logs, logPage, pageSize, totalPages, setLogPage }: LoginLogCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5">
+    <div className="rounded-xl border border-gray-200 bg-white p-5">
       <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-black">
         <LogIn className="h-4 w-4" />登录日志
       </h2>
@@ -2412,7 +2412,7 @@ interface NotificationCardProps {
 
 function NotificationCard(props: NotificationCardProps) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
           <Bell className="h-4 w-4" />外部告警推送
@@ -2530,7 +2530,7 @@ function OvercommitCard(props: OvercommitCardProps) {
 
   if (!draft) {
     return (
-      <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
         <p className="text-sm text-gray-400">资源超售设置尚未加载</p>
       </div>
     )
@@ -2581,7 +2581,7 @@ function OvercommitCard(props: OvercommitCardProps) {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+    <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
       <div className="mb-4">
         <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
           <TrendingUp className="h-4 w-4" />资源超售

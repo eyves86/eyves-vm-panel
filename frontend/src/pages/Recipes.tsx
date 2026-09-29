@@ -225,10 +225,10 @@ export default function Recipes() {
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{error}</div>
       )}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {recipes.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
               <BookOpen className="h-7 w-7" />
             </div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-300">暂无脚本模板</div>
@@ -314,7 +314,7 @@ export default function Recipes() {
       {/* 新建 / 编辑模板弹窗 */}
       {formOpen && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">{editing ? '编辑脚本模板' : '新建脚本模板'}</h3>
               <button onClick={closeForm} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
@@ -386,7 +386,7 @@ export default function Recipes() {
       {/* 执行弹窗 */}
       {execRecipe && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <div>
                 <h3 className="text-sm font-semibold text-black dark:text-white">执行脚本</h3>

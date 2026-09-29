@@ -48,9 +48,9 @@ export default function HostReport() {
       </div>
 
       {loading && !report ? (
-        <div className="rounded-lg border border-gray-200 bg-white py-14 text-center text-sm text-gray-400">{text.loading}</div>
+        <div className="rounded-xl border border-gray-200 bg-white py-14 text-center text-sm text-gray-400">{text.loading}</div>
       ) : !report ? (
-        <div className="rounded-lg border border-gray-200 bg-white py-14 text-center text-sm text-gray-400">{text.emptyReport}</div>
+        <div className="rounded-xl border border-gray-200 bg-white py-14 text-center text-sm text-gray-400">{text.emptyReport}</div>
       ) : (
         <div className="space-y-5">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -144,7 +144,7 @@ export default function HostReport() {
           <ProbeSection title={text.environmentSupport}>
             <div className="grid gap-2 md:grid-cols-2">
               {report.environment.map(item => (
-                <div key={item.key} className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2">
+                <div key={item.key} className="flex items-start gap-2 rounded-xl border border-gray-200 bg-white px-3 py-2">
                   {item.ok ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" /> : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${item.required ? 'text-red-600' : 'text-amber-600'}`} />}
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2 text-xs font-medium text-gray-800">
@@ -167,7 +167,7 @@ export default function HostReport() {
 
 function ProbeMetric({ icon, label, value, sub }: { icon: ReactNode; label: string; value: string; sub: string }) {
   return (
-    <div className="rounded-lg border border-gray-200 bg-white px-3 py-3">
+    <div className="rounded-xl border border-gray-200 bg-white px-3 py-3">
       <div className="mb-2 flex items-center gap-2 text-xs font-medium text-gray-500">
         {icon}
         {label}
@@ -336,7 +336,7 @@ function ProbeSection({ title, children }: { title: string; children: ReactNode 
 
 function ProbeRows({ rows }: { rows: Array<[string, string]> }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
       {rows.map(([label, value]) => (
         <div key={label} className="grid gap-2 border-b border-gray-100 px-3 py-2 text-xs last:border-b-0 md:grid-cols-[160px_1fr]">
           <div className="font-medium text-gray-500">{label}</div>
@@ -352,9 +352,9 @@ function ProbeTable({ title, headers, rows, empty }: { title: string; headers: s
     <section>
       <h2 className="mb-2 text-sm font-semibold text-black">{title}</h2>
       {rows.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white px-3 py-3 text-xs text-gray-400">{empty}</div>
+        <div className="rounded-xl border border-gray-200 bg-white px-3 py-3 text-xs text-gray-400">{empty}</div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50 text-left text-gray-500">

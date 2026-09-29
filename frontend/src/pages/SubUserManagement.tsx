@@ -415,10 +415,10 @@ export default function SubUserManagement() {
         </button>
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
+      <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
         {users.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 dark:bg-gray-800">
+            <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 dark:bg-gray-800">
               <UserCog className="h-7 w-7 text-gray-400" />
             </div>
             <div className="text-sm font-medium text-gray-700 dark:text-gray-300">暂无子用户</div>
@@ -558,7 +558,7 @@ export default function SubUserManagement() {
       {/* 新建子用户弹窗 */}
       {createOpen && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">新建子用户</h3>
               <button onClick={() => setCreateOpen(false)} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
@@ -693,7 +693,7 @@ export default function SubUserManagement() {
       {/* 编辑子用户弹窗 */}
       {editUser && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-md overflow-hidden">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-md overflow-hidden">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">编辑子用户</h3>
               <button onClick={() => setEditUser(null)} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
@@ -778,7 +778,7 @@ export default function SubUserManagement() {
       {/* 管理容器绑定弹窗 */}
       {bindUser && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <div>
                 <h3 className="text-sm font-semibold text-black dark:text-white">管理容器绑定</h3>
@@ -828,9 +828,9 @@ export default function SubUserManagement() {
                   <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-brand-600" />
                 </div>
               ) : bindContainers.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">暂无容器</div>
+                <div className="rounded-xl border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">暂无容器</div>
               ) : filterContainers(bindContainers, bindSearch).length === 0 ? (
-                <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">没有匹配「{bindSearch.trim()}」的容器</div>
+                <div className="rounded-xl border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">没有匹配「{bindSearch.trim()}」的容器</div>
               ) : (
                 <div className="space-y-1">
                   {filterContainers(bindContainers, bindSearch).map((c) => {
@@ -888,7 +888,7 @@ export default function SubUserManagement() {
 
       {passwordUser && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <div>
                 <h3 className="text-sm font-semibold text-black dark:text-white">登录凭据</h3>
@@ -911,7 +911,7 @@ export default function SubUserManagement() {
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
               {/* 区块 1：账号登录（子用户本人，用户名 + 密码） */}
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 px-3.5 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
                   <LogIn className="h-3.5 w-3.5" />
                   账号登录
@@ -946,7 +946,7 @@ export default function SubUserManagement() {
               </div>
 
               {/* 区块 2：访问码登录（分享给他人：访问码 + 同一密码） */}
-              <div className="rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                 <div className="flex items-center gap-1.5 bg-gray-50 dark:bg-gray-800 px-3.5 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
                   <KeyRound className="h-3.5 w-3.5" />
                   访问码登录（分享）
@@ -987,7 +987,7 @@ export default function SubUserManagement() {
 
       {imageUser && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <div>
                 <h3 className="text-sm font-semibold text-black dark:text-white">可用镜像</h3>
@@ -1003,7 +1003,7 @@ export default function SubUserManagement() {
                   <div className="h-7 w-7 animate-spin rounded-full border-b-2 border-brand-600" />
                 </div>
               ) : images.length === 0 ? (
-                <div className="rounded-lg border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">
+                <div className="rounded-xl border border-dashed border-gray-300 px-4 py-10 text-center text-sm text-gray-500">
                   暂无已下载并启用的镜像
                 </div>
               ) : (
@@ -1014,7 +1014,7 @@ export default function SubUserManagement() {
                     return (
                       <label
                         key={image.id}
-                        className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 text-sm transition-colors ${checked ? 'border-brand-600 bg-gray-50 dark:border-white dark:bg-gray-800' : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'}`}
+                        className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-3 text-sm transition-colors ${checked ? 'border-brand-600 bg-gray-50 dark:border-white dark:bg-gray-800' : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800'}`}
                       >
                         <input
                           type="checkbox"
@@ -1057,7 +1057,7 @@ export default function SubUserManagement() {
       {/* Log Modal */}
       {(auditLogs || loginLogs) && (
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+          <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">{modalTitle}</h3>
               <button onClick={closeModal} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">

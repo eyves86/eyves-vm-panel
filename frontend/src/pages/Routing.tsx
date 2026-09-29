@@ -823,7 +823,7 @@ export default function Routing() {
 
 function Panel({ title, subtitle, action, children }: { title: string; subtitle?: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+    <div className="overflow-hidden rounded-xl border border-gray-200 bg-white">
       <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-4 py-3">
         <div>
           <div className="text-sm font-medium text-black">{title}</div>
@@ -839,7 +839,7 @@ function Panel({ title, subtitle, action, children }: { title: string; subtitle?
 function RouteModal({ title, onClose, wide, children }: { title: string; onClose: () => void; wide?: boolean; children: ReactNode }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className={`flex max-h-[88vh] w-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl ${wide ? 'max-w-5xl' : 'max-w-xl'}`}>
+      <div className={`flex max-h-[88vh] w-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl ${wide ? 'max-w-5xl' : 'max-w-xl'}`}>
         <div className="flex items-center justify-between gap-3 border-b border-gray-200 px-5 py-4">
           <div className="text-base font-semibold text-black">{title}</div>
           <button onClick={onClose} className="rounded p-1 text-gray-500 hover:bg-gray-100">
@@ -914,7 +914,7 @@ function CapacityCard({ title, watermark, remaining, total, used, label, usedLab
   action?: ReactNode
 }) {
   return (
-    <div className="relative overflow-hidden rounded-lg border border-gray-200 bg-white p-4">
+    <div className="relative overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
       <div className="pointer-events-none absolute bottom-1 right-3 select-none bg-gradient-to-br from-black via-gray-600 to-gray-300 bg-clip-text text-[44px] font-black italic tracking-wide text-transparent opacity-25 -skew-x-12">
         {watermark}
       </div>
@@ -962,7 +962,7 @@ function LabeledNumberInput({ label, value, onChange, min, max }: {
 function EmptyState({ icon, text }: { icon: ReactNode; text: string }) {
   return (
     <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-lg bg-gray-100 text-gray-500">{icon}</div>
+      <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500">{icon}</div>
       <div className="text-sm font-medium text-gray-700">{text}</div>
     </div>
   )

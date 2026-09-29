@@ -163,7 +163,7 @@ export default function WebVNCViewer({ containerName, onClose }: WebVNCViewerPro
   }, [containerName])
 
   return (
-    <div className="flex h-full flex-col overflow-hidden rounded-lg border border-gray-200 bg-white">
+    <div className="flex h-full flex-col overflow-hidden rounded-xl border border-gray-200 bg-white">
       <div className="flex shrink-0 items-center justify-between border-b border-gray-200 bg-gray-50 px-4 py-2.5">
         <div className="flex items-center gap-2">
           <Monitor className="h-4 w-4 text-gray-600" />

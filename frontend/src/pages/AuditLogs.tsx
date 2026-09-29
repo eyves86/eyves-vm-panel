@@ -140,7 +140,7 @@ export default function AuditLogs() {
         </div>
       )}
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {logs.length === 0 ? (
           <div className="p-8 text-center text-sm text-gray-500">暂无操作日志</div>
         ) : (

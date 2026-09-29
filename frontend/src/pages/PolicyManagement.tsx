@@ -152,7 +152,7 @@ export default function PolicyManagement() {
         </div>
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-indigo-500" />
           <p className="text-xs text-gray-600">
@@ -230,7 +230,7 @@ export default function PolicyManagement() {
         )}
       </div>
 
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
           <h2 className="text-sm font-semibold text-black">触发记录 ({history.length})</h2>
         </div>
@@ -268,7 +268,7 @@ export default function PolicyManagement() {
 
       {editing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+          <div className="w-full max-w-lg overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
               <h3 className="text-sm font-semibold text-black">{editing.id ? '编辑策略' : '新建策略'}</h3>
               <button onClick={() => setEditing(null)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black">

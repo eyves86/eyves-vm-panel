@@ -103,7 +103,7 @@ export default function MyServers() {
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
         </div>
       ) : servers.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-gray-300 bg-white py-16 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl border border-dashed border-gray-300 bg-white py-16 text-center text-sm text-gray-500 dark:border-gray-700 dark:bg-gray-900">
           {t('暂无被授权的服务器，请联系管理员开通')}
         </div>
       ) : (
@@ -115,7 +115,7 @@ export default function MyServers() {
             return (
               <div
                 key={key}
-                className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-gray-800 dark:bg-gray-900"
+                className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm transition-shadow hover:shadow-md dark:border-gray-800 dark:bg-gray-900"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">

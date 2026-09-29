@@ -529,15 +529,15 @@ export default function Containers() {
       )}
 
       {displayContainers.length === 0 ? (
-        <div className="bg-white border border-gray-200 rounded-lg p-12 text-center">
-          <div className="w-16 h-16 bg-gray-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-12 text-center">
+          <div className="w-16 h-16 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-4">
             <Server className="w-8 h-8 text-gray-400" />
           </div>
           <h3 className="text-lg font-medium text-gray-700 mb-2">暂无容器</h3>
           <p className="text-sm text-gray-500 mb-4">点击"创建容器"开始</p>
         </div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1260px]">
               <thead>
@@ -1225,7 +1225,7 @@ function TaskQueueModal({ tasks, onRefresh, onClose }: {
   const { t } = useLanguage()
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div className="flex max-h-[86vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl">
+      <div className="flex max-h-[86vh] w-full max-w-6xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
         <div className="flex items-center justify-between gap-4 border-b border-gray-200 px-5 py-4">
           <div>
             <h2 className="text-base font-semibold text-black">{t('任务队列')}</h2>

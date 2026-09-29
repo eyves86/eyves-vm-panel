@@ -140,7 +140,7 @@ export default function APIV2Panel() {
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white">
+    <div className="rounded-xl border border-gray-200 bg-white">
       <button
         onClick={() => setOpen((value) => !value)}
         className="flex w-full items-center justify-between gap-3 border-b border-gray-200 px-5 py-4 text-left"
@@ -154,7 +154,7 @@ export default function APIV2Panel() {
 
       {open && (
         <div className="space-y-6 p-5">
-          <div className="rounded-lg bg-gray-900 p-4 font-mono text-xs text-gray-100">
+          <div className="rounded-xl bg-gray-900 p-4 font-mono text-xs text-gray-100">
             <div className="flex items-center gap-2 text-gray-400">
               <Terminal className="h-3.5 w-3.5" />
               统一约定：路径 /api/v2/*，认证 Bearer access_token 或 X-API-Key，
@@ -202,7 +202,7 @@ export default function APIV2Panel() {
           {V2_MODULES.map((module) => (
             <section key={module.title}>
               <h3 className="mb-2 text-sm font-semibold text-black">{module.title}</h3>
-              <div className="overflow-hidden rounded-lg border border-gray-200">
+              <div className="overflow-hidden rounded-xl border border-gray-200">
                 {module.endpoints.map(([method, path, desc]) => (
                   <div
                     key={`${method}-${path}`}

@@ -129,7 +129,7 @@ export default function UserSecurity() {
           {t('该密码与你的账号密码相同，轮换密码后分享立即使用新密码。')}
         </p>
         <div className="mt-3 space-y-2.5">
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2.5 dark:bg-gray-800">
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2.5 dark:bg-gray-800">
             <div className="min-w-0">
               <p className={mutedClass}>{t('访问码')}</p>
               <p className="mt-0.5 break-all font-mono text-sm text-black dark:text-white">{profile?.access_code || '-'}</p>
@@ -143,7 +143,7 @@ export default function UserSecurity() {
               {t('复制')}
             </button>
           </div>
-          <div className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3 py-2.5 dark:bg-gray-800">
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3 py-2.5 dark:bg-gray-800">
             <div className="min-w-0">
               <p className={mutedClass}>{t('分享链接')}</p>
               <p className="mt-0.5 break-all font-mono text-xs text-black dark:text-white">{shareUrl || '-'}</p>
@@ -172,7 +172,7 @@ export default function UserSecurity() {
 
         {newPassword ? (
           <div className="mt-4 space-y-3">
-            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3.5 py-3 dark:border-amber-900/60 dark:bg-amber-900/30">
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3 dark:border-amber-900/60 dark:bg-amber-900/30">
               <p className="text-xs font-medium text-amber-700 dark:text-amber-300">{t('新密码（仅此一次显示，请立即抄存）')}</p>
               <div className="mt-1.5 flex items-center gap-2">
                 <code className="min-w-0 flex-1 break-all rounded bg-white px-2 py-1.5 font-mono text-sm text-black dark:bg-gray-900 dark:text-white">{newPassword}</code>
@@ -186,7 +186,7 @@ export default function UserSecurity() {
                 </button>
               </div>
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-lg bg-gray-50 px-3.5 py-3 dark:bg-gray-800">
+            <div className="flex items-center justify-between gap-3 rounded-xl bg-gray-50 px-3.5 py-3 dark:bg-gray-800">
               <p className={mutedClass}>{t('旧密码已失效，请使用新密码重新登录。')}</p>
               <button
                 type="button"
@@ -208,14 +208,14 @@ export default function UserSecurity() {
                 onChange={(e) => setOldPassword(e.target.value)}
                 required
                 autoComplete="current-password"
-                className="w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-black outline-none focus:border-brand-500 focus:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-900"
+                className="w-full rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-black outline-none focus:border-brand-500 focus:bg-white dark:border-gray-700 dark:bg-gray-800 dark:text-white dark:focus:bg-gray-900"
                 placeholder={t('输入当前密码')}
               />
             </div>
             <button
               type="submit"
               disabled={rotating || !oldPassword}
-              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-500 dark:hover:bg-brand-400"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-brand-600 px-3.5 py-2 text-sm font-medium text-white hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-brand-500 dark:hover:bg-brand-400"
             >
               <RefreshCw className={`h-4 w-4 ${rotating ? 'animate-spin' : ''}`} />
               {rotating ? t('轮换中...') : t('生成随机新密码')}

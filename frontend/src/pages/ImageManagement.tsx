@@ -199,21 +199,21 @@ export default function ImageManagement() {
       </div>
 
       {error && (
-        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700">
+        <div className="flex items-center gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">
           <AlertCircle className="w-4 h-4 flex-shrink-0" />
           {error}
         </div>
       )}
 
       {storageLoading && (
-        <div className="flex items-center gap-2 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
+        <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
           <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
           正在检查存储配置...
         </div>
       )}
 
       {!storageLoading && !imageStorageReady && (
-        <div className="flex items-center justify-between gap-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
           <div className="flex items-center gap-2">
             <AlertCircle className="h-4 w-4 shrink-0" />
             尚未开启镜像缓存存储，无法下载新镜像。
@@ -370,7 +370,7 @@ function CustomKVMImageModal({
 
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 dark:bg-black/75">
-      <div className="w-full max-w-2xl overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+      <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
         <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4 dark:border-gray-700">
           <div>
             <h3 className="text-base font-semibold text-gray-900 dark:text-white">{t(virtualization === 'lxc' ? '下载第三方 LXC 镜像' : '下载第三方 KVM 镜像')}</h3>
@@ -506,7 +506,7 @@ function ImageTable({
         </div>
         {headerAction}
       </div>
-      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full">
             <thead>

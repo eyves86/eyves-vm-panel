@@ -888,7 +888,7 @@ export default function NodeManagement() {
           <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white"></div>
         </div>
       ) : nodes.length === 0 ? (
-        <div className="rounded-lg border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-900">
+        <div className="rounded-xl border border-gray-200 bg-white py-16 text-center dark:border-gray-700 dark:bg-gray-900">
           <Server className="mx-auto h-10 w-10 text-gray-300 dark:text-gray-600" />
           <p className="mt-3 text-sm text-gray-500 dark:text-gray-400">{t('暂无被控节点')}</p>
           <button
@@ -900,7 +900,7 @@ export default function NodeManagement() {
           </button>
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
           <table className="w-full min-w-[820px] text-left text-sm">
             <thead>
               <tr className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
@@ -984,7 +984,7 @@ export default function NodeManagement() {
       )}
 
       {/* 节点接入：本面板作为被控的注册状态与对接密钥（全新安装自带主控+被控） */}
-      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <div className="flex items-center gap-2">
             <Link2 className="h-4 w-4 shrink-0 text-gray-400" />
@@ -1190,7 +1190,7 @@ export default function NodeManagement() {
       </div>
 
       {/* 节点分组 */}
-      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <div className="flex items-center gap-2">
             <Boxes className="h-4 w-4 shrink-0 text-gray-400" />
@@ -1258,7 +1258,7 @@ export default function NodeManagement() {
       </div>
 
       {/* 集群 */}
-      <div className="rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <div className="flex items-center gap-2">
             <Network className="h-4 w-4 shrink-0 text-gray-400" />
@@ -1329,7 +1329,7 @@ export default function NodeManagement() {
       {/* 添加节点：一键添加 / 手动添加 / 对接已有面板 */}
       {showCreate && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">{t('添加被控节点')}</h3>
               <button onClick={() => setShowCreate(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
@@ -1548,7 +1548,7 @@ export default function NodeManagement() {
       {/* 一行安装命令（curl | sudo bash）：只展示命令，不展示脚本正文 */}
       {cmdNode && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 {t('一键安装命令')} · {cmdNode.name}
@@ -1623,7 +1623,7 @@ export default function NodeManagement() {
       {/* 手动添加：agent.json 预置配置（免安装密钥，token 仅此一次明文下发） */}
       {manualInfo && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 {t('手工接入配置')} · {manualInfo.node_id}
@@ -1665,7 +1665,7 @@ export default function NodeManagement() {
       {/* 节点容器详情 */}
       {detailNode && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="flex max-h-[85vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 {t('被控节点')} · {detailNode.name}
@@ -1826,7 +1826,7 @@ export default function NodeManagement() {
       {/* 在被控节点开通（发机）容器 */}
       {createTarget && createForm && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 {t('开通容器')} · {createTarget.name}
@@ -1935,7 +1935,7 @@ export default function NodeManagement() {
       {/* 节点分组弹窗 */}
       {groupFormOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 {groupEditTarget ? t('编辑节点分组') : t('新建节点分组')}
@@ -2033,7 +2033,7 @@ export default function NodeManagement() {
       {/* 集群弹窗 */}
       {clusterFormOpen && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
-          <div className="w-full max-w-md overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
                 {clusterEditTarget ? t('编辑集群') : t('新建集群')}
