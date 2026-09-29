@@ -137,6 +137,26 @@ const exact: Record<string, string> = {
   '，筛选后': ', filtered',
   '每页数量': 'Items per page',
   '任务中': 'In task',
+  // 复合词整词收录：避免被更短的词条（如「任务中」）截断成 "In task心"。
+  '任务中心': 'Task Center',
+  '队列中的任务': 'Queued tasks',
+  '历史运行记录': 'Task history',
+  '历史任务记录': 'Task history',
+  '容器监控': 'Container Monitoring',
+  '节点管理': 'Nodes',
+  '节点迁移': 'Node Migration',
+  '节点分组': 'Node Groups',
+  'ISO 镜像': 'ISO Images',
+  '备份计划': 'Backup Plans',
+  '安全组': 'Security Groups',
+  '管理员账号': 'Admin Accounts',
+  '多租户': 'Tenants',
+  '策略管理': 'Policies',
+  '脚本模板': 'Recipes',
+  '区域管理': 'Regions',
+  'IP 组': 'IP Groups',
+  '指标留存': 'Metric Retention',
+  'Webhook 订阅': 'Webhooks',
   '1周': '1 week',
   '1 周': '1 week',
   '资源配置': 'Resource Configuration',
@@ -1426,15 +1446,55 @@ export function translateText(value: string): string {
   const body = value.trim()
   if (!body) return value
   if (exact[body]) return leading + exact[body] + trailing
-  let translated = body
+  // 顺序很重要：先做**贪婪最长匹配**的词典翻译（整词优先），再跑正则替换做兜底。
+  // 反过来的话，"历史运行记录"会先被正则把"运行"换成 run，变成"历史run记录"，
+  // 之后词典里的复合词条就再也匹配不上（实测英文界面出现过该现象）。
+  let translated = greedyReplaceWithDictionary(body)
   for (const [pattern, replacement] of replacements) {
     translated = translated.replace(pattern, replacement)
   }
-  for (const [source, target] of Object.entries(exact).sort((a, b) => b[0].length - a[0].length)) {
-    translated = translated.split(source).join(target)
-  }
   translated = cleanupTranslatedText(translated)
+  // 只要结果里仍残留中文字符，说明该串没有被完整收录 → 整句保留原文。
+  // 逐词替换的自动翻译无法覆盖所有句子，输出 "历史run记录"、"已Cancel" 这类
+  // 中英夹生文本比保留可读的中文原句更糟（实测英文界面出现过）。这样处理后：
+  //   - 完整收录的标签（导航/按钮/表头）→ 正常英文；
+  //   - 未收录的句子 → 保持中文原文，不做半截翻译。
+  if (/[\u3400-\u9fff]/.test(translated)) {
+    return leading + body + trailing
+  }
   return leading + translated + trailing
+}
+
+// dictionaryKeysLongestFirst 是翻译词典的键，按长度降序（模块级缓存，避免每次调用重排）。
+let dictionaryKeysLongestFirst: string[] | null = null
+
+function dictionaryKeys(): string[] {
+  if (!dictionaryKeysLongestFirst) {
+    dictionaryKeysLongestFirst = Object.keys(exact).sort((a, b) => b.length - a.length)
+  }
+  return dictionaryKeysLongestFirst
+}
+
+function greedyReplaceWithDictionary(value: string): string {
+  const keys = dictionaryKeys()
+  if (keys.length === 0 || !/[\u3400-\u9fff]/.test(value)) return value
+  let out = ''
+  for (let i = 0; i < value.length; ) {
+    let matched = false
+    for (const key of keys) {
+      if (key.length > 0 && value.startsWith(key, i)) {
+        out += exact[key]
+        i += key.length
+        matched = true
+        break
+      }
+    }
+    if (!matched) {
+      out += value[i]
+      i += 1
+    }
+  }
+  return out
 }
 
 export function shouldTranslateText(value: string): boolean {

@@ -43,7 +43,10 @@ import { actionLabel, taskStatusClass, taskStatusLabel } from '../utils/labels'
 
 export default function Containers() {
   const navigate = useNavigate()
-  const { isSubUser } = useAuth()
+  const { isSubUser, can, features } = useAuth()
+  // 创建按钮：v2 功能点可用时以后者为准（更精确，含 API Key scope）；
+  // v2 不可用（features 为空）时退回"非子用户即可创建"的旧判断，避免误伤。
+  const canCreateContainer = Object.keys(features).length === 0 ? !isSubUser : can('instance_create')
   const [containers, setContainers] = useState<Container[]>([])
   // containersRef 镜像 containers，用于不触发轮询 interval 重建的读取（L8 优化）。
   const containersRef = useRef<Container[]>([])
@@ -398,7 +401,7 @@ export default function Containers() {
               </span>
             )}
           </button>
-          {!isSubUser && (
+          {canCreateContainer && (
             <button
               onClick={() => setShowCreate(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-brand-600 text-white rounded-md hover:bg-brand-700 transition-colors text-xs font-medium whitespace-nowrap"
