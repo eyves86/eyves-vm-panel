@@ -2,30 +2,30 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ============ 设计系统变量（对齐参考站） ============ */
+/* ============ 设计系统变量（Cal.com DESIGN.md） ============ */
 :root {
-  --accent: #7044ed;
-  --accent-hover: #5832cc;
-  --accent-soft: #f1ebff;
-  --text: #242135;
-  --muted: #777385;
-  --surface: #fff;
-  --soft: #faf9fd;
-  --line: #eae7f1;
+  --accent: #111111;
+  --accent-hover: #242424;
+  --accent-soft: #f3f4f6;
+  --text: #111111;
+  --muted: #6b7280;
+  --surface: #ffffff;
+  --soft: #f8f9fa;
+  --line: #e5e7eb;
   --motion-ease: cubic-bezier(.22, 1, .36, 1);
   --motion-fast: .18s;
   --motion-normal: .3s;
 }
 
 .dark {
-  --accent: #ad8aff;
-  --accent-hover: #bea1ff;
-  --accent-soft: #2d2444;
-  --text: #eeeaf7;
-  --muted: #aaa1bb;
-  --surface: #191622;
-  --soft: #211c2c;
-  --line: #37303f;
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-soft: #172554;
+  --text: #ffffff;
+  --muted: #a1a1aa;
+  --surface: #101010;
+  --soft: #1a1a1a;
+  --line: #262626;
 }
 
 * {
@@ -54,17 +54,17 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* 页面底色：浅紫白（参考站 --soft #faf9fd） */
+/* 页面底色：Cal surface-soft（#f8f9fa） */
 .bg-gray-50 {
-  background-color: #faf9fd;
+  background-color: #f8f9fa;
 }
 
-/* 文字选中：品牌紫 */
+/* 文字选中：Cal 中性（浅色）/ 蓝色（暗色） */
 ::selection {
-  background: rgba(112, 68, 237, 0.22);
+  background: rgba(17, 17, 17, 0.12);
 }
 .dark ::selection {
-  background: rgba(173, 138, 255, 0.32);
+  background: rgba(59, 130, 246, 0.32);
 }
 
 /* Scrollbar */
@@ -76,61 +76,57 @@ body {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cfc8e0;
+  background: #d1d5db;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #a99ec4;
+  background: #9ca3af;
 }
 
-/* ============ 按钮质感（参考站 .button 体系） ============ */
+/* ============ 按钮质感（Cal：黑色主按钮 + 克制阴影，无荧光） ============ */
 
-/* 主按钮（bg-brand-600）：品牌紫 + 柔光阴影 + hover 上浮 + active 按压 */
+/* 主按钮（bg-brand-600）：Cal primary #111111 + 极轻阴影，无上浮动画 */
 button.bg-brand-600,
 a.bg-brand-600,
 .bg-brand-600.bg-brand-600 {
-  box-shadow: 0 5px 13px rgba(112, 68, 237, 0.16);
+  box-shadow: 0 1px 2px rgba(17, 17, 17, 0.08);
   transition: background-color var(--motion-fast) var(--motion-ease),
-    box-shadow var(--motion-normal) var(--motion-ease),
-    transform var(--motion-fast) var(--motion-ease);
+    box-shadow var(--motion-normal) var(--motion-ease);
 }
 button.bg-brand-600:hover,
 a.bg-brand-600:hover,
 .bg-brand-600.bg-brand-600:hover {
-  box-shadow: 0 8px 20px rgba(112, 68, 237, 0.26);
-  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(17, 17, 17, 0.12);
 }
 button.bg-brand-600:active,
 a.bg-brand-600:active,
 .bg-brand-600.bg-brand-600:active {
-  transform: translateY(0);
-  box-shadow: 0 3px 9px rgba(112, 68, 237, 0.2);
+  box-shadow: 0 1px 2px rgba(17, 17, 17, 0.1);
 }
 button.bg-brand-600:disabled,
 a.bg-brand-600:disabled {
-  transform: none;
   box-shadow: none;
 }
 
 .dark button.bg-brand-600,
 .dark a.bg-brand-600,
 .dark .bg-brand-600.bg-brand-600 {
-  box-shadow: 0 5px 13px rgba(138, 92, 240, 0.2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 .dark button.bg-brand-600:hover,
 .dark a.bg-brand-600:hover,
 .dark .bg-brand-600.bg-brand-600:hover {
-  box-shadow: 0 8px 20px rgba(138, 92, 240, 0.3);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
 }
 
 /* 次按钮（border 实线）：hover 边框染品牌紫 */
 button.border-gray-300:hover,
 button.border-gray-200:hover {
-  border-color: #c4b0f9;
+  border-color: #d1d5db;
 }
 .dark button.border-gray-600:hover,
 .dark button.border-gray-700:hover {
-  border-color: #5b4a86;
+  border-color: #3f3f46;
 }
 
 /* ============ 表单控件 ============ */
@@ -140,13 +136,13 @@ select:focus-visible,
 textarea:focus-visible {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(112, 68, 237, 0.14);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22);
 }
 .dark input:focus-visible,
 .dark select:focus-visible,
 .dark textarea:focus-visible {
-  border-color: #ad8aff;
-  box-shadow: 0 0 0 3px rgba(173, 138, 255, 0.14);
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.28);
 }
 
 input,
@@ -168,36 +164,36 @@ textarea {
 /* ============ DARK MODE OVERRIDES ============ */
 
 .dark ::-webkit-scrollbar-thumb {
-  background: #453d54;
+  background: #3f3f46;
 }
 .dark ::-webkit-scrollbar-thumb:hover {
-  background: #5c5270;
+  background: #52525b;
 }
 
 .dark body {
-  background-color: #191622;
+  background-color: #101010;
   color: #eeeaf7;
 }
 
 /* Background overrides（参考站 surface/soft/line 体系） */
-.dark .bg-white { background-color: #211c2c !important; }
-.dark .bg-gray-50 { background-color: #191622 !important; }
-.dark .bg-gray-100 { background-color: #2a2438 !important; }
-.dark .bg-gray-200 { background-color: #37303f !important; }
+.dark .bg-white { background-color: #1a1a1a !important; }
+.dark .bg-gray-50 { background-color: #101010 !important; }
+.dark .bg-gray-100 { background-color: #262626 !important; }
+.dark .bg-gray-200 { background-color: #333333 !important; }
 
 /* Text overrides */
-.dark .text-black { color: #eeeaf7 !important; }
-.dark .text-gray-950 { color: #eeeaf7 !important; }
-.dark .text-gray-900 { color: #eeeaf7 !important; }
-.dark .text-gray-800 { color: #e2dcef !important; }
-.dark .text-gray-700 { color: #d2cbe2 !important; }
-.dark .text-gray-600 { color: #aaa1bb !important; }
-.dark .text-gray-500 { color: #aaa1bb !important; }
-.dark .text-gray-400 { color: #8a80a0 !important; }
+.dark .text-black { color: #ffffff !important; }
+.dark .text-gray-950 { color: #ffffff !important; }
+.dark .text-gray-900 { color: #ffffff !important; }
+.dark .text-gray-800 { color: #e5e7eb !important; }
+.dark .text-gray-700 { color: #d4d4d8 !important; }
+.dark .text-gray-600 { color: #a1a1aa !important; }
+.dark .text-gray-500 { color: #a1a1aa !important; }
+.dark .text-gray-400 { color: #71717a !important; }
 
 /* Border overrides */
-.dark .border-gray-100 { border-color: #2a2438 !important; }
-.dark .border-gray-200 { border-color: #37303f !important; }
+.dark .border-gray-100 { border-color: #262626 !important; }
+.dark .border-gray-200 { border-color: #333333 !important; }
 .dark .border-gray-300 { border-color: #453d54 !important; }
 
 /* Divider overrides */

@@ -8,59 +8,53 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 品牌紫：对齐参考站设计系统（accent #7044ed / hover #5832cc / dark accent #ad8aff）
+        // 设计系统：Cal.com（DESIGN.md）—— 白色画布 + 黑色主按钮 + 中性灰 + 蓝色仅作强调。
+        // 浅色模式：600 为主按钮（#111111）；暗色模式：500 为主按钮（Cal 蓝 #3b82f6）。
         brand: {
-          DEFAULT: '#7044ed',
-          50: '#f6f2ff',
-          100: '#ede6fc',
-          200: '#dccffb',
-          300: '#c4b0f9',
-          400: '#ad8aff',
-          500: '#8a5cf0',
-          600: '#7044ed',
-          700: '#5b35cc',
-          800: '#4a2ba6',
-          900: '#3d2485',
-          950: '#251653',
+          DEFAULT: '#111111',
+          50: '#f8f9fa',
+          100: '#f3f4f6',
+          200: '#e5e7eb',
+          300: '#d1d5db',
+          400: '#60a5fa',
+          500: '#3b82f6',
+          600: '#111111',
+          700: '#242424',
+          800: '#1f1f1f',
+          900: '#111111',
+          950: '#0a0a0a',
         },
-        // ---- 设计系统令牌（Linear DESIGN.md，见项目根 DESIGN.md 与 docs/design-system.md）----
-        // 新增 UI（页面/组件）优先使用下面这套语义令牌；存量页面保持现有紫调暗色不变。
-        // canvas/surface 为近黑层次，hairline 为发丝描边，ink 为文字层级，accent 为强调色。
-        canvas: '#010102',
-        surface: {
-          1: '#0f1011',
-          2: '#141516',
-          3: '#18191a',
-          4: '#191a1b',
+        // Cal 语义令牌（与 DESIGN.md 一一对应）
+        canvas: '#ffffff',
+        'surface-soft': '#f8f9fa',
+        'surface-card': '#f5f5f5',
+        'surface-strong': '#e5e7eb',
+        'surface-dark': '#101010',
+        'surface-dark-elevated': '#1a1a1a',
+        ink: '#111111',
+        body: '#374151',
+        muted: '#6b7280',
+        hairline: '#e5e7eb',
+        'hairline-soft': '#f3f4f6',
+        'on-dark-soft': '#a1a1aa',
+        cal: {
+          accent: '#3b82f6',
+          success: '#10b981',
+          warning: '#f59e0b',
+          error: '#ef4444',
         },
-        hairline: {
-          DEFAULT: '#23252a',
-          strong: '#34343a',
-          tertiary: '#3e3e44',
-        },
-        ink: {
-          DEFAULT: '#f7f8f8',
-          muted: '#d0d6e0',
-          subtle: '#8a8f98',
-          tertiary: '#62666d',
-        },
-        accent: {
-          DEFAULT: '#5e6ad2',
-          hover: '#828fff',
-          focus: '#5e69d1',
-        },
-        // 近黑紫：全局正文色（参考站 --text #242135），替代纯黑
-        black: '#242135',
+        // 近黑：全局正文色（Cal ink）
+        black: '#111111',
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
       },
       boxShadow: {
-        // 品牌柔光阴影（参考站 .button--primary 阴影体系）
-        brand: '0 5px 13px rgba(112, 68, 237, 0.14)',
-        'brand-hover': '0 8px 20px rgba(112, 68, 237, 0.22)',
-        card: '0 15px 35px rgba(75, 52, 112, 0.08)',
-        'card-hover': '0 18px 48px rgba(102, 71, 135, 0.10)',
+        // Cal：克制的中性阴影（无彩色荧光）
+        brand: '0 1px 2px rgba(17, 17, 17, 0.08)',
+        'brand-hover': '0 2px 6px rgba(17, 17, 17, 0.12)',
+        card: '0 1px 2px rgba(17, 17, 17, 0.04)',
+        'card-hover': '0 4px 12px rgba(17, 17, 17, 0.08)',
       },
       transitionTimingFunction: {
         // 参考站 --motion-ease

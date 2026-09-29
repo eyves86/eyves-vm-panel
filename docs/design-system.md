@@ -1,48 +1,54 @@
 # 设计系统（Design System）
 
-> 来源：项目根目录 [`DESIGN.md`](../DESIGN.md)，取自 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md)
-> 中 **linear.app** 的设计分析（74 套可选，见 `/var/minis/shared/awesome-design-md/design-md/`）。
-> 选择理由：本产品既有主色为紫色系、管理面板以数据密度与技术感为主，Linear 的
-> 「近黑画布 + 单一紫色强调 + 发丝描边 + 紧凑排版」与之最契合。
+> 来源：项目根 [`DESIGN.md`](../DESIGN.md)，取自 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md)
+> 中 **cal** 的设计分析（`design-md/cal/DESIGN.md`，https://getdesign.md/cal/design-md ）。
+> 全量 74 套备选位于 `/var/minis/shared/awesome-design-md/design-md/`，如需切换仅需替换 `DESIGN.md`
+> 与下表的令牌映射。
 
-## 1. 怎么用（给实现者）
+## 1. 风格定位（Cal.com）
 
-1. 新增页面 / 组件时**先读 `DESIGN.md`**（含 colors / typography / layout / elevation /
-   shapes / components / do's and don'ts / responsive / iteration guide 九节）。
-2. 颜色优先使用 Tailwind 语义令牌（见下），不要直接写十六进制。
-3. 保留既有交互（品牌按钮 `bg-brand-600`、暗色紫调面板）——本设计系统以**新增与迭代**
-   方式应用，不强制整站换肤；如确需整站切换，单独提 PR 并附前后截图。
+- **白画布 + 黑色主按钮**：主操作一律黑底白字（`#111111` / hover `#242424`），不用彩色 CTA
+- **中性灰层级**：`canvas #ffffff` → `surface-soft #f8f9fa` → `surface-card #f5f5f5` → `surface-strong #e5e7eb`
+- **发丝描边优先**：卡片/表格用 `hairline #e5e7eb` 分隔，不用重阴影
+- **蓝色仅作强调**：`#3b82f6` 用于聚焦环、链接、暗色模式主按钮；不铺面积
+- **软圆角 + 宽松留白**：卡片 ~12px 圆角，区块间距 24px
+- **字体**：Inter（body/title），标题 600 字重 + 轻微负字距（Cal Sans 用系统栈替代）
 
-## 2. 令牌映射（Linear → 本项目 Tailwind）
+## 2. 令牌映射（Cal → 本项目）
 
-| Linear 令牌 | 值 | 本项目（Tailwind） | 用途 |
+| Cal 令牌 | 值 | 本项目 | 用途 |
 | --- | --- | --- | --- |
-| `canvas` | `#010102` | `bg-canvas` | 最深底色（营销页/登录页背景） |
-| `surface-1..4` | `#0f1011` … `#191a1b` | `bg-surface-1..4` | 面板/卡片层级（越上层越亮） |
-| `hairline` | `#23252a` | `border-hairline` | 发丝描边（卡片/分割线） |
-| `hairline-strong` | `#34343a` | `border-hairline-strong` | 强调描边（输入框聚焦前/选中态） |
-| `ink` | `#f7f8f8` | `text-ink` | 主文字（暗色背景上） |
-| `ink-muted` / `ink-subtle` / `ink-tertiary` | `#d0d6e0` / `#8a8f98` / `#62666d` | `text-ink-muted` 等 | 次级/辅助/弱化文字 |
-| `primary` | `#5e6ad2` | `bg-accent` / `text-accent` | Linear 强调色（新增 UI 可选） |
-| `primary-hover` | `#828fff` | `bg-accent-hover` | 强调色悬停 |
-| 既有品牌紫 | `#7044ed` | `bg-brand-600`（不变） | 现有按钮/主操作（保持连续性） |
+| `primary` / `primary-active` | `#111111` / `#242424` | `bg-brand-600` / `bg-brand-700` | 主按钮（浅色） |
+| `brand-accent` | `#3b82f6` | `bg-brand-500`（暗色主按钮）/ `cal-accent` | 强调、聚焦环 |
+| `ink` / `body` / `muted` | `#111111` / `#374151` / `#6b7280` | `text-ink` / `text-body` / `text-muted` | 文字层级 |
+| `canvas` / `surface-soft` / `surface-card` / `surface-strong` | `#ffffff` / `#f8f9fa` / `#f5f5f5` / `#e5e7eb` | `bg-canvas` 等 | 背景层级 |
+| `hairline` / `hairline-soft` | `#e5e7eb` / `#f3f4f6` | `border-hairline` | 描边/分隔 |
+| `surface-dark` / `surface-dark-elevated` | `#101010` / `#1a1a1a` | 暗色 `--surface` / `--soft` | 暗色背景 |
+| `on-dark` / `on-dark-soft` | `#ffffff` / `#a1a1aa` | 暗色文字 | 暗色文字层级 |
+| `success` / `warning` / `error` | `#10b981` / `#f59e0b` / `#ef4444` | `cal-success` 等 | 状态色 |
 
-字体：显示字体使用系统无衬线栈（`font-sans`，Inter 优先，中文回退 PingFang/雅黑）；
-字重 500–600、负字距仅用于大标题（与 DESIGN.md 的 display 规则一致）。
+暗色模式遵循 Cal 的中性近黑（`#101010` 画布、`#1a1a1a` 卡片、`#262626` 描边），主按钮用 Cal 蓝。
 
-## 3. 必须遵守的守则（摘自 DESIGN.md 的 Do's and Don'ts）
+## 3. 必须遵守的守则（摘自 DESIGN.md）
 
-- **强调色只用于**：品牌标记、聚焦环、少量主 CTA —— 不做装饰性用色。
-- **层级靠背景层次与发丝描边**，不靠重阴影；卡片在暗色下是「炭灰面板 + 1px 描边」。
-- **排版紧凑、技术感**：表头/标签用 `text-xs` + `text-ink-subtle`；数值右对齐、等宽数字。
-- **间距节奏统一**：区块 24px（`space-y-6`）、卡片内 16–20px、控件高 32–40px。
-- **状态色语义化**：成功 `#27a644`、危险用现有 red-500/600 系；不要新增第三种红。
-- 响应式：≥1024px 三栏密度、768–1024 两栏、<768 单栏并收起次要列（与现有页面一致）。
+- 主 CTA 用黑色（暗色下用 Cal 蓝），**不要新增彩色按钮**
+- 卡片 = 白底 + 1px 发丝描边 + 极轻阴影；禁止彩色荧光阴影
+- 层级靠底色深浅与描边，不靠投影大小
+- 数字/指标右对齐，等宽字体；表格行高紧凑（32–40px）
+- 间距节奏：区块 24px（`space-y-6`）、卡片内 16–20px
+- 徽章用语义色（绿=在线/成功、红=离线/错误、灰=中性标签）
+- 响应式：≥1024 三栏密度、768–1024 两栏、<768 单栏
 
-## 4. 落地清单（后续 UI 迭代按此执行）
+## 4. 已落地的改动（v2.2.26）
 
-- [x] `DESIGN.md` 落项目根目录；令牌进入 `frontend/tailwind.config.js`
-- [x] 设计守则并入本文档（作为代码评审依据）
-- [ ] 新增页面（后续批次）直接使用语义令牌
-- [ ] 存量页面按「不破坏现有观感」原则**渐进**替换硬编码色值
-- [ ] 若整站切换为 Linear 暗色（中性近黑 + 薰衣草强调），单独 PR + 前后截图对比
+- `DESIGN.md` 换为 Cal 版本；`frontend/tailwind.config.js` 令牌换为 Cal 语义集合
+- `index.css`：全局变量（accent/text/muted/surface/line）、主按钮（去荧光、黑色 + 克制阴影）、
+  次级按钮 hover 描边、输入框聚焦环（Cal 蓝）、暗色覆盖层（紫调 → 中性近黑）
+- 效果：主按钮黑底白字、页面底 `#f8f9fa`、卡片白底发丝描边、暗色中性化
+
+## 5. 后续按此执行的清单
+
+- [x] DESIGN.md / Tailwind 令牌 / 全局样式对齐 Cal
+- [ ] 存量页面把硬编码色值逐步替换为语义令牌（不破坏观感）
+- [ ] 卡片圆角 8px → 12px 的渐进替换（Cal ~12px）
+- [ ] 新增页面直接使用 `ink/body/muted/hairline/surface-*` 令牌
