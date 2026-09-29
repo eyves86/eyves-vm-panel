@@ -293,6 +293,9 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent/vnc-ticket", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentVNCTicket)))
 	// 主控「一键升级被控节点」下发入口（节点侧就地替换二进制并重启服务）。
 	mux.HandleFunc("/api/agent/self-update", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentSelfUpdate)))
+	// 镜像可用性查询与按需下载（主控开通实例前补齐目标节点镜像）。
+	mux.HandleFunc("/api/agent/images/availability", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentImageAvailability)))
+	mux.HandleFunc("/api/agent/images/download", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentImageDownload)))
 	// 被控面板上的主控接入管理：查看本机注册信息（管理员）、接入/切换主控、重启 agent 服务。
 	// register 允许两种认证：面板管理员会话，或对接密钥（主控「对接已有面板」服务端调用），
 	// 因此挂 OptionalAuthMiddleware、由 handler 内部完成认证分支。

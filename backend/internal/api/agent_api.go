@@ -12,6 +12,7 @@ import (
 
 	"eyvescloud/internal/cli"
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/kvm"
 	"eyvescloud/internal/lxc"
 	"eyvescloud/internal/version"
 )
@@ -720,4 +721,104 @@ func sameVersionString(a, b string) bool {
 		return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
 	}
 	return norm(a) == norm(b)
+}
+
+// HandleAgentImageAvailability GET /api/agent/images/availability
+//
+// 返回**本节点内置镜像的可用性**（是否已下载 + 体积），供主控在开通实例前判断
+// 「目标节点是否已有该镜像」，避免下发注定失败的创建任务。
+func HandleAgentImageAvailability(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	lxcItems := make([]map[string]interface{}, 0, 32)
+	for _, tmpl := range lxc.GetTemplates() {
+		downloaded, size := lxcTemplateDownloadedInfo(tmpl)
+		lxcItems = append(lxcItems, map[string]interface{}{
+			"id": tmpl.ID, "name": tmpl.Name, "downloaded": downloaded, "size_bytes": size,
+		})
+	}
+	kvmItems := make([]map[string]interface{}, 0, 32)
+	for _, image := range kvm.GetImages() {
+		downloaded, size := kvm.ImageDownloadedInfo(image.ID)
+		kvmItems = append(kvmItems, map[string]interface{}{
+			"id": image.ID, "name": image.Name, "downloaded": downloaded, "size_bytes": size,
+		})
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+		"lxc": lxcItems, "kvm": kvmItems,
+		"kvm_available": hostKVMAvailable(),
+	}})
+}
+
+// HandleAgentImageDownload POST /api/agent/images/download {template_id}
+//
+// 主控下发「在节点补齐指定镜像」：开通前自动补镜像用。复用面板既有的下载路径
+// （LXC 走镜像缓存池队列；KVM 走 kvm.DownloadImageWithProgress），幂等：
+// 已下载返回 already_downloaded，正在下载返回 already_downloading。
+func HandleAgentImageDownload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	var req struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.TemplateID) == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "template_id required"})
+		return
+	}
+	templateID := strings.TrimSpace(req.TemplateID)
+
+	if tmpl := lxc.FindTemplate(templateID); tmpl != nil {
+		if downloaded, _ := lxcTemplateDownloadedInfo(*tmpl); downloaded {
+			ensureImageEnabled(tmpl.ID)
+			jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "already_downloaded"})
+			return
+		}
+		pool, err := config.SelectStoragePoolForContent(
+			config.StorageContentImages, "",
+			dirSizeBytes("/var/cache/lxc/download")+1024*1024*1024,
+		)
+		if err != nil {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		if err := ensureLXCImageCachePool(*pool); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		queued, ok := enqueueLXCImageDownload(*tmpl)
+		if !ok {
+			jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "already_downloading"})
+			return
+		}
+		msg := "started"
+		if queued {
+			msg = "queued"
+		}
+		jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: msg})
+		return
+	}
+
+	if image := kvm.FindImage(templateID); image != nil {
+		if !hostKVMAvailable() {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "本节点不支持 KVM（无硬件虚拟化）"})
+			return
+		}
+		if downloaded, _ := kvm.ImageDownloadedInfo(image.ID); downloaded {
+			ensureImageEnabled(image.ID)
+			jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "already_downloaded"})
+			return
+		}
+		if err := startKVMImageDownloadV2(*image); err != nil {
+			jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "already_downloading"})
+			return
+		}
+		jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "started"})
+		return
+	}
+
+	jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "镜像不存在: " + templateID})
 }

@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,8 @@ func init() {
 	registerV2("POST /api/v2/nodes/{id}/install-key", v2Auth(v2NodeInstallKey))
 	registerV2("GET /api/v2/nodes/{id}/metrics", v2Auth(v2NodeMetrics))
 	registerV2("GET /api/v2/nodes/{id}/instances", v2Auth(v2NodeInstances))
+	registerV2("GET /api/v2/nodes/{id}/image-availability", v2Auth(v2NodeImageAvailability))
+	registerV2("POST /api/v2/nodes/{id}/images/download", v2Auth(v2NodeImageDownload))
 
 	registerV2("GET /api/v2/node-groups", v2Auth(v2NodeGroupsList))
 	registerV2("POST /api/v2/node-groups", v2Auth(v2NodeGroupsCreate))
@@ -1168,4 +1171,89 @@ func v2VersionLess(a, b string) bool {
 		}
 	}
 	return false
+}
+
+// v2NodeImageAvailability GET /api/v2/nodes/{id}/image-availability
+//
+// 目标节点的镜像可用性（是否已下载 + 体积），供开通页在选好节点后标注
+// 「该节点是否已有此镜像」，并在提交前自动补齐。
+func v2NodeImageAvailability(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "node:read") {
+		return
+	}
+	nodeID := strings.TrimSpace(r.PathValue("id"))
+	node, ok := config.FindNode(nodeID)
+	if !ok {
+		v2NotFound(w, r, "节点不存在："+nodeID)
+		return
+	}
+	data, status, err := proxyNodeRequest(r, node, http.MethodGet, "/api/agent/images/availability", nil)
+	if err != nil {
+		v2Upstream(w, r, "查询节点镜像失败："+err.Error())
+		return
+	}
+	if status >= 300 {
+		v2Upstream(w, r, "节点返回错误（HTTP "+strconv.Itoa(status)+"）："+strings.TrimSpace(string(data)))
+		return
+	}
+	var payload struct {
+		Data map[string]interface{} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		v2Upstream(w, r, "解析节点响应失败："+err.Error())
+		return
+	}
+	result := payload.Data
+	if result == nil {
+		result = map[string]interface{}{}
+	}
+	result["node_id"] = node.ID
+	result["node_name"] = node.Name
+	v2OK(w, r, result)
+}
+
+// v2NodeImageDownload POST /api/v2/nodes/{id}/images/download {template_id}
+//
+// 在目标节点补齐指定镜像（幂等）：已下载返回 already_downloaded，下载中返回
+// already_downloading，否则 started/queued。开通页在提交前据此自动补镜像。
+func v2NodeImageDownload(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "image:download") {
+		return
+	}
+	nodeID := strings.TrimSpace(r.PathValue("id"))
+	node, ok := config.FindNode(nodeID)
+	if !ok {
+		v2NotFound(w, r, "节点不存在："+nodeID)
+		return
+	}
+	var req struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := v2Decode(r, &req); err != nil {
+		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+		return
+	}
+	if details := v2RequiredStrings(map[string]string{"template_id": req.TemplateID}); details != nil {
+		v2BadRequest(w, r, "缺少必填字段", details)
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{"template_id": strings.TrimSpace(req.TemplateID)})
+	data, status, err := proxyNodeRequest(r, node, http.MethodPost, "/api/agent/images/download", bytes.NewReader(payload))
+	if err != nil {
+		v2Upstream(w, r, "下发镜像下载失败："+err.Error())
+		return
+	}
+	if status >= 300 {
+		v2Upstream(w, r, "节点返回错误（HTTP "+strconv.Itoa(status)+"）："+strings.TrimSpace(string(data)))
+		return
+	}
+	var payloadResp struct {
+		Message string `json:"message"`
+	}
+	_ = json.Unmarshal(data, &payloadResp)
+	auditRequest(r, "api.v2.node.image_download", node.Name+"/"+req.TemplateID, payloadResp.Message, true, "")
+	v2Accepted(w, r, map[string]interface{}{
+		"node_id": node.ID, "node_name": node.Name,
+		"template_id": strings.TrimSpace(req.TemplateID), "status": payloadResp.Message,
+	})
 }

@@ -282,3 +282,29 @@ export const v2ListRegions = () => call<{ items: V2Region[]; pagination?: unknow
 // 使开通页能按「区域 → 节点」两级选择。
 export const v2UpdateNode = (nodeId: string, payload: { name?: string; address?: string; region_id?: string; node_group_id?: string; tls_skip_verify?: boolean }) =>
   call<Record<string, unknown>>(client.patch(`/nodes/${encodeURIComponent(nodeId)}`, payload))
+
+// ---- 目标节点镜像可用性（开通页按所选节点标注/自动补齐镜像）----
+
+export interface V2NodeImageItem {
+  id: string
+  name?: string
+  downloaded: boolean
+  size_bytes?: number
+}
+
+export interface V2NodeImageAvailability {
+  node_id: string
+  node_name?: string
+  kvm_available?: boolean
+  lxc?: V2NodeImageItem[]
+  kvm?: V2NodeImageItem[]
+}
+
+export const v2NodeImageAvailability = (nodeId: string) =>
+  call<V2NodeImageAvailability>(client.get(`/nodes/${encodeURIComponent(nodeId)}/image-availability`))
+
+// 在目标节点补齐指定镜像（幂等：already_downloaded / already_downloading / started / queued）。
+export const v2NodeImageDownload = (nodeId: string, templateId: string) =>
+  call<{ node_id: string; node_name: string; template_id: string; status: string }>(
+    client.post(`/nodes/${encodeURIComponent(nodeId)}/images/download`, { template_id: templateId })
+  )

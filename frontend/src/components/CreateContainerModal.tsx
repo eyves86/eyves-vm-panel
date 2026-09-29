@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, CalendarClock, Check, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { batchCreate, createContainerOnNode, getEnabledImages, getHostInfo, getHostReport, getIPv6Status, getNodes, getRoutingInfo, getStorageInfo, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, ManagedNode, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
-import { V2Error, v2ListNodes, v2ListRegions, v2Schedule, type V2Node, type V2Region } from '../services/apiV2'
+import { V2Error, v2ListNodes, v2ListRegions, v2Schedule, v2NodeImageAvailability, v2NodeImageDownload, type V2Node, type V2Region, type V2NodeImageAvailability } from '../services/apiV2'
 import { useDialog } from './Dialog'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage, type Language } from '../contexts/LanguageContext'
@@ -168,8 +168,38 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
     }
   }, [nodes, targetNode])
 
-  // ---- 区域 → 节点 两级选择 ----
-  // 分组规则：按节点的 region_id 归入区域卡片；无区域的节点进入「默认区域」卡片。
+  // ---- 目标节点镜像可用性 ----
+  // 选中远程节点后拉取该节点的镜像清单（缓存，避免反复请求），用于：
+  //   1) 镜像选择步骤标注"目标节点尚未下载"；
+  //   2) 提交前自动触发该节点下载，避免下发注定失败的创建任务。
+  const [nodeImages, setNodeImages] = useState<Record<string, V2NodeImageAvailability>>({})
+
+  useEffect(() => {
+    if (!isOpen || !targetNode || targetNode === 'local' || targetNode === 'auto') return
+    if (nodeImages[targetNode]) return
+    void v2NodeImageAvailability(targetNode)
+      .then((res) => setNodeImages((prev) => ({ ...prev, [targetNode]: res })))
+      .catch(() => {
+        // 查询失败不阻塞创建：按"未知"处理，提交时由节点自身校验。
+      })
+  }, [isOpen, targetNode, nodeImages])
+
+  // imageMissingOnTarget：所选镜像在目标节点是否尚未下载（无数据时返回 false，即不误报）。
+  const imageMissingOnTarget = (templateId: string): boolean => {
+    if (!templateId || !targetNode || targetNode === 'local' || targetNode === 'auto') return false
+    const availability = nodeImages[targetNode]
+    if (!availability) return false
+    const list = [...(availability.lxc || []), ...(availability.kvm || [])]
+    const item = list.find((entry) => entry.id === templateId)
+    if (!item) return false
+    return !item.downloaded
+  }
+
+  const targetNodeName = targetNode && targetNode !== 'local' && targetNode !== 'auto'
+    ? nodes.find((node) => node.id === targetNode)?.name || targetNode
+    : ''
+
+  // ---- 区域 → 节点 两级选择 ----  // 分组规则：按节点的 region_id 归入区域卡片；无区域的节点进入「默认区域」卡片。
   // 顺序：有在线节点的区域优先，其次按名称排序。
   const regionGroups = (() => {
     const byId = new Map<string, { id: string; name: string; location: string; nodes: ManagedNode[] }>()
@@ -589,6 +619,28 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
       }
     }
 
+    // 目标节点缺镜像：先触发该节点下载，避免下发注定失败的创建任务。
+    const templateID = containers[0]?.template_id || ''
+    if (templateID && imageMissingOnTarget(templateID)) {
+      try {
+        const res = await v2NodeImageDownload(nodeId, templateID)
+        const statusText = res.status === 'already_downloading' ? '该镜像已在该节点下载中' : '已在该节点开始下载'
+        await dialog.alert(
+          '目标节点缺少镜像',
+          `${statusText}：${templateID}（节点「${nodeLabel}」）。约数分钟后下载完成，请再点一次「创建」即可。`,
+        )
+      } catch (err: unknown) {
+        const detail = err instanceof V2Error
+          ? err.message
+          : (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+        await dialog.alert(
+          '目标节点缺少镜像',
+          `镜像 ${templateID} 未在节点「${nodeLabel}」下载，且自动下载失败：${detail || '未知错误'}。请在该节点的「镜像管理」中手动下载后再创建。`,
+        )
+      }
+      return
+    }
+
     // 本机专属字段不下发：存储池 ID、公网 IP 池分配由目标节点自行处理。
     const stripLocalOnly = (item: CreateContainerRequest): CreateContainerRequest => ({
       ...item,
@@ -839,6 +891,16 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 暂无可用的{form.virtualization === 'kvm' ? ' KVM' : ' LXC'}系统镜像，请先在「镜像管理」中下载镜像模板。
               </div>
             ) : (
+            <>
+            {/* 目标节点镜像可用性：选好远程节点后提示"该节点尚未下载此镜像"，
+                提交时会自动触发该节点下载（避免下发注定失败的创建任务）。 */}
+            {imageMissingOnTarget(form.template_id) && (
+              <div className="mb-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                镜像「{templates.find((t) => t.id === form.template_id)?.name || form.template_id}」在目标节点
+                {targetNodeName ? `「${targetNodeName}」` : ''}尚未下载：提交创建时会先在该节点开始下载（约数分钟），
+                下载完成后再点一次创建即可。
+              </div>
+            )}
             <select
               value={form.template_id}
               onChange={(event) => {
@@ -856,6 +918,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 </option>
               ))}
             </select>
+            </>
             )}
 
           </Field>
