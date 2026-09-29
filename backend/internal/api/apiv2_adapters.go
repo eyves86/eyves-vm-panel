@@ -373,3 +373,59 @@ func v2NormalizeSortKey(raw string) (string, bool) {
 	}
 	return raw, false
 }
+
+// startKVMImageDownloadV2 触发 KVM 镜像下载（与面板 v1 流程一致：下载进度写入
+// 内存状态表，供 GET /images/{id} 轮询展示；完成后自动启用该镜像）。
+func startKVMImageDownloadV2(img kvm.Image) error {
+	if ok, _ := kvm.ImageDownloadedInfo(img.ID); ok {
+		return nil
+	}
+	ctx, started := startImageDownload(img.ID, "downloading")
+	if !started {
+		return fmt.Errorf("该镜像正在下载中")
+	}
+	go func() {
+		err := kvm.DownloadImageWithProgress(ctx, img, func(p kvm.DownloadProgress) {
+			updateImageDownload(img.ID, func(st *imageDownloadStatus) {
+				st.Stage = p.Stage
+				st.DownloadedBytes = p.DownloadedBytes
+				st.TotalBytes = p.TotalBytes
+				st.Progress = p.Percent
+			})
+		})
+		finishImageDownload(img.ID, err)
+		if err == nil {
+			ensureImageEnabled(img.ID)
+		}
+	}()
+	return nil
+}
+
+// hostSummaryForIDC 宿主机实时指标（供 /metrics/host 与首页复用）。
+// 字段口径与实例指标一致（百分比保留两位小数），便于前端统一展示。
+func hostSummaryForIDC() map[string]interface{} {
+	info := getHostInfo()
+	memUsage := 0.0
+	if info.RAM.TotalMB > 0 {
+		memUsage = float64(info.RAM.UsedMB) / float64(info.RAM.TotalMB) * 100
+	}
+	diskUsage := 0.0
+	if info.Disk.TotalGB > 0 {
+		diskUsage = info.Disk.UsedGB / info.Disk.TotalGB * 100
+	}
+	return map[string]interface{}{
+		"cpu_count":       info.CPU.Cores,
+		"cpu_percent":     round2(info.CPU.Usage),
+		"memory_total_mb": info.RAM.TotalMB,
+		"memory_used_mb":  info.RAM.UsedMB,
+		"memory_percent":  round2(memUsage),
+		"disk_total_gb":   round2(info.Disk.TotalGB),
+		"disk_used_gb":    round2(info.Disk.UsedGB),
+		"disk_percent":    round2(diskUsage),
+		"load1":           info.Load.Load1,
+		"load5":           info.Load.Load5,
+		"load15":          info.Load.Load15,
+		"network_rx_bps":  info.Network.RXBps,
+		"network_tx_bps":  info.Network.TXBps,
+	}
+}
