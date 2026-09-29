@@ -169,7 +169,7 @@ export default function ContainerDetail() {
   const containerIdentifier = paramId || ''
   const navigate = useNavigate()
   const dialog = useDialog()
-  const { isSubUser, isReadOnly } = useAuth()
+  const { isSubUser, isReadOnly, can, features } = useAuth()
   const readOnly = isSubUser && isReadOnly
   const { t } = useLanguage()
   const [container, setContainer] = useState<Container | null>(null)
@@ -1580,6 +1580,9 @@ export default function ContainerDetail() {
   const isWindows = container.template?.includes('windows')
   const reinstallLinuxTemplate = !isWindowsTemplate(selectedTemplate)
   const canOpenVNC = isKVM && isRunning
+  // featureGate：API v2 可用时按 /auth/me 的功能点门禁按钮；v2 不可用（features 为空）
+  // 时回退原有判断，避免误伤旧版本面板。
+  const featureGate = (name: string, fallback: boolean) => (Object.keys(features).length === 0 ? fallback : can(name))
   const isExpired = container.expires_at ? new Date(container.expires_at) < new Date() : false
   const isPolicyBlocked = !!container.policy_blocked
   const isSubUserPolicyBlocked = isSubUser && isPolicyBlocked
@@ -1779,13 +1782,29 @@ export default function ContainerDetail() {
                   {isSubUserPolicyBlocked ? '已封禁' : isExpired ? '已到期' : taskStatus === 'restart' ? taskActionLabels['restart'] : '重启'}
                 </ActionButton>
                 {!isWindows && (
-                  <ActionButton dark disabled={isSubUserPolicyBlocked || readOnly} onClick={() => setShowSSH(true)}>
+                  // LXC 与 KVM 的控制台不同：LXC 直接走容器内 sshd（平台注入口令）；
+                  // KVM 需要客户机自身在跑 sshd，图形界面请用 WebVNC。未运行时禁用。
+                  <ActionButton
+                    dark
+                    disabled={!isRunning || isSubUserPolicyBlocked || readOnly || !featureGate('instance_console', true)}
+                    title={!isRunning
+                      ? t('实例未运行，控制台不可用')
+                      : isKVM
+                        ? t('KVM 实例需客户机运行 sshd 才可 WebSSH；图形控制台请用 WebVNC')
+                        : t('通过 WebSSH 登录容器')}
+                    onClick={() => setShowSSH(true)}
+                  >
                     <TerminalSquare className="w-3.5 h-3.5" />
                     WebSSH
                   </ActionButton>
                 )}
                 {isKVM && (
-                  <ActionButton dark disabled={!canOpenVNC || isSubUserPolicyBlocked || readOnly} onClick={() => setShowVNC(true)}>
+                  <ActionButton
+                    dark
+                    disabled={!canOpenVNC || isSubUserPolicyBlocked || readOnly || !featureGate('instance_vnc', true)}
+                    title={canOpenVNC ? t('noVNC 图形控制台') : t('KVM 实例运行中才可打开图形控制台')}
+                    onClick={() => setShowVNC(true)}
+                  >
                     <Monitor className="w-3.5 h-3.5" />
                     WebVNC
                   </ActionButton>
@@ -1812,11 +1831,11 @@ export default function ContainerDetail() {
               <Globe className="w-3.5 h-3.5" />
               反向DNS
             </ActionButton>
-            <ActionButton onClick={() => setShowSnapshots(true)} disabled={!!taskStatus || !!snapshotBusy || isSubUserPolicyBlocked || readOnly}>
+            <ActionButton onClick={() => setShowSnapshots(true)} disabled={!!taskStatus || !!snapshotBusy || isSubUserPolicyBlocked || readOnly || !featureGate('instance_snapshot', true)}>
               <Camera className="w-3.5 h-3.5" />
               快照
             </ActionButton>
-            <ActionButton onClick={() => setShowBackups(true)} disabled={!!taskStatus || !!backupBusy || isSubUserPolicyBlocked || readOnly}>
+            <ActionButton onClick={() => setShowBackups(true)} disabled={!!taskStatus || !!backupBusy || isSubUserPolicyBlocked || readOnly || !featureGate('instance_snapshot', true)}>
               <HardDrive className="w-3.5 h-3.5" />
               备份
             </ActionButton>
@@ -1859,12 +1878,12 @@ export default function ContainerDetail() {
                 {container?.rescue_enabled ? '退出救援' : '救援模式'}
               </ActionButton>
             )}
-            <ActionButton onClick={openReinstall} disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly}>
+            <ActionButton onClick={openReinstall} disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly || !featureGate('instance_reinstall', true)}>
               <RefreshCw className="w-3.5 h-3.5" />
               {isExpired ? '已到期' : taskStatus === 'reinstall' ? taskActionLabels['reinstall'] : '重装'}
             </ActionButton>
             {!isSubUser && (
-              <ActionButton disabled={!!taskStatus} onClick={() => handleAction('delete')}>
+              <ActionButton disabled={!!taskStatus || !featureGate('instance_delete', true)} onClick={() => handleAction('delete')}>
                 <Trash2 className="w-3.5 h-3.5" />
                 {taskStatus === 'delete' ? taskActionLabels['delete'] : '删除'}
               </ActionButton>
@@ -3765,11 +3784,12 @@ function InfoTag({ color, children }: { color: 'blue' | 'emerald' | 'amber' | 'v
   return <span className={`px-1.5 py-0.5 border rounded text-[11px] whitespace-nowrap ${classes[color]}`}>{children}</span>
 }
 
-function ActionButton({ children, onClick, disabled, dark = false }: { children: ReactNode; onClick: () => void; disabled?: boolean; dark?: boolean }) {
+function ActionButton({ children, onClick, disabled, dark = false, title }: { children: ReactNode; onClick: () => void; disabled?: boolean; dark?: boolean; title?: string }) {
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap ${dark ? 'bg-brand-600 text-white hover:bg-brand-700' : 'border border-gray-300 text-gray-700 hover:bg-gray-50'}`}
     >
       {children}
