@@ -749,6 +749,23 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                               {selectable ? `${onlineNodes.length} 台在线` : '暂无可用节点'}
                             </span>
                           </button>
+                          {/* 区域资源水位：汇总该区域节点的心跳上报值（内存/磁盘/容器数） */}
+                          {selectable && (
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-gray-500">
+                              {(() => {
+                                const ramTotal = onlineNodes.reduce((sum, n) => sum + (n.ram_total_mb || 0), 0)
+                                const ramUsed = onlineNodes.reduce((sum, n) => sum + (n.ram_used_mb || 0), 0)
+                                const diskTotal = onlineNodes.reduce((sum, n) => sum + (n.disk_total_gb || 0), 0)
+                                const diskUsed = onlineNodes.reduce((sum, n) => sum + (n.disk_used_gb || 0), 0)
+                                const containers = onlineNodes.reduce((sum, n) => sum + (n.container_count || 0), 0)
+                                const parts: string[] = []
+                                if (ramTotal > 0) parts.push(`内存 ${Math.round((ramUsed / ramTotal) * 100)}%`)
+                                if (diskTotal > 0) parts.push(`磁盘 ${Math.round((diskUsed / diskTotal) * 100)}%`)
+                                parts.push(`容器 ${containers}`)
+                                return parts.join(' · ')
+                              })()}
+                            </div>
+                          )}
                           <select
                             value={choice}
                             disabled={!selectable}

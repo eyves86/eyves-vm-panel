@@ -273,7 +273,7 @@ export interface V2Region {
   name: string
   location?: string
   node_count?: number
-  online_node_count?: number
+  node_online?: number
 }
 
 export const v2ListRegions = () => call<{ items: V2Region[]; pagination?: unknown }>(client.get('/regions', { params: { all: true } }))
