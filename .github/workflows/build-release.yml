@@ -56,8 +56,10 @@ jobs:
           chmod +x "$PKG/$ASSET_DIR/eyvescloud"
           tar -C "$PKG" -czf "dist/$ASSET_DIR.tar.gz" "$ASSET_DIR"
           # 生成产物校验值：安装/升级路径会强制校验（见 install.sh verify_release_asset
-          # 与 internal/cli 的 verifyReleaseArchive），因此每个产物都必须有校验记录。
-          ( cd dist && sha256sum "$ASSET_DIR.tar.gz" "$ASSET_DIR" > "$ASSET_DIR.sha256" )
+          # 与 internal/cli 的 verifyReleaseArchive）。
+          # 只发布 .tar.gz（内含二进制）与校验清单：裸二进制与 tarball 内容重复，
+          # 全量上传会快速耗尽 Forgejo 实例的发布资产配额（实测 413 quota exceeded）。
+          ( cd dist && sha256sum "$ASSET_DIR.tar.gz" > "$ASSET_DIR.sha256" )
           cat "dist/$ASSET_DIR.sha256"
 
       - uses: actions/upload-artifact@v4
@@ -65,7 +67,6 @@ jobs:
           name: eyvescloud-linux-${{ matrix.arch }}
           if-no-files-found: error
           path: |
-            dist/eyvescloud-linux-${{ matrix.arch }}
             dist/eyvescloud-linux-${{ matrix.arch }}.tar.gz
             dist/eyvescloud-linux-${{ matrix.arch }}.sha256
 
