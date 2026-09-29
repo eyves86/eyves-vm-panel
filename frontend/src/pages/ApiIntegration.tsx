@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import api, { getAuthToken, APIResponse, Container } from '../services/api'
+import APIV2Panel from '../components/APIV2Panel'
 import { useLanguage } from '../contexts/LanguageContext'
 import { copyToClipboard } from '../utils/clipboard'
 
@@ -896,6 +897,9 @@ export default function ApiIntegration() {
           </div>
         </div>
       )}
+
+      {/* API v2（集成专用）：端点清单 + 只读端点试跑 */}
+      <APIV2Panel />
     </div>
   )
 }
