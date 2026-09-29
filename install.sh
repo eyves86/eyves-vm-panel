@@ -2554,6 +2554,22 @@ install_systemd_service() {
     libvirt_wants="$(systemd_existing_units libvirtd.service virtqemud.socket virtlogd.socket)"
     lxc_after="$(systemd_existing_units lxc.service lxcfs.service lxc-net.service)"
 
+    # 被控自动更新开关：EYVESCLOUD_AUTO_UPDATE=<分钟，>=60> 时写入面板单元。
+    # 同机部署下被控职责由面板进程承担（agent 服务已停用），因此这条变量必须落在
+    # **面板**单元上才会生效；未设置时不写（默认关闭，无人值守自动升级需显式开启）。
+    auto_update_env=""
+    if [ -n "${EYVESCLOUD_AUTO_UPDATE:-}" ]; then
+        case "$EYVESCLOUD_AUTO_UPDATE" in
+            ''|*[!0-9]*) warn "EYVESCLOUD_AUTO_UPDATE 必须是数字（分钟，>=60），已忽略：$EYVESCLOUD_AUTO_UPDATE" ;;
+            *) if [ "$EYVESCLOUD_AUTO_UPDATE" -ge 60 ]; then
+                   auto_update_env="Environment=EYVESCLOUD_AUTO_UPDATE=${EYVESCLOUD_AUTO_UPDATE}"
+                   log "被控自动更新已启用：每 ${EYVESCLOUD_AUTO_UPDATE} 分钟检查一次"
+               else
+                   warn "EYVESCLOUD_AUTO_UPDATE 至少 60 分钟，已忽略：$EYVESCLOUD_AUTO_UPDATE"
+               fi ;;
+        esac
+    fi
+
     cat > /etc/systemd/system/eyvescloud.service << EOF
 [Unit]
 Description=EyvesCloud - LXC/KVM Container Manager
@@ -2569,7 +2585,7 @@ Restart=always
 RestartSec=5
 LimitNOFILE=1048576
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-EnvironmentFile=-${EYVESCLOUD_NETWORK_ENV}
+${auto_update_env}EnvironmentFile=-${EYVESCLOUD_NETWORK_ENV}
 # 说明：此处不使用 NoNewPrivileges / ProtectControlGroups / ProtectKernelTunables /
 # ProtectKernelModules / RestrictSUIDSGID 等加固。
 # 原因：eyvescloud 通过派生子进程管理 LXC/KVM（lxc-start、mount -o loop、nsenter、

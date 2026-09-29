@@ -3,13 +3,17 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	"eyvescloud/internal/cli"
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/lxc"
+	"eyvescloud/internal/version"
 )
 
 // 被控节点（agent 模式）专用 API，仅供主控（Controller）通过节点 token 调用。
@@ -641,4 +645,79 @@ func HandleAgentNodeBackup(w http.ResponseWriter, r *http.Request) {
 		"total_bytes":   totalBytes,
 		"container_cnt": len(containers),
 	}})
+}
+
+// HandleAgentSelfUpdate POST /api/agent/self-update
+//
+// 主控「一键升级被控节点」下发入口（agent token 鉴权）。请求体：
+//
+//	{"target_version": "2.2.17", "check_only": false}
+//
+// 语义：
+//   - check_only=true → 只回报本机版本与目标版本是否一致；
+//   - 否则立即返回 202（accepted=true），**升级在响应落地 2 秒后执行**：
+//     就地替换二进制 → detached 重启服务。主控通过节点心跳里的版本字段确认结果。
+//
+// 之所以延迟执行：升级会重启本进程服务，先回响应才能让主控拿到"已受理"，
+// 否则主控只会看到连接被重置。
+func HandleAgentSelfUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	var req struct {
+		TargetVersion string `json:"target_version"`
+		CheckOnly     bool   `json:"check_only"`
+	}
+	if r.Body != nil {
+		decoder := json.NewDecoder(r.Body)
+		if err := decoder.Decode(&req); err != nil && err.Error() != "EOF" {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body: " + err.Error()})
+			return
+		}
+	}
+	target := strings.TrimSpace(req.TargetVersion)
+	current := version.Current()
+
+	if req.CheckOnly {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+			"current_version": current,
+			"target_version":  target,
+			"up_to_date":      target == "" || sameVersionString(current, target),
+		}})
+		return
+	}
+
+	// 目标版本格式先校验，避免把非法 tag 带进下载路径。
+	if target != "" && !cli.ValidateReleaseTag(target) {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "无效的目标版本标签: " + target})
+		return
+	}
+
+	go func() {
+		// 留出时间让 202 响应完整落回主控，再执行替换 + 重启。
+		time.Sleep(2 * time.Second)
+		newVersion, upgraded, err := cli.SelfUpdateToVersion(target)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "被控自更新失败（目标 %s）: %v\n", target, err)
+			return
+		}
+		if upgraded {
+			fmt.Printf("被控已按主控指令升级到 %s\n", newVersion)
+		}
+	}()
+
+	jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "升级已受理，节点将在数秒内重启服务", Data: map[string]interface{}{
+		"current_version": current,
+		"target_version":  target,
+		"accepted":        true,
+	}})
+}
+
+// sameVersionString 比较版本号字符串（去掉 v 前缀与两端空白）。
+func sameVersionString(a, b string) bool {
+	norm := func(v string) string {
+		return strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), "v")
+	}
+	return norm(a) == norm(b)
 }

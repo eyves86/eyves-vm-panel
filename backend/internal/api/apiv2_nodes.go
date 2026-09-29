@@ -23,8 +23,10 @@ package api
 //	DELETE /api/v2/regions/{id}               删除区域
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -32,12 +34,15 @@ import (
 
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/scheduler"
+	"eyvescloud/internal/version"
 )
 
 func init() {
 	registerV2("GET /api/v2/nodes", v2Auth(v2NodesList))
 	registerV2("POST /api/v2/nodes", v2Auth(v2NodesCreate))
 	registerV2("GET /api/v2/nodes/schedule", v2Auth(v2NodesSchedule))
+	// 「一键升级被控节点」：注册在 /nodes/{id} 之前（字面量优先，Go 1.22 mux 也按此匹配）。
+	registerV2("POST /api/v2/nodes/upgrade", v2Auth(v2NodesUpgrade))
 	registerV2("GET /api/v2/nodes/{id}", v2Auth(v2NodeGet))
 	registerV2("PATCH /api/v2/nodes/{id}", v2Auth(v2NodeUpdate))
 	registerV2("DELETE /api/v2/nodes/{id}", v2Auth(v2NodeDelete))
@@ -957,4 +962,142 @@ func v2RegionDelete(w http.ResponseWriter, r *http.Request) {
 	_ = config.SaveConfig()
 	auditRequest(r, "api.v2.region.delete", regionID, "", true, "")
 	v2NoContent(w, r)
+}
+
+// v2NodesUpgrade POST /api/v2/nodes/upgrade —— 一键升级被控节点。
+//
+// 请求体：
+//
+//	{
+//	  "node_ids": ["node-xxx", ...],   // 省略 = 全部节点
+//	  "target_version": "2.2.17",      // 省略 = 主控当前版本（对齐主控）
+//	  "check_only": false              // true = 只回报节点当前版本与差异，不下发升级
+//	}
+//
+// 语义：逐个向被控下发 /api/agent/self-update（被控受理后就地替换二进制并重启服务），
+// 本接口立即返回**受理**结果。节点实际是否升级成功，通过节点心跳回报的 version 字段
+// 确认（稍后 GET /api/v2/nodes 复查即可）。
+func v2NodesUpgrade(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireAdmin(w, r) {
+		return
+	}
+	var req struct {
+		NodeIDs       []string `json:"node_ids"`
+		TargetVersion string   `json:"target_version"`
+		CheckOnly     bool     `json:"check_only"`
+	}
+	if r.Body != nil {
+		if err := v2Decode(r, &req); err != nil {
+			v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+			return
+		}
+	}
+	target := strings.TrimSpace(req.TargetVersion)
+	if target == "" {
+		// 默认对齐主控版本：这是"节点跟主控同版本"的直观语义。
+		target = version.Current()
+	}
+	if !v2ValidVersionTag(target) {
+		v2BadRequest(w, r, "无效的目标版本", map[string]string{"target_version": target})
+		return
+	}
+
+	// 选定目标节点：显式列表，或全部节点。
+	config.AppConfigMu.RLock()
+	all := append([]config.Node(nil), config.AppConfig.Nodes...)
+	config.AppConfigMu.RUnlock()
+	wanted := map[string]bool{}
+	for _, id := range req.NodeIDs {
+		wanted[strings.TrimSpace(id)] = true
+	}
+	nodes := make([]config.Node, 0, len(all))
+	for _, n := range all {
+		if len(wanted) > 0 && !wanted[n.ID] {
+			continue
+		}
+		nodes = append(nodes, n)
+	}
+	if len(nodes) == 0 {
+		v2NotFound(w, r, "没有匹配的节点")
+		return
+	}
+
+	accepted := make([]map[string]interface{}, 0, len(nodes))
+	skipped := make([]map[string]interface{}, 0)
+	failed := make([]map[string]interface{}, 0)
+	upToDate := 0
+
+	for _, n := range nodes {
+		switch {
+		case n.MaintenanceMode:
+			skipped = append(skipped, map[string]interface{}{"node_id": n.ID, "node_name": n.Name, "reason": "维护模式"})
+			continue
+		case n.Status != "" && n.Status != "online":
+			skipped = append(skipped, map[string]interface{}{"node_id": n.ID, "node_name": n.Name, "reason": "节点不在线（离线节点无法下发升级）"})
+			continue
+		case n.Address == "":
+			skipped = append(skipped, map[string]interface{}{"node_id": n.ID, "node_name": n.Name, "reason": "节点未配置地址"})
+			continue
+		}
+		if sameVersionString(n.Version, target) {
+			upToDate++
+			skipped = append(skipped, map[string]interface{}{
+				"node_id": n.ID, "node_name": n.Name, "current_version": n.Version, "reason": "已是目标版本",
+			})
+			continue
+		}
+		payload, _ := json.Marshal(map[string]interface{}{
+			"target_version": target,
+			"check_only":     req.CheckOnly,
+		})
+		data, status, err := proxyNodeRequest(r, n, http.MethodPost, "/api/agent/self-update", bytes.NewReader(payload))
+		if err != nil || status >= 300 {
+			msg := fmt.Sprintf("HTTP %d: %v", status, err)
+			if len(data) > 0 {
+				msg = strings.TrimSpace(string(data))
+			}
+			failed = append(failed, map[string]interface{}{
+				"node_id": n.ID, "node_name": n.Name, "current_version": n.Version, "error": msg,
+			})
+			continue
+		}
+		accepted = append(accepted, map[string]interface{}{
+			"node_id": n.ID, "node_name": n.Name,
+			"current_version": n.Version, "target_version": target,
+			"check_only": req.CheckOnly,
+		})
+	}
+
+	action := "upgrade"
+	if req.CheckOnly {
+		action = "check"
+	}
+	auditRequest(r, "api.v2.nodes."+action, fmt.Sprintf("%d 个节点", len(nodes)),
+		fmt.Sprintf("target=%s 受理=%d 跳过=%d 失败=%d", target, len(accepted), len(skipped), len(failed)), true, "")
+	v2Accepted(w, r, map[string]interface{}{
+		"target_version": target,
+		"check_only":     req.CheckOnly,
+		"up_to_date":     upToDate,
+		"accepted":       accepted,
+		"skipped":        skipped,
+		"failed":         failed,
+		"note":           "已受理的节点将在数秒内替换二进制并重启服务；约 30 秒后可用 GET /api/v2/nodes 复查 version 字段确认结果。",
+	})
+}
+
+// v2ValidVersionTag 校验版本标签（允许 v 前缀，字符集与发布 tag 一致）。
+func v2ValidVersionTag(tag string) bool {
+	tag = strings.TrimSpace(tag)
+	if tag == "" || len(tag) > 200 {
+		return false
+	}
+	for _, ch := range tag {
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
+		case ch == '-' || ch == '_' || ch == '.':
+		default:
+			return false
+		}
+	}
+	return true
 }

@@ -2687,3 +2687,92 @@ func cliPrintf(format string, args ...interface{}) {
 	}
 	fmt.Printf(cliT(format), args...)
 }
+
+// RunSelfUpdateCommand 是非交互式自更新入口（供运维脚本 / CI / 手动触发）：
+//
+//	eyvescloud self-update          检查并升级到最新版本（有更新才动）
+//	eyvescloud self-update --check  只检查并打印版本对比，不升级
+//
+// 与被控自动更新循环调用的是同一条路径（SelfUpdateOnce → 校验 SHA-256 →
+// 备份旧二进制 → 原子替换 → 重启服务），因此可用来验证自动更新是否可用。
+func RunSelfUpdateCommand(args []string) error {
+	checkOnly := false
+	for _, arg := range args {
+		switch arg {
+		case "--check", "-c":
+			checkOnly = true
+		case "--help", "-h":
+			fmt.Println("用法: eyvescloud self-update [--check]")
+			fmt.Println("  --check  只检查版本，不执行升级")
+			return nil
+		}
+	}
+
+	if checkOnly {
+		result := CheckForUpdate()
+		if result.Err != "" {
+			return fmt.Errorf("版本检测失败: %s", result.Err)
+		}
+		fmt.Printf("当前版本: %s\n最新版本: %s\n是否有更新: %v\n", result.Current, result.Latest, result.HasUpdate)
+		return nil
+	}
+
+	fmt.Printf("当前版本: %s，正在检查更新…\n", version.Current())
+	latest, upgraded, err := SelfUpdateOnce()
+	if err != nil {
+		return err
+	}
+	if !upgraded {
+		fmt.Printf("已是最新版本（%s），无需升级。\n", version.Current())
+		return nil
+	}
+	fmt.Printf("升级完成: %s（服务已重启）\n", latest)
+	return nil
+}
+
+// SelfUpdateToVersion 把本机升级到指定版本（空 = 最新版本）。
+//
+// 与 PanelSelfUpdateOnce 同一策略（就地替换 + detached 重启）：本机服务就是被升级
+// 的对象，若先 stopService 再替换会把正在执行升级的进程杀掉。
+// 供主控「一键升级被控节点」下发调用（/api/agent/self-update）。
+//
+// 校验：目标版本的发布产物必须带 SHA256SUMS（缺失仅告警，不匹配则中止——与
+// 面板升级同一策略）。
+func SelfUpdateToVersion(tag string) (newVersion string, upgraded bool, err error) {
+	repo := resolveUpdateRepo()
+	tag = strings.TrimSpace(tag)
+	if tag != "" && !validateReleaseTag(tag) {
+		return "", false, fmt.Errorf("无效的版本标签: %q", tag)
+	}
+	assetName, err := releaseArchiveAssetName(runtime.GOARCH)
+	if err != nil {
+		return "", false, err
+	}
+	current := version.Current()
+
+	var release *githubRelease
+	if tag == "" {
+		release, err = fetchLatestRelease(repo, assetName)
+	} else {
+		release, err = fetchReleaseByTag(repo, tag)
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("获取目标版本失败: %w", err)
+	}
+	target := strings.TrimSpace(release.TagName)
+	if target == "" {
+		return "", false, fmt.Errorf("Release 缺少 tag_name，无法升级")
+	}
+	if sameVersion(current, target) {
+		// 已在该版本：幂等返回，不重复安装。
+		return target, false, nil
+	}
+	assetURL := findReleaseAsset(release, assetName)
+	if assetURL == "" {
+		return "", false, fmt.Errorf("Release %s 没有找到 %s，无法升级", target, assetName)
+	}
+	if err := upgradeFromReleaseAssetInPlace(assetURL, target, assetName, findChecksumsURL(release, assetName)); err != nil {
+		return "", false, err
+	}
+	return target, true, nil
+}

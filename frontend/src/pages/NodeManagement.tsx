@@ -59,6 +59,7 @@ import {
   type Region,
   type Template,
 } from '../services/api'
+import { v2UpgradeNodes } from '../services/apiV2'
 import { useDialog } from '../components/Dialog'
 import { useLanguage } from '../contexts/LanguageContext'
 
@@ -101,6 +102,8 @@ export default function NodeManagement() {
   const [nodes, setNodes] = useState<ManagedNode[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  // 一键升级被控节点（把全部在线节点升到与主控相同版本）的进行态。
+  const [upgrading, setUpgrading] = useState(false)
   // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址 + agent.json 预置配置手工接入）；
   // adopt=对接已有面板（被控侧已装好独立面板，凭其生成的对接密钥主动拉取注册）
   const [createMode, setCreateMode] = useState<'quick' | 'manual' | 'adopt'>('quick')
@@ -797,6 +800,41 @@ export default function NodeManagement() {
     }
   }
 
+  // 一键升级被控节点：默认把「全部在线节点」升级到**与主控相同版本**。
+  // 被控受理后就地替换二进制并重启服务（节点上的容器不受影响）；
+  // 约 30 秒后列表里的版本号会刷新，可用于确认结果。
+  const runNodeUpgrade = async () => {
+    const ok = await confirm(
+      t('一键升级被控节点'),
+      t('将把全部在线被控节点升级到与主控相同版本。升级期间节点服务会短暂重启（节点上的容器不受影响）。是否继续？')
+    )
+    if (!ok) return
+    setUpgrading(true)
+    try {
+      const result = await v2UpgradeNodes({})
+      const lines: string[] = [
+        `${t('目标版本')}: ${result.target_version}`,
+        `${t('已受理')}: ${result.accepted.length} · ${t('跳过')}: ${result.skipped.length} · ${t('失败')}: ${result.failed.length}`,
+      ]
+      for (const item of result.accepted) {
+        lines.push(`  ✓ ${item.node_name}  ${item.current_version} → ${item.target_version}`)
+      }
+      for (const item of result.skipped) {
+        lines.push(`  – ${item.node_name}：${item.reason}`)
+      }
+      for (const item of result.failed) {
+        lines.push(`  ✗ ${item.node_name}：${item.error}`)
+      }
+      lines.push('', t('被控收到指令后约 30 秒内完成升级并重启服务，之后刷新列表即可看到新版本。'))
+      await alert(t('升级已下发'), lines.join('\n'))
+      refresh()
+    } catch (e: any) {
+      await alert(t('升级失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setUpgrading(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -813,6 +851,15 @@ export default function NodeManagement() {
           >
             <RefreshCw className="h-3.5 w-3.5" />
             {t('刷新')}
+          </button>
+          <button
+            onClick={() => { void runNodeUpgrade() }}
+            disabled={upgrading}
+            title={t('把全部在线被控升级到与主控相同版本')}
+            className="flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            {upgrading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RotateCw className="h-3.5 w-3.5" />}
+            {t('一键升级被控')}
           </button>
           <button
             onClick={() => setShowCreate(true)}

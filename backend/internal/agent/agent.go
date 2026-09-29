@@ -211,7 +211,10 @@ func register(controller, installKey, name, addr string, allowInsecureHTTP bool)
 // 同机场景改由主控面板自身承担被控职责：
 //   - 从 agent.json 读取节点 token 并注入本进程，使面板自带的 /api/agent/*
 //     端点可用（否则 AgentTokenMiddleware 因 token 为空返回 403）；
-//   - 启动心跳循环，让主控把节点标记为在线并同步容器摘要。
+//   - 启动心跳循环，让主控把节点标记为在线并同步容器摘要；
+//   - 启动自动更新循环（EYVESCLOUD_AUTO_UPDATE 分钟，>=60），保证被控能与主控
+//     版本对齐——agent 服务被停用后这条循环原本无处启动（这是此前的遗漏）。
+//   - 被主控下发"一键升级"时，由面板进程处理（见 HandleAgentSelfUpdate）。
 //
 // 未注册（无 agent.json）时不做任何事。由 main.go 的 server 模式调用。
 func StartEmbeddedNodeSide() {
@@ -223,6 +226,11 @@ func StartEmbeddedNodeSide() {
 	fmt.Printf("被控注册信息已加载：主控 %s，节点 %s；面板内置被控端点已启用（心跳 10s）\n",
 		ac.Controller, ac.Name)
 	go heartbeatLoop(ac)
+
+	if minutes := autoUpdateMinutes(); minutes > 0 {
+		fmt.Printf("被控自动更新已启用：每 %d 分钟检查一次（EYVESCLOUD_AUTO_UPDATE）\n", minutes)
+		go autoUpdateLoop(minutes)
+	}
 }
 
 // heartbeatLoop 每 10s 上报一次心跳（主控据此判定节点在线并同步容器摘要）。

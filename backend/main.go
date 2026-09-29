@@ -44,6 +44,7 @@ func main() {
 	isAccessPolicyCommand := len(os.Args) > 1 && os.Args[1] == "access-policy"
 	isAccountCommand := len(os.Args) > 1 && (os.Args[1] == "account" || os.Args[1] == "kvm")
 	isNodeLinkCommand := len(os.Args) > 1 && (os.Args[1] == "node-link" || os.Args[1] == "pairing-key")
+	isSelfUpdateCommand := len(os.Args) > 1 && os.Args[1] == "self-update"
 	for _, arg := range os.Args[1:] {
 		if arg == "server" || arg == "-s" || arg == "--server" {
 			isServerMode = true

@@ -23,6 +23,32 @@ export default {
           900: '#3d2485',
           950: '#251653',
         },
+        // ---- 设计系统令牌（Linear DESIGN.md，见项目根 DESIGN.md 与 docs/design-system.md）----
+        // 新增 UI（页面/组件）优先使用下面这套语义令牌；存量页面保持现有紫调暗色不变。
+        // canvas/surface 为近黑层次，hairline 为发丝描边，ink 为文字层级，accent 为强调色。
+        canvas: '#010102',
+        surface: {
+          1: '#0f1011',
+          2: '#141516',
+          3: '#18191a',
+          4: '#191a1b',
+        },
+        hairline: {
+          DEFAULT: '#23252a',
+          strong: '#34343a',
+          tertiary: '#3e3e44',
+        },
+        ink: {
+          DEFAULT: '#f7f8f8',
+          muted: '#d0d6e0',
+          subtle: '#8a8f98',
+          tertiary: '#62666d',
+        },
+        accent: {
+          DEFAULT: '#5e6ad2',
+          hover: '#828fff',
+          focus: '#5e69d1',
+        },
         // 近黑紫：全局正文色（参考站 --text #242135），替代纯黑
         black: '#242135',
       },

@@ -222,3 +222,44 @@ export const v2ListAuditLogs = (query: Record<string, unknown> = {}) =>
   call<V2List<Record<string, unknown>>>(client.get('/audit-logs', { params: query }))
 
 export const v2ListAPIKeys = () => call<V2List<Record<string, unknown>>>(client.get('/api-keys'))
+
+// ---- 被控节点一键升级 ----
+
+export interface V2NodeUpgradeAccepted {
+  node_id: string
+  node_name: string
+  current_version: string
+  target_version: string
+}
+
+export interface V2NodeUpgradeSkipped {
+  node_id: string
+  node_name: string
+  reason: string
+  current_version?: string
+}
+
+export interface V2NodeUpgradeFailed {
+  node_id: string
+  node_name: string
+  current_version: string
+  error: string
+}
+
+export interface V2NodeUpgradeResult {
+  target_version: string
+  check_only: boolean
+  up_to_date: number
+  accepted: V2NodeUpgradeAccepted[]
+  skipped: V2NodeUpgradeSkipped[]
+  failed: V2NodeUpgradeFailed[]
+  note: string
+}
+
+// v2UpgradeNodes 一键升级被控节点（省略参数 = 全部在线节点 → 主控当前版本）。
+// 返回的是**受理**结果：被控随后自行替换二进制并重启服务，约 30 秒后可复查节点版本。
+export const v2UpgradeNodes = (payload: {
+  node_ids?: string[]
+  target_version?: string
+  check_only?: boolean
+} = {}) => call<V2NodeUpgradeResult>(client.post('/nodes/upgrade', payload))
