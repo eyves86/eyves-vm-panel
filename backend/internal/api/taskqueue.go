@@ -353,6 +353,10 @@ func (q *TaskQueue) takeNextTask(create bool) *Task {
 				} else {
 					q.opQueue = queue
 				}
+				// 已取消的任务不再执行（取消发生在入队之后、派发之前）。
+				if task.Status == "canceled" {
+					continue
+				}
 				task.Status = "running"
 				task.Error = ""
 				task.Stage = "preparing"
@@ -1271,4 +1275,64 @@ func validateCreateStoragePool(cfg *lxc.ContainerConfig) error {
 	}
 	cfg.StoragePoolID = pool.ID
 	return nil
+}
+
+// Cancel 取消一个尚未开始执行（排队中）的任务。
+//
+// 返回 (canceled, running)：
+//   - canceled=true 表示已成功取消（从队列摘除并标记 canceled）；
+//   - running=true 表示任务已在执行，无法取消（调用方应返回 409）；
+//   - 两者皆 false 表示任务不存在或已结束。
+//
+// 实现方式：标记 Status=canceled 并唤醒派发协程；takeNextTask 在出队时会跳过
+// 已取消任务，因此不存在"取消后仍然执行"的竞态窗口。
+func (q *TaskQueue) Cancel(taskID string) (canceled bool, running bool) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false, false
+	}
+	q.mu.Lock()
+	task, ok := q.tasks[taskID]
+	if !ok {
+		q.mu.Unlock()
+		return false, false
+	}
+	switch task.Status {
+	case "running", "processing":
+		q.mu.Unlock()
+		return false, true
+	case "success", "failed", "canceled", "done", "completed":
+		q.mu.Unlock()
+		return false, false
+	}
+	task.Status = "canceled"
+	task.Error = "已取消"
+	q.persistTasks()
+	// 唤醒派发协程，让被取消的任务尽快从队列中排空。
+	if q.createCond != nil {
+		q.createCond.Broadcast()
+	}
+	if q.opCond != nil {
+		q.opCond.Broadcast()
+	}
+	q.mu.Unlock()
+
+	_ = config.AppendTaskLog(taskID, "WARN", "任务已由管理员取消")
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Tasks {
+			if cfg.Tasks[i].ID != taskID {
+				continue
+			}
+			switch cfg.Tasks[i].Status {
+			case "running", "success", "failed", "canceled", "done", "completed":
+				// 已结束/执行中的历史记录不改写。
+			default:
+				cfg.Tasks[i].Status = "canceled"
+				cfg.Tasks[i].Error = "已取消"
+			}
+			return
+		}
+	})
+	_ = config.SaveConfig()
+	return true, false
 }

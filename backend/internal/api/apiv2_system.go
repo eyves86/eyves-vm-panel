@@ -36,6 +36,7 @@ import (
 func init() {
 	registerV2("GET /api/v2/tasks", v2Auth(v2TasksList))
 	registerV2("GET /api/v2/tasks/{id}", v2Auth(v2TaskGet))
+	registerV2("POST /api/v2/tasks/{id}/cancel", v2Auth(v2TaskCancel))
 
 	registerV2("GET /api/v2/backups", v2Auth(v2BackupsList))
 	registerV2("POST /api/v2/backups/{id}/restore", v2Auth(v2BackupRestore))
@@ -724,4 +725,42 @@ func v2SystemUpdateCheck(w http.ResponseWriter, r *http.Request) {
 		"has_update": result.HasUpdate,
 		"error":      result.Err,
 	})
+}
+
+// v2TaskCancel POST /tasks/{id}/cancel：取消排队中的任务。
+//
+// 语义（企业集成常见诉求：计费回调超时后撤单）：
+//   - 排队中 → 取消成功，返回 200 {canceled:true}
+//   - 已在执行 → 409 CONFLICT（运行中的任务无法安全中断，需等其结束）
+//   - 不存在/已结束 → 404 / 200（幂等：已结束视为无需取消）
+func v2TaskCancel(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "task:read") {
+		return
+	}
+	taskID := strings.TrimSpace(r.PathValue("id"))
+	config.AppConfigMu.RLock()
+	found := false
+	for i := range config.AppConfig.Tasks {
+		if config.AppConfig.Tasks[i].ID == taskID {
+			found = true
+			break
+		}
+	}
+	config.AppConfigMu.RUnlock()
+	if !found {
+		v2NotFound(w, r, "任务不存在："+taskID)
+		return
+	}
+	canceled, running := globalQueue.Cancel(taskID)
+	if running {
+		v2Conflict(w, r, "任务已在执行，无法取消（请等待其结束）")
+		return
+	}
+	auditRequest(r, "api.v2.task.cancel", taskID, "", true, "")
+	if !canceled {
+		// 任务已结束：幂等返回，不视为错误。
+		v2OK(w, r, map[string]interface{}{"id": taskID, "canceled": false, "reason": "任务已结束"})
+		return
+	}
+	v2OK(w, r, map[string]interface{}{"id": taskID, "canceled": true})
 }
