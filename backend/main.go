@@ -9,8 +9,8 @@ import (
 	"sync"
 	"syscall"
 
-	"eyvescloud/internal/api"
 	"eyvescloud/internal/agent"
+	"eyvescloud/internal/api"
 	"eyvescloud/internal/cli"
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/kvm"
@@ -100,6 +100,18 @@ func main() {
 	// 被控节点 agent 模式：注册到主控 + 心跳 + 本地面板
 	if isAgentMode {
 		agent.Run(os.Args[2:])
+		return
+	}
+
+	// 自更新快捷命令：`eyvescloud self-update [--check]`。
+	// 与「被控自动更新」「主控下发的一键升级」走同一条代码路径
+	// （SelfUpdateToVersion → SHA-256 校验 → 就地替换 → detached 重启），
+	// 供运维脚本手动触发或验证升级链路。
+	if isSelfUpdateCommand {
+		if err := cli.RunSelfUpdateCommand(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Self update error: %v\n", err)
+			os.Exit(1)
+		}
 		return
 	}
 

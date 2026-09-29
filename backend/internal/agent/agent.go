@@ -346,20 +346,20 @@ func collectNodeStatus() map[string]interface{} {
 		// 容器摘要列表（供主控聚合展示）：只传轻量字段 + 最新指标 + 流量累计，
 		// 完整详情由主控按需拉取。
 		type containerSummary struct {
-			ID             int    `json:"id"`
-			UUID           string `json:"uuid"`
-			Name           string `json:"name"`
-			Status         string `json:"status"`
-			Virtualization string `json:"virtualization"`
-			IP             string `json:"ip,omitempty"`
-			SSHPort        int    `json:"ssh_port,omitempty"`
-			Suspended      bool   `json:"suspended,omitempty"`
+			ID             int     `json:"id"`
+			UUID           string  `json:"uuid"`
+			Name           string  `json:"name"`
+			Status         string  `json:"status"`
+			Virtualization string  `json:"virtualization"`
+			IP             string  `json:"ip,omitempty"`
+			SSHPort        int     `json:"ssh_port,omitempty"`
+			Suspended      bool    `json:"suspended,omitempty"`
 			VCPU           float64 `json:"vcpu"`
-			RAMMB          int    `json:"ram_mb"`
+			RAMMB          int     `json:"ram_mb"`
 			DiskGB         float64 `json:"disk_gb"`
-			ExpiresAt      string `json:"expires_at,omitempty"`
-			TrafficUsedRX  int64  `json:"traffic_used_rx,omitempty"`
-			TrafficUsedTX  int64  `json:"traffic_used_tx,omitempty"`
+			ExpiresAt      string  `json:"expires_at,omitempty"`
+			TrafficUsedRX  int64   `json:"traffic_used_rx,omitempty"`
+			TrafficUsedTX  int64   `json:"traffic_used_tx,omitempty"`
 			// 最新实时指标（agent 本机 metric history 的尾采样点）
 			CPU       float64 `json:"cpu,omitempty"`
 			Memory    float64 `json:"memory,omitempty"`

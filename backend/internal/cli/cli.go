@@ -25,57 +25,57 @@ import (
 var manager = lxc.NewManager()
 
 const (
-	eyvescloudBackupDir              = "/root/eyvescloud-backups"
-	eyvescloudNewBinaryPath          = "/usr/local/bin/eyvescloud.new"
+	eyvescloudBackupDir         = "/root/eyvescloud-backups"
+	eyvescloudNewBinaryPath     = "/usr/local/bin/eyvescloud.new"
 	libvirtDefaultNetworkMarker = "/var/lib/eyvescloud/kvm/default-network.created"
 )
 
 var cliEnglish = detectCLIEnglish()
 
 var cliTranslations = map[string]string{
-	"重新加载配置失败":          "Failed to reload config",
-	"请选择操作":             "Select an action",
-	"再见":                "Goodbye",
-	"无效选择":              "Invalid choice",
+	"重新加载配置失败":               "Failed to reload config",
+	"请选择操作":                  "Select an action",
+	"再见":                     "Goodbye",
+	"无效选择":                   "Invalid choice",
 	"EyvesCloud - LXC 容器管理器": "EyvesCloud - Container Manager",
-	"Web 面板":            "Web panel",
-	"端口":                "port",
-	"运行中":               "running",
-	"已停止":               "stopped",
-	"当前版本":              "Current version",
-	"查看容器列表":            "List containers",
-	"创建容器":              "Create container",
-	"开机容器":              "Start container",
-	"关机容器":              "Stop container",
-	"重启容器":              "Restart container",
-	"删除容器":              "Delete container",
-	"重装容器系统":            "Reinstall container OS",
-	"重置 Web 管理员密码":      "Reset web admin password",
-	"启动":                "Start",
-	"停止":                "Stop",
-	"导入现有 LXC 容器":       "Import existing LXC containers",
+	"Web 面板":                 "Web panel",
+	"端口":                     "port",
+	"运行中":                    "running",
+	"已停止":                    "stopped",
+	"当前版本":                   "Current version",
+	"查看容器列表":                 "List containers",
+	"创建容器":                   "Create container",
+	"开机容器":                   "Start container",
+	"关机容器":                   "Stop container",
+	"重启容器":                   "Restart container",
+	"删除容器":                   "Delete container",
+	"重装容器系统":                 "Reinstall container OS",
+	"重置 Web 管理员密码":           "Reset web admin password",
+	"启动":                     "Start",
+	"停止":                     "Stop",
+	"导入现有 LXC 容器":            "Import existing LXC containers",
 	"检查并升级 EYVESCLOUD":       "Check and upgrade EYVESCLOUD",
 	"卸载 EYVESCLOUD":          "Uninstall EYVESCLOUD",
-	"面板访问白名单":           "Panel access allowlist",
-	"系统信息":              "System info",
-	"退出":                "Exit",
-	"获取容器列表失败":          "Failed to get container list",
-	"暂无容器":              "No containers",
-	"容器":                "Container",
-	"名称":                "Name",
-	"状态":                "Status",
-	"镜像":                "Image",
-	"内存(MB)":            "Memory(MB)",
-	"磁盘(GB)":            "Disk(GB)",
-	"容器名称":              "Container name",
-	"容器名称不能为空":          "Container name cannot be empty",
-	"可用镜像":              "Available images",
-	"镜像选择无效":            "Invalid image selection",
-	"内存 (MB)":           "Memory (MB)",
-	"磁盘 (GB)":           "Disk (GB)",
-	"网络带宽 (Mbps)":       "Network bandwidth (Mbps)",
-	"月流量 (GB)":          "Monthly traffic (GB)",
-	"IO 速度 (MB/s)":      "IO speed (MB/s)",
+	"面板访问白名单":                "Panel access allowlist",
+	"系统信息":                   "System info",
+	"退出":                     "Exit",
+	"获取容器列表失败":               "Failed to get container list",
+	"暂无容器":                   "No containers",
+	"容器":                     "Container",
+	"名称":                     "Name",
+	"状态":                     "Status",
+	"镜像":                     "Image",
+	"内存(MB)":                 "Memory(MB)",
+	"磁盘(GB)":                 "Disk(GB)",
+	"容器名称":                   "Container name",
+	"容器名称不能为空":               "Container name cannot be empty",
+	"可用镜像":                   "Available images",
+	"镜像选择无效":                 "Invalid image selection",
+	"内存 (MB)":                "Memory (MB)",
+	"磁盘 (GB)":                "Disk (GB)",
+	"网络带宽 (Mbps)":            "Network bandwidth (Mbps)",
+	"月流量 (GB)":               "Monthly traffic (GB)",
+	"IO 速度 (MB/s)":           "IO speed (MB/s)",
 	"额外 NAT 端口，多个用逗号分隔": "Extra NAT ports, comma-separated",
 	"正在创建容器":            "Creating container",
 	"创建失败":              "Create failed",
@@ -125,8 +125,8 @@ var cliTranslations = map[string]string{
 	"启动 Web 面板失败":            "Failed to start web panel",
 	"Web 面板已启动":              "Web panel started",
 	"升级只会替换 /usr/local/bin/eyvescloud，并保留 /root/.eyvescloud 里的配置、容器数据和任务记录。": "The upgrade only replaces /usr/local/bin/eyvescloud and keeps configuration, container data, and task records under /root/.eyvescloud.",
-	"升级需要 root 权限。请使用: sudo eyvescloud cli":                             "Upgrade requires root privileges. Use: sudo eyvescloud cli",
-	"检查仓库":             "Checking repository",
+	"升级需要 root 权限。请使用: sudo eyvescloud cli":                                  "Upgrade requires root privileges. Use: sudo eyvescloud cli",
+	"检查仓库":     "Checking repository",
 	"检查最新版本失败": "Failed to check the latest version",
 	"GitHub Release 缺少 tag_name，无法判断最新版本。": "The release is missing tag_name; cannot determine the latest version.",
 	"最新版本":            "Latest version",
@@ -135,28 +135,28 @@ var cliTranslations = map[string]string{
 	"最新 Release 没有找到": "The latest release does not contain",
 	"无法自动升级。":         "automatic upgrade is unavailable.",
 	"当前已经是最新版本。":      "The current version is already the latest.",
-	"是否仍然重新安装最新版本？输入 reinstall 继续":          "Reinstall the latest version anyway? Type reinstall to continue",
-	"输入 upgrade 开始升级":                       "Type upgrade to start upgrade",
-	"已取消。":                                  "Cancelled.",
-	"升级失败":                                  "Upgrade failed",
-	"升级完成":                                  "Upgrade completed",
-	"原有数据已保留，Web 服务已重启。":                    "Existing data has been kept and the web service has been restarted.",
-	"Release API 返回": "Release API returned",
-	"GitHub API 被限流，已切换到备用检查方式。":            "GitHub API rate limit reached; switched to fallback check.",
-	"GitHub API 不可用，已切换到备用检查方式。":            "GitHub API is unavailable; switched to fallback check.",
-	"releases/latest 返回": "releases/latest returned",
-	"无法从 releases/latest 跳转结果解析最新版本": "Unable to parse the latest version from the GitHub releases/latest redirect",
-	"正在下载升级包...":                            "Downloading upgrade package...",
-	"正在解压升级包...":                            "Extracting upgrade package...",
-	"解压失败":                                  "Extraction failed",
-	"备份旧二进制失败":                              "Failed to back up old binary",
-	"旧版本已备份":                                "Old version backed up",
-	"正在替换二进制...":                            "Replacing binary...",
-	"停止 Web 服务失败，继续尝试替换":                    "Failed to stop web service; continuing replacement attempt",
-	"二进制已替换，但重启 Web 服务失败":                   "Binary was replaced, but restarting the web service failed",
-	"下载失败，HTTP":                             "Download failed, HTTP",
-	"升级包内未找到 eyvescloud 二进制":                     "No eyvescloud binary found in the upgrade package",
-	"将 /var/lib/lxc 里的容器导入 EYVESCLOUD 配置。":       "Import containers under /var/lib/lxc into EYVESCLOUD configuration.",
+	"是否仍然重新安装最新版本？输入 reinstall 继续":         "Reinstall the latest version anyway? Type reinstall to continue",
+	"输入 upgrade 开始升级":                      "Type upgrade to start upgrade",
+	"已取消。":                                 "Cancelled.",
+	"升级失败":                                 "Upgrade failed",
+	"升级完成":                                 "Upgrade completed",
+	"原有数据已保留，Web 服务已重启。":                   "Existing data has been kept and the web service has been restarted.",
+	"Release API 返回":                       "Release API returned",
+	"GitHub API 被限流，已切换到备用检查方式。":           "GitHub API rate limit reached; switched to fallback check.",
+	"GitHub API 不可用，已切换到备用检查方式。":           "GitHub API is unavailable; switched to fallback check.",
+	"releases/latest 返回":                   "releases/latest returned",
+	"无法从 releases/latest 跳转结果解析最新版本":       "Unable to parse the latest version from the GitHub releases/latest redirect",
+	"正在下载升级包...":                           "Downloading upgrade package...",
+	"正在解压升级包...":                           "Extracting upgrade package...",
+	"解压失败":                                 "Extraction failed",
+	"备份旧二进制失败":                             "Failed to back up old binary",
+	"旧版本已备份":                               "Old version backed up",
+	"正在替换二进制...":                           "Replacing binary...",
+	"停止 Web 服务失败，继续尝试替换":                   "Failed to stop web service; continuing replacement attempt",
+	"二进制已替换，但重启 Web 服务失败":                  "Binary was replaced, but restarting the web service failed",
+	"下载失败，HTTP":                            "Download failed, HTTP",
+	"升级包内未找到 eyvescloud 二进制":               "No eyvescloud binary found in the upgrade package",
+	"将 /var/lib/lxc 里的容器导入 EYVESCLOUD 配置。": "Import containers under /var/lib/lxc into EYVESCLOUD configuration.",
 	"导入后会保留真实 LXC 名称，Web 和 CLI 都能管理同一个容器。": "After import, real LXC names are kept and both Web and CLI can manage the same containers.",
 	"导入失败":            "Import failed",
 	"没有发现新的 ct-* 容器。": "No new ct-* containers found.",
@@ -164,36 +164,36 @@ var cliTranslations = map[string]string{
 	"个容器":             "containers",
 	"将删除 EYVESCLOUD 服务和 /usr/local/bin/eyvescloud。": "This will remove the EYVESCLOUD service and /usr/local/bin/eyvescloud.",
 	"同时会删除 /root/.eyvescloud、/var/lib/lxc、/var/lib/eyvescloud、镜像缓存、备份、临时文件、/swapfile 和 EYVESCLOUD 网络规则。": "It will also remove /root/.eyvescloud, /var/lib/lxc, /var/lib/eyvescloud, image caches, backups, temporary files, /swapfile, and EYVESCLOUD network rules.",
-	"卸载需要 root 权限。":                "Uninstall requires root privileges.",
+	"卸载需要 root 权限。":                     "Uninstall requires root privileges.",
 	"请运行: sudo eyvescloud cli --no-web": "Run: sudo eyvescloud cli --no-web",
-	"输入 uninstall 继续卸载":            "Type uninstall to continue uninstalling",
+	"输入 uninstall 继续卸载":                 "Type uninstall to continue uninstalling",
 	"EYVESCLOUD 已卸载。":                   "EYVESCLOUD has been uninstalled.",
 	"服务、二进制、配置、容器/虚拟机、本地镜像、缓存、备份、临时文件和 EYVESCLOUD 网络规则均已删除。":         "Service, binary, configuration, containers/VMs, local images, cache, backups, temporary files, and EYVESCLOUD network rules have been removed.",
 	"检测到非 EYVESCLOUD 虚拟机仍在使用 libvirt default 网络，已保留 default/virbr0。": "Non-EYVESCLOUD VMs are still using the libvirt default network, so default/virbr0 has been kept.",
-	"Web 面板重载跳过":        "Web panel reload skipped",
-	"Web 面板已重载并应用配置变更。": "Web panel reloaded and configuration changes applied.",
-	"读取容器状态失败":          "Failed to read container status",
-	"EYVESCLOUD 版本":          "EYVESCLOUD version",
-	"Web 端口":            "Web port",
-	"LXC 版本":            "LXC version",
-	"暂无可用容器":            "No available containers",
-	"忽略无效端口":            "Ignoring invalid port",
-	"面板访问来源策略":          "Panel access source policy",
-	"当前状态":              "Current status",
-	"已启用":               "enabled",
-	"已关闭":               "disabled",
-	"允许来源":              "Allowed sources",
-	"可信代理":              "Trusted proxies",
-	"启用或修改白名单":          "Enable or update allowlist",
-	"关闭白名单限制":           "Disable allowlist",
-	"取消":                "Cancel",
-	"允许的 IP/CIDR，多个用逗号分隔":      "Allowed IP/CIDR values, comma-separated",
+	"Web 面板重载跳过":          "Web panel reload skipped",
+	"Web 面板已重载并应用配置变更。":   "Web panel reloaded and configuration changes applied.",
+	"读取容器状态失败":            "Failed to read container status",
+	"EYVESCLOUD 版本":       "EYVESCLOUD version",
+	"Web 端口":              "Web port",
+	"LXC 版本":              "LXC version",
+	"暂无可用容器":              "No available containers",
+	"忽略无效端口":              "Ignoring invalid port",
+	"面板访问来源策略":            "Panel access source policy",
+	"当前状态":                "Current status",
+	"已启用":                 "enabled",
+	"已关闭":                 "disabled",
+	"允许来源":                "Allowed sources",
+	"可信代理":                "Trusted proxies",
+	"启用或修改白名单":            "Enable or update allowlist",
+	"关闭白名单限制":             "Disable allowlist",
+	"取消":                  "Cancel",
+	"允许的 IP/CIDR，多个用逗号分隔": "Allowed IP/CIDR values, comma-separated",
 	"可信代理 IP/CIDR，多个用逗号分隔，可留空": "Trusted proxy IP/CIDR values, comma-separated; optional",
-	"白名单配置无效":                  "Invalid allowlist configuration",
-	"保存访问来源策略失败":               "Failed to save access source policy",
-	"面板访问白名单已保存。":              "Panel access allowlist saved.",
-	"面板访问白名单已关闭。":              "Panel access allowlist disabled.",
-	"至少填写一个允许的 IP 或网段。":        "Enter at least one allowed IP address or network.",
+	"白名单配置无效":           "Invalid allowlist configuration",
+	"保存访问来源策略失败":        "Failed to save access source policy",
+	"面板访问白名单已保存。":       "Panel access allowlist saved.",
+	"面板访问白名单已关闭。":       "Panel access allowlist disabled.",
+	"至少填写一个允许的 IP 或网段。": "Enter at least one allowed IP address or network.",
 	"？": "? ",
 	"。": ". ",
 	"，": ", ",
@@ -742,14 +742,16 @@ func resolveRepoSource(repo string) repoSource {
 }
 
 // platformReleaseURLs 返回该平台的 Release API 端点。
-//   latest:  /releases/latest 或 tags fallback
-//   tag:     /releases/tags/{tag} 或对应路径
-//   list:    /releases?per_page=n 或 tags fallback
+//
+//	latest:  /releases/latest 或 tags fallback
+//	tag:     /releases/tags/{tag} 或对应路径
+//	list:    /releases?per_page=n 或 tags fallback
 func platformReleaseURLs(s repoSource) (latest, tag, list string) {
 	switch s.Platform {
 	case "codeberg":
 		latest = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases/latest", s.Owner, s.Repo)
-		tag = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases/%s", s.Owner, s.Repo, "%s")
+		// Gitea/Forgejo 按 tag 取发布必须带 /tags/ 段（/releases/{tag} 会 404）。
+		tag = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases/tags/%s", s.Owner, s.Repo, "%s")
 		list = fmt.Sprintf("https://codeberg.org/api/v1/repos/%s/%s/releases?per_page=%%d", s.Owner, s.Repo)
 	case "gitee":
 		latest = fmt.Sprintf("https://gitee.com/api/v5/repos/%s/%s/releases/latest", s.Owner, s.Repo)
@@ -928,7 +930,6 @@ func validateRepoSlug(repo string) bool {
 	}
 	return true
 }
-
 
 // validateReleaseTag 校验 release tag：禁止斜杠、空格与控制字符，
 // 防止拼进 /releases/tags/{tag} 时篡改请求路径。
@@ -2754,7 +2755,7 @@ func SelfUpdateToVersion(tag string) (newVersion string, upgraded bool, err erro
 	if tag == "" {
 		release, err = fetchLatestRelease(repo, assetName)
 	} else {
-		release, err = fetchReleaseByTag(repo, tag)
+		release, err = fetchReleaseByTagAnyPrefix(repo, tag)
 	}
 	if err != nil {
 		return "", false, fmt.Errorf("获取目标版本失败: %w", err)
@@ -2775,4 +2776,49 @@ func SelfUpdateToVersion(tag string) (newVersion string, upgraded bool, err erro
 		return "", false, err
 	}
 	return target, true, nil
+}
+
+// fetchReleaseByTagAnyPrefix 按 tag 取发布，兼容"版本号 vs v 前缀 tag"两种写法：
+// 主控下发的通常是 2.2.21 这类版本号，而发布 tag 习惯写 v2.2.21。
+// 先按原样查，404 再依次尝试加/去 v 前缀，避免"版本确实存在却取不到"。
+func fetchReleaseByTagAnyPrefix(repo, tag string) (*githubRelease, error) {
+	release, err := fetchReleaseByTag(repo, tag)
+	if err == nil {
+		return release, nil
+	}
+	candidates := []string{"v" + strings.TrimPrefix(tag, "v"), strings.TrimPrefix(tag, "v")}
+	for _, alt := range candidates {
+		if alt == tag {
+			continue
+		}
+		if r2, err2 := fetchReleaseByTag(repo, alt); err2 == nil {
+			return r2, nil
+		}
+	}
+	return nil, err
+}
+
+// ResolveReleaseTag 把版本号解析为**发布里的规范 tag**（供主控下发给被控）。
+//
+// 为什么需要：被控可能运行较旧版本，其 tag 查询不带前缀兼容（例如它只会按
+// "2.2.22" 精确匹配，而发布 tag 是 "v2.2.22"）。主控先把 tag 解析成发布里真实存在
+// 的写法（v2.2.22）再下发，就能让任何版本的被控都能取到目标发布。
+func ResolveReleaseTag(tag string) (string, error) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", fmt.Errorf("版本号为空")
+	}
+	repo := resolveUpdateRepo()
+	if !validateReleaseTag(tag) {
+		return "", fmt.Errorf("无效的版本标签: %q", tag)
+	}
+	release, err := fetchReleaseByTagAnyPrefix(repo, tag)
+	if err != nil {
+		return "", fmt.Errorf("目标版本 %s 没有对应发布产物（请先发布该版本）: %w", tag, err)
+	}
+	resolved := strings.TrimSpace(release.TagName)
+	if resolved == "" {
+		return "", fmt.Errorf("发布缺少 tag_name")
+	}
+	return resolved, nil
 }

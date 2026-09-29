@@ -130,9 +130,13 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write(data)
 		})(w, r)
 	case strings.HasPrefix(rest, "containers/") && r.Method == http.MethodPost:
-		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeContainerAction(w, r, nodeID, strings.TrimPrefix(rest, "containers/")) })(w, r)
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			handleNodeContainerAction(w, r, nodeID, strings.TrimPrefix(rest, "containers/"))
+		})(w, r)
 	case rest == "images" && r.Method == http.MethodGet:
-		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeImageProxy(w, r, nodeID, http.MethodGet, "/api/agent/images", nil) })(w, r)
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			handleNodeImageProxy(w, r, nodeID, http.MethodGet, "/api/agent/images", nil)
+		})(w, r)
 	case rest == "images/sync" && r.Method == http.MethodPost:
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeImageSyncProxy(w, r, nodeID) })(w, r)
 	case rest == "backup" && r.Method == http.MethodPost:
@@ -305,7 +309,6 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		"name":    name,
 	}})
 }
-
 
 func sameIPv4Prefix24(a, b string) bool {
 	ipa := net.ParseIP(a)
@@ -503,10 +506,10 @@ func handleNodeAdopt(w http.ResponseWriter, r *http.Request) {
 	allowInsecure := strings.HasPrefix(strings.ToLower(controllerURL), "http://")
 	payload, _ := json.Marshal(map[string]any{
 		"controller":          controllerURL,
-		"install_key":        node.InstallKey,
-		"pairing_key":        pairingKey,
-		"name":               name,
-		"address":            panelURL,
+		"install_key":         node.InstallKey,
+		"pairing_key":         pairingKey,
+		"name":                name,
+		"address":             panelURL,
 		"allow_insecure_http": allowInsecure,
 	})
 	client := &http.Client{Timeout: 20 * time.Second}
@@ -761,16 +764,16 @@ type heartbeatContainerSummary struct {
 	Status         string `json:"status"`
 	Virtualization string `json:"virtualization"`
 	// IP / SSHPort 由被控上报，供主控列表直接展示节点容器地址（此前主控侧为空）。
-	IP             string  `json:"ip,omitempty"`
-	SSHPort        int     `json:"ssh_port,omitempty"`
-	Suspended      bool    `json:"suspended,omitempty"`
-	VCPU           float64 `json:"vcpu"`
-	RAMMB          int     `json:"ram_mb"`
-	DiskGB         float64 `json:"disk_gb"`
-	ExpiresAt      string  `json:"expires_at,omitempty"`
-	TrafficUsedRX  int64   `json:"traffic_used_rx,omitempty"`
-	TrafficUsedTX  int64   `json:"traffic_used_tx,omitempty"`
-	TrafficLimit   int64   `json:"traffic_limit,omitempty"`
+	IP            string  `json:"ip,omitempty"`
+	SSHPort       int     `json:"ssh_port,omitempty"`
+	Suspended     bool    `json:"suspended,omitempty"`
+	VCPU          float64 `json:"vcpu"`
+	RAMMB         int     `json:"ram_mb"`
+	DiskGB        float64 `json:"disk_gb"`
+	ExpiresAt     string  `json:"expires_at,omitempty"`
+	TrafficUsedRX int64   `json:"traffic_used_rx,omitempty"`
+	TrafficUsedTX int64   `json:"traffic_used_tx,omitempty"`
+	TrafficLimit  int64   `json:"traffic_limit,omitempty"`
 	// 最新实时指标（agent 本机 metric 尾采样点）
 	CPU       float64 `json:"cpu,omitempty"`
 	Memory    float64 `json:"memory,omitempty"`
@@ -913,18 +916,20 @@ func appendAgentMetricPoint(s heartbeatContainerSummary) {
 // 主控地址烘焙进脚本：优先「面板绑定域名」（PanelDomain），否则按本次请求
 // Host 推导（curl 从哪台主控拉到脚本，脚本就回连哪台主控）。运行时探测
 // （--controller 覆盖 / SSH 来源 / 本机源 IP / 交互提示）仅作兜底：
-//   1) 用户通过 --controller 参数显式指定
-//   2) 硬编码主控地址（本 handler 烘焙，正常路径必命中）
-//   3) SSH 会话客户端 IP（SSH_CONNECTION 环境变量）
-//   4) 本机源 IP（ip route get）—— 仅地址推导失败时
-//   5) 交互式提示
+//  1. 用户通过 --controller 参数显式指定
+//  2. 硬编码主控地址（本 handler 烘焙，正常路径必命中）
+//  3. SSH 会话客户端 IP（SSH_CONNECTION 环境变量）
+//  4. 本机源 IP（ip route get）—— 仅地址推导失败时
+//  5. 交互式提示
 //
 // 也支持网络脚本一行命令（类似 Virtualizor / SolusVM 风格）：
-//   curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
+//
+//	curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
+//
 // 认证支持两条路径：
-//   1) X-Install-Key 请求头携带有效 install_key 且属于该节点
-//      （F4：key 走 header 而非 URL query，避免落入反代访问日志/浏览器历史/Referer）
-//   2) 管理员 node:write scope（面板下载）
+//  1. X-Install-Key 请求头携带有效 install_key 且属于该节点
+//     （F4：key 走 header 而非 URL query，避免落入反代访问日志/浏览器历史/Referer）
+//  2. 管理员 node:write scope（面板下载）
 func handleNodeInstallScript(w http.ResponseWriter, r *http.Request, nodeID string) {
 	if r.Method != http.MethodGet {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -1031,8 +1036,8 @@ func handleNodeInstallScriptSHA256(w http.ResponseWriter, r *http.Request, nodeI
 // 注意：模板中所有 %s 都处于**双引号**上下文（INSTALL_KEY="%s" 等），必须用
 // shellDQ（双引号转义）而非 shellEscape（单引号包裹）。此前误用 shellEscape
 // 会生成 INSTALL_KEY="'<key>'"（值带字面单引号，后续 X-Install-Key 认证失败）、
-// 以及 [ -n "''" ]（非空恒真）导致 CONTROLLER 被赋成字面量 ''，curl 报
-// "Could not resolve host: ''"。
+// 以及 [ -n "”" ]（非空恒真）导致 CONTROLLER 被赋成字面量 ”，curl 报
+// "Could not resolve host: ”"。
 func buildAgentInstallScript(controller, installKey, nodeName, defaultAddr string) string {
 	nameSQ := shellDQ(nodeName)
 	addrSQ := shellDQ(defaultAddr)
@@ -1176,12 +1181,22 @@ esac
 
 echo "==> [1/3] 下载 EyvesCloud 二进制"
 HDR_FILE="$(mktemp)"
-trap 'rm -f "$HDR_FILE"' EXIT
+TARGET_BIN="/usr/local/bin/eyvescloud"
+# 下载到临时文件再原子替换：直接覆盖正在运行的二进制会返回 ETXTBSY
+# （升级已安装节点时必然命中）；rename 不受此限制，运行中的进程继续使用旧 inode，
+# 待本脚本最后一步重启服务后切换到新二进制。
+TMP_BIN="$(mktemp "$TARGET_BIN.new.XXXXXX" 2>/dev/null || mktemp /tmp/eyvescloud.new.XXXXXX)"
+cleanup_tmp() { rm -f "$HDR_FILE" "$TMP_BIN"; }
+trap cleanup_tmp EXIT
 # F4：install_key 走 X-Install-Key 头，不进 URL（避免落入反代访问日志/Referer）。
-if ! curl -fsSL -o /usr/local/bin/eyvescloud -D "$HDR_FILE" \
+if ! curl -fsSL -o "$TMP_BIN" -D "$HDR_FILE" \
   -H "X-Install-Key: $INSTALL_KEY" \
   "$CONTROLLER/api/nodes/binary?arch=$ARCH_NORM"; then
   echo "下载失败，请检查：主控地址是否正确、install_key 是否有效、网络是否可达"
+  exit 1
+fi
+if [ ! -s "$TMP_BIN" ]; then
+  echo "下载产物为空（主控返回空文件），已中止"
   exit 1
 fi
 
@@ -1190,20 +1205,23 @@ fi
 # 注：Go 侧 Header.Set 输出为规范化的 X-Binary-Sha256，此处用 tolower 匹配保持可移植。
 EXPECTED_SHA="$(awk 'tolower($1)=="x-binary-sha256:" {gsub(/\r/,""); print $2}' "$HDR_FILE")"
 if [ -n "$EXPECTED_SHA" ]; then
-  ACTUAL_SHA="$(sha256sum /usr/local/bin/eyvescloud 2>/dev/null | awk '{print $1}')"
+  ACTUAL_SHA="$(sha256sum "$TMP_BIN" 2>/dev/null | awk '{print $1}')"
   if [ -z "$ACTUAL_SHA" ] || [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
     echo "二进制 SHA256 校验失败（期望 $EXPECTED_SHA，实际 ${ACTUAL_SHA:-无法计算}），已删除"
-    rm -f /usr/local/bin/eyvescloud
     exit 1
   fi
   echo "SHA256 校验通过: $ACTUAL_SHA"
 else
   echo "警告：主控未返回 X-Binary-SHA256，跳过完整性校验（建议升级主控）" >&2
 fi
-chmod +x /usr/local/bin/eyvescloud
+chmod +x "$TMP_BIN"
+# 原子替换（旧二进制被覆盖前先备份失败不影响：rename 成功即新版本就位）。
+mv -f "$TMP_BIN" "$TARGET_BIN"
+chmod +x "$TARGET_BIN"
+TMP_BIN="" # 已消费，避免 trap 误删
 
 echo "==> [1/3] 校验二进制"
-/usr/local/bin/eyvescloud --version >/dev/null 2>&1 \
+"$TARGET_BIN" --version >/dev/null 2>&1 \
   || { echo "下载的二进制无法运行，架构或产物不匹配（本机 $ARCH）"; exit 1; }
 
 echo "==> [2/3] 注册被控节点"
@@ -1234,7 +1252,24 @@ RestartSec=5
 WantedBy=multi-user.target
 UNITEOF
 systemctl daemon-reload
-systemctl enable --now eyvescloud-agent
+
+# 同机部署保护：若本机已安装面板（eyvescloud.service），则**不启用** agent 服务——
+# agent 会再起一个面板并抢占同一端口（8999），谁先绑定谁赢，另一个无限重启。
+# 同机场景下被控职责由面板进程承担（节点 token + 心跳 + 自更新），无需 agent 进程。
+# 纯被控节点（没有面板单元）才启用 agent 服务。
+if [ -f /etc/systemd/system/eyvescloud.service ] || [ -f /usr/lib/systemd/system/eyvescloud.service ]; then
+  systemctl disable eyvescloud-agent >/dev/null 2>&1 || true
+  # 关键：面板进程仍在使用"替换前"的旧 inode（rename 不影响已运行进程），
+  # 必须重启面板服务，新二进制才真正生效（否则心跳/新端点仍是旧版本行为）。
+  systemctl restart eyvescloud >/dev/null 2>&1 || true
+  echo ""
+  echo "提示：检测到本机已安装面板（eyvescloud.service）。"
+  echo "      节点职责已由面板进程承担（心跳 + 自更新），agent 服务保持停用；"
+  echo "      已重启面板服务以生效新二进制。"
+  echo "      如需改为独立 agent 部署，请手动 systemctl enable --now eyvescloud-agent。"
+else
+  systemctl enable --now eyvescloud-agent
+fi
 
 echo ""
 echo "=============================================="
@@ -1244,7 +1279,7 @@ echo "  主控: $CONTROLLER"
 echo "  请回到主控面板查看节点状态"
 echo "=============================================="
 `,
-	installKeySQ,
+		installKeySQ,
 		nameSQ, addrSQ,
 		hardController, hardController,
 	)
@@ -1506,11 +1541,11 @@ func handleNodeDrain(w http.ResponseWriter, r *http.Request, nodeID string) {
 			continue
 		}
 		candidates = append(candidates, map[string]interface{}{
-			"id":             n.ID,
-			"name":           n.Name,
-			"region_id":      n.RegionID,
-			"ram_free_mb":    n.RAMTotalMB - n.RAMUsedMB,
-			"disk_free_gb":   n.DiskTotalGB - n.DiskUsedGB,
+			"id":              n.ID,
+			"name":            n.Name,
+			"region_id":       n.RegionID,
+			"ram_free_mb":     n.RAMTotalMB - n.RAMUsedMB,
+			"disk_free_gb":    n.DiskTotalGB - n.DiskUsedGB,
 			"container_count": n.ContainerCount,
 		})
 	}

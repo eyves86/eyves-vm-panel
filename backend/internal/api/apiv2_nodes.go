@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"eyvescloud/internal/cli"
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/scheduler"
 	"eyvescloud/internal/version"
@@ -230,10 +231,10 @@ func v2NodesList(w http.ResponseWriter, r *http.Request) {
 type v2CreateNodeRequest struct {
 	Name          string `json:"name"`
 	Address       string `json:"address"`
-	Mode          string `json:"mode"`       // quick（默认，一键接入）| manual（手工放置 agent.json）
+	Mode          string `json:"mode"` // quick（默认，一键接入）| manual（手工放置 agent.json）
 	TLSSkipVerify bool   `json:"tls_skip_verify"`
 	AllowPrivate  bool   `json:"allow_private"`
-	BindIP        string `json:"bind_ip"`    // 可选：把一次性密钥绑定到被控出口 IP
+	BindIP        string `json:"bind_ip"` // 可选：把一次性密钥绑定到被控出口 IP
 	RegionID      string `json:"region_id"`
 	NodeGroupID   string `json:"node_group_id"`
 }
@@ -588,9 +589,9 @@ func v2NodeInstallKey(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256([]byte(script))
 	auditRequest(r, "api.v2.node.install_key", node.Name, "换发安装密钥", true, "")
 	v2OK(w, r, map[string]interface{}{
-		"node_id":        node.ID,
-		"install_key":    installKey,
-		"expires_at":     time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
+		"node_id":     node.ID,
+		"install_key": installKey,
+		"expires_at":  time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
 		"install_command": fmt.Sprintf("curl -fsSL -H \"X-Install-Key: %s\" %s/api/nodes/%s/install-script | sudo bash",
 			installKey, baseURL, node.ID),
 		"sha256": hex.EncodeToString(sum[:]),
@@ -1001,6 +1002,17 @@ func v2NodesUpgrade(w http.ResponseWriter, r *http.Request) {
 		v2BadRequest(w, r, "无效的目标版本", map[string]string{"target_version": target})
 		return
 	}
+	// 主控先把版本号解析为发布里的规范 tag（如 2.2.23 → v2.2.23）再下发：
+	// 被控可能运行较旧版本，其 tag 查询不带前缀兼容；由主控解析可让任何版本的
+	// 被控都取到目标发布。解析失败说明该版本尚无发布产物，直接返回明确原因。
+	if !req.CheckOnly {
+		resolved, resolveErr := cli.ResolveReleaseTag(target)
+		if resolveErr != nil {
+			v2Precondition(w, r, resolveErr.Error())
+			return
+		}
+		target = resolved
+	}
 
 	// 选定目标节点：显式列表，或全部节点。
 	config.AppConfigMu.RLock()
@@ -1021,6 +1033,11 @@ func v2NodesUpgrade(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "没有匹配的节点")
 		return
 	}
+
+	// 版本兼容策略：被控版本低于「Codeberg tag 端点修复」引入的版本时，其自身按 tag
+	// 查询不兼容 v 前缀写法（旧端点缺 /tags/ 段，必 404）——对这类节点改下发
+	// 「最新发布版本」（空 target），先把它升到带修复的版本，后续即可精确升级。
+	const v2TagCompatMinVersion = "2.2.24"
 
 	accepted := make([]map[string]interface{}, 0, len(nodes))
 	skipped := make([]map[string]interface{}, 0)
@@ -1046,8 +1063,14 @@ func v2NodesUpgrade(w http.ResponseWriter, r *http.Request) {
 			})
 			continue
 		}
+		payloadTarget := target
+		compatNote := ""
+		if !req.CheckOnly && v2VersionLess(n.Version, v2TagCompatMinVersion) {
+			payloadTarget = ""
+			compatNote = "节点版本较旧（< " + v2TagCompatMinVersion + "），已按「最新发布版本」下发以完成首次升级"
+		}
 		payload, _ := json.Marshal(map[string]interface{}{
-			"target_version": target,
+			"target_version": payloadTarget,
 			"check_only":     req.CheckOnly,
 		})
 		data, status, err := proxyNodeRequest(r, n, http.MethodPost, "/api/agent/self-update", bytes.NewReader(payload))
@@ -1056,16 +1079,33 @@ func v2NodesUpgrade(w http.ResponseWriter, r *http.Request) {
 			if len(data) > 0 {
 				msg = strings.TrimSpace(string(data))
 			}
-			failed = append(failed, map[string]interface{}{
+			// 引导提示：老版本被控尚无自更新端点（404/405），必须先在节点上手动升级一次。
+			// 这是升级能力的引导限制（类似 kubelet 需手动 bootstrap 才能纳入滚动升级）。
+			hint := ""
+			if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+				hint = "该节点版本过旧，尚未提供自更新端点；请先在其「节点管理 → 换发安装密钥」生成一次性命令，" +
+					"在节点上执行一次安装脚本完成初次升级，之后即可使用一键升级"
+			}
+			entry := map[string]interface{}{
 				"node_id": n.ID, "node_name": n.Name, "current_version": n.Version, "error": msg,
-			})
+			}
+			if hint != "" {
+				entry["hint"] = hint
+				entry["needs_manual_bootstrap"] = true
+			}
+			failed = append(failed, entry)
 			continue
 		}
-		accepted = append(accepted, map[string]interface{}{
+		entry := map[string]interface{}{
 			"node_id": n.ID, "node_name": n.Name,
 			"current_version": n.Version, "target_version": target,
 			"check_only": req.CheckOnly,
-		})
+		}
+		if compatNote != "" {
+			entry["note"] = compatNote
+			entry["bootstrap_mode"] = "latest-release"
+		}
+		accepted = append(accepted, entry)
 	}
 
 	action := "upgrade"
@@ -1100,4 +1140,32 @@ func v2ValidVersionTag(tag string) bool {
 		}
 	}
 	return true
+}
+
+// v2VersionLess 比较版本号字面量（如 "2.2.19" < "2.2.24"）：忽略 v 前缀与
+// 非数字后缀，缺省段按 0 处理。仅用于升级路径的"老版本判定"，不追求 semver 全语义。
+func v2VersionLess(a, b string) bool {
+	parse := func(v string) [3]int {
+		var out [3]int
+		v = strings.TrimPrefix(strings.TrimSpace(strings.ToLower(v)), "v")
+		parts := strings.Split(v, ".")
+		for i := 0; i < len(out) && i < len(parts); i++ {
+			num := 0
+			for _, ch := range parts[i] {
+				if ch < '0' || ch > '9' {
+					break
+				}
+				num = num*10 + int(ch-'0')
+			}
+			out[i] = num
+		}
+		return out
+	}
+	pa, pb := parse(a), parse(b)
+	for i := 0; i < 3; i++ {
+		if pa[i] != pb[i] {
+			return pa[i] < pb[i]
+		}
+	}
+	return false
 }
