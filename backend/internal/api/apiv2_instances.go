@@ -36,8 +36,10 @@ package api
 // 字段契约见 docs/API-V2.md。
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -127,8 +129,8 @@ func v2InstanceView(c config.Container) map[string]interface{} {
 		"ssh_port":       c.SSHPort,
 		"mac_address":    c.MACAddress,
 		"bandwidth": map[string]interface{}{
-			"down_mbps": c.NetworkDownMbps,
-			"up_mbps":   c.NetworkUpMbps,
+			"down_mbps":  c.NetworkDownMbps,
+			"up_mbps":    c.NetworkUpMbps,
 			"total_mbps": c.NetworkBWMbps,
 		},
 		"traffic": map[string]interface{}{
@@ -150,29 +152,29 @@ func v2InstanceView(c config.Container) map[string]interface{} {
 		"rescue_enabled":  c.RescueEnabled,
 		"snapshot_limit":  c.SnapshotLimit,
 		"snapshot_schedule": map[string]interface{}{
-			"enabled":      c.SnapshotScheduleEnabled,
+			"enabled":        c.SnapshotScheduleEnabled,
 			"interval_hours": c.SnapshotScheduleIntervalHours,
-			"time":         c.SnapshotScheduleTime,
-			"last_run":     v2Time(c.SnapshotScheduleLastRun),
-			"next_run":     v2Time(c.SnapshotScheduleNextRun),
+			"time":           c.SnapshotScheduleTime,
+			"last_run":       v2Time(c.SnapshotScheduleLastRun),
+			"next_run":       v2Time(c.SnapshotScheduleNextRun),
 		},
-		"expires_at":  v2Time(c.ExpiresAt),
-		"created_at":  v2Time(c.CreatedAt),
-		"owner":       idcOwnerNameV2(c),
-		"tenant":      c.Tenant,
-		"nat_ports":   c.PortMappings,
-		"port_limit":  c.PortMappingLimit,
-		"policy_blocked": c.PolicyBlocked,
+		"expires_at":       v2Time(c.ExpiresAt),
+		"created_at":       v2Time(c.CreatedAt),
+		"owner":            idcOwnerNameV2(c),
+		"tenant":           c.Tenant,
+		"nat_ports":        c.PortMappings,
+		"port_limit":       c.PortMappingLimit,
+		"policy_blocked":   c.PolicyBlocked,
 		"firewall_enabled": c.FirewallEnabled,
 	}
 	if c.IsKVM() {
 		view["kvm"] = map[string]interface{}{
-			"domain":      c.VirshName(),
-			"vnc_port":    c.VNCPort,
-			"boot_order":  c.HVMBootOrder,
-			"nic_driver":  c.HVMNicDriver,
+			"domain":       c.VirshName(),
+			"vnc_port":     c.VNCPort,
+			"boot_order":   c.HVMBootOrder,
+			"nic_driver":   c.HVMNicDriver,
 			"acceleration": c.HVMAcceleration,
-			"disk_image":  c.DiskImage,
+			"disk_image":   c.DiskImage,
 		}
 	}
 	return view
@@ -416,38 +418,38 @@ func v2InstanceGet(w http.ResponseWriter, r *http.Request) {
 
 // v2CreateInstanceRequest 创建实例请求体（v2 契约）。
 type v2CreateInstanceRequest struct {
-	Name         string  `json:"name"`
-	Runtime      string  `json:"runtime"`       // lxc | kvm（默认 lxc）
-	TemplateID   string  `json:"template_id"`   // 镜像/模板 ID（必填）
-	NodeID       string  `json:"node_id"`       // 目标节点；空 = 本机；"auto" = 调度器选择
-	NodePriority int     `json:"node_priority"` // 调度偏好：1 均衡(默认) 2 负载最低 3 内存最空
-	Count        int     `json:"count"`         // 批量数量（默认 1，上限 50）
-	VCPU         float64 `json:"vcpu"`
-	MemoryMB     int     `json:"memory_mb"`
-	DiskGB       float64 `json:"disk_gb"`
-	DataDiskGB   float64 `json:"data_disk_gb"`
-	DownMbps     int     `json:"down_mbps"`
-	UpMbps       int     `json:"up_mbps"`
-	TrafficQuotaGB int   `json:"traffic_quota_gb"`
-	TrafficMode  string  `json:"traffic_mode"`  // total | in_out
-	SSHPort      int     `json:"ssh_port"`      // 0 = 自动分配
-	NATPorts     int     `json:"nat_ports"`     // NAT 端口映射数量
-	AssignNAT    *bool   `json:"assign_nat"`    // 默认 true
-	PublicIPv4Count int  `json:"public_ipv4_count"`
-	IPv6Count    int     `json:"ipv6_count"`
-	StoragePoolID string `json:"storage_pool_id"`
-	Auth         struct {
-		Mode      string `json:"mode"`       // password | ssh_key
-		Password  string `json:"password"`   // 留空自动生成
+	Name            string  `json:"name"`
+	Runtime         string  `json:"runtime"`       // lxc | kvm（默认 lxc）
+	TemplateID      string  `json:"template_id"`   // 镜像/模板 ID（必填）
+	NodeID          string  `json:"node_id"`       // 目标节点；空 = 本机；"auto" = 调度器选择
+	NodePriority    int     `json:"node_priority"` // 调度偏好：1 均衡(默认) 2 负载最低 3 内存最空
+	Count           int     `json:"count"`         // 批量数量（默认 1，上限 50）
+	VCPU            float64 `json:"vcpu"`
+	MemoryMB        int     `json:"memory_mb"`
+	DiskGB          float64 `json:"disk_gb"`
+	DataDiskGB      float64 `json:"data_disk_gb"`
+	DownMbps        int     `json:"down_mbps"`
+	UpMbps          int     `json:"up_mbps"`
+	TrafficQuotaGB  int     `json:"traffic_quota_gb"`
+	TrafficMode     string  `json:"traffic_mode"` // total | in_out
+	SSHPort         int     `json:"ssh_port"`     // 0 = 自动分配
+	NATPorts        int     `json:"nat_ports"`    // NAT 端口映射数量
+	AssignNAT       *bool   `json:"assign_nat"`   // 默认 true
+	PublicIPv4Count int     `json:"public_ipv4_count"`
+	IPv6Count       int     `json:"ipv6_count"`
+	StoragePoolID   string  `json:"storage_pool_id"`
+	Auth            struct {
+		Mode      string   `json:"mode"`     // password | ssh_key
+		Password  string   `json:"password"` // 留空自动生成
 		SSHKeyIDs []string `json:"ssh_key_ids"`
 	} `json:"auth"`
-	CloudInit    string   `json:"cloud_init"`
-	SnapshotLimit int     `json:"snapshot_limit"`
-	Owner        string   `json:"owner"`     // 子用户名（可选）
-	Tenant       string   `json:"tenant"`    // 租户
-	Remark       string   `json:"remark"`
-	ExpiresAt    string   `json:"expires_at"` // RFC3339 或 YYYY-MM-DD
-	FirewallEnabled bool  `json:"firewall_enabled"`
+	CloudInit       string `json:"cloud_init"`
+	SnapshotLimit   int    `json:"snapshot_limit"`
+	Owner           string `json:"owner"`  // 子用户名（可选）
+	Tenant          string `json:"tenant"` // 租户
+	Remark          string `json:"remark"`
+	ExpiresAt       string `json:"expires_at"` // RFC3339 或 YYYY-MM-DD
+	FirewallEnabled bool   `json:"firewall_enabled"`
 }
 
 func v2InstancesCreate(w http.ResponseWriter, r *http.Request) {
@@ -738,19 +740,19 @@ func v2NodePriorityPolicy(priority int) scheduler.Policy {
 
 // v2InstanceUpdateRequest 修改实例（PATCH 语义：只改传入字段）。
 type v2InstanceUpdateRequest struct {
-	VCPU         *float64 `json:"vcpu"`
-	MemoryMB     *int     `json:"memory_mb"`
-	DiskGB       *float64 `json:"disk_gb"`
-	DataDiskGB   *float64 `json:"data_disk_gb"`
-	DownMbps     *int     `json:"down_mbps"`
-	UpMbps       *int     `json:"up_mbps"`
-	TrafficQuotaGB *int   `json:"traffic_quota_gb"`
-	CPULimit     *int     `json:"cpu_percent"`
-	SnapshotLimit *int    `json:"snapshot_limit"`
-	Remark       *string  `json:"remark"`
-	ExpiresAt    *string  `json:"expires_at"`
-	Tenant       *string  `json:"tenant"`
-	FirewallEnabled *bool `json:"firewall_enabled"`
+	VCPU            *float64 `json:"vcpu"`
+	MemoryMB        *int     `json:"memory_mb"`
+	DiskGB          *float64 `json:"disk_gb"`
+	DataDiskGB      *float64 `json:"data_disk_gb"`
+	DownMbps        *int     `json:"down_mbps"`
+	UpMbps          *int     `json:"up_mbps"`
+	TrafficQuotaGB  *int     `json:"traffic_quota_gb"`
+	CPULimit        *int     `json:"cpu_percent"`
+	SnapshotLimit   *int     `json:"snapshot_limit"`
+	Remark          *string  `json:"remark"`
+	ExpiresAt       *string  `json:"expires_at"`
+	Tenant          *string  `json:"tenant"`
+	FirewallEnabled *bool    `json:"firewall_enabled"`
 }
 
 func v2InstanceUpdate(w http.ResponseWriter, r *http.Request) {
@@ -802,7 +804,6 @@ func v2InstanceUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 		if false {
 
-
 		}
 		if req.SnapshotLimit != nil {
 			target.SnapshotLimit = idcLimitFromValueV2(*req.SnapshotLimit)
@@ -851,7 +852,19 @@ func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 		v2Precondition(w, r, "实例已锁定，请先解锁")
 		return
 	}
-	taskIDs := globalQueue.EnqueueBatchWithAudit("destroy", []int{c.ID}, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	// 节点上的实例：删除由被控执行（agent 的 destroy 动作），主控不排本地任务。
+	if handled, nodeName, err := v2ProxyInstanceToNode(r, c, "destroy", nil); handled {
+		if err != nil {
+			v2Upstream(w, r, err.Error())
+			return
+		}
+		auditRequest(r, "api.v2.instance.delete", c.Name, "删除实例（节点 "+nodeName+"）", true, "")
+		v2Accepted(w, r, map[string]interface{}{
+			"id": c.ID, "name": c.Name, "node_id": c.NodeID, "node_name": nodeName, "deleted_on_node": true,
+		})
+		return
+	}
+	taskIDs := globalQueue.EnqueueBatchWithAudit(TaskDelete, []int{c.ID}, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
 	auditRequest(r, "api.v2.instance.delete", c.Name, "删除实例", true, "")
 	v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "id": c.ID, "name": c.Name})
 }
@@ -940,7 +953,8 @@ func taskActionOfV2(action string) TaskType {
 	case "restart":
 		return "restart"
 	case "hardoff":
-		return "destroy"
+		// 本机走队列的停止流程（被控侧 hardoff 会映射为 agent 的 destroy，即真正强制停止）。
+		return "stop"
 	case "hard_reboot":
 		return "restart"
 	}
@@ -1103,12 +1117,12 @@ func v2InstanceConsole(w http.ResponseWriter, r *http.Request) {
 			scheme = "wss"
 		}
 		v2OK(w, r, map[string]interface{}{
-			"type":      "ssh",
-			"ticket":    ticket,
-			"expires_in": 60,
-			"url":       fmt.Sprintf("%s://%s/api/ssh?container=%s", scheme, r.Host, urlQueryEscapeV2(c.Name)),
+			"type":        "ssh",
+			"ticket":      ticket,
+			"expires_in":  60,
+			"url":         fmt.Sprintf("%s://%s/api/ssh?container=%s", scheme, r.Host, urlQueryEscapeV2(c.Name)),
 			"subprotocol": "eyvescloud-ticket." + ticket,
-			"container": c.Name,
+			"container":   c.Name,
 		})
 	case "vnc":
 		if !v2RequireScope(w, r, "terminal:vnc") {
@@ -1182,7 +1196,7 @@ func v2InstanceUsage(w http.ResponseWriter, r *http.Request) {
 		percent = round2(usedGB / float64(c.MonthlyTrafficGB) * 100)
 	}
 	v2OK(w, r, map[string]interface{}{
-		"id":              c.ID,
+		"id":               c.ID,
 		"traffic_quota_gb": c.MonthlyTrafficGB,
 		"traffic_used_gb":  round2(usedGB),
 		"traffic_rx_gb":    round2(float64(c.TrafficUsedRX) / 1024 / 1024 / 1024),
@@ -1606,6 +1620,33 @@ func v2InstanceNetworkUpdate(w http.ResponseWriter, r *http.Request) {
 
 // v2InstancesBatch POST /instances/batch {action, ids: [...]}
 // action: power（需 params.action）/ delete / reinstall（需 template_id）
+// v2ProxyInstanceToNode 把实例动作转发给所属被控节点。
+//
+// 返回 handled=true 表示实例在节点上（已由被控执行），调用方**不要**再排本地任务
+// ——本地队列只认识本机容器，对节点容器排任务只会得到一个必然失败的任务。
+func v2ProxyInstanceToNode(r *http.Request, c *config.Container, agentAction string, body []byte) (bool, string, error) {
+	if c == nil || c.NodeID == "" {
+		return false, "", nil
+	}
+	node, ok := config.FindNode(c.NodeID)
+	if !ok || node.Address == "" {
+		return true, "", fmt.Errorf("实例所属节点不可用（%s）", c.NodeID)
+	}
+	var reader io.Reader
+	if len(body) > 0 {
+		reader = bytes.NewReader(body)
+	}
+	data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, agentAction), reader)
+	if err != nil {
+		return true, node.Name, fmt.Errorf("代理节点失败：%w", err)
+	}
+	if status >= 300 {
+		return true, node.Name, fmt.Errorf("节点执行失败（HTTP %d）：%s", status, strings.TrimSpace(string(data)))
+	}
+	return true, node.Name, nil
+}
+
 func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 	if !v2RequireScope(w, r, "container:power") {
 		return
@@ -1647,32 +1688,40 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 		v2Precondition(w, r, "没有可操作的实例")
 		return
 	}
-
+	// 解析动作 → 本机任务类型 + 被控 agent 动作 + 请求体。
+	var (
+		taskType    TaskType
+		agentAction string
+		proxyBody   []byte
+	)
 	switch action {
 	case "power":
 		var params struct {
 			Action string `json:"action"`
 		}
 		_ = json.Unmarshal(req.Params, &params)
-		taskAction, valid := map[string]string{
-			"start": "start", "stop": "stop", "shutdown": "stop", "restart": "restart",
-			"hard-stop": "hardoff", "hard-restart": "hard_reboot",
+		spec, valid := map[string]struct {
+			task  TaskType
+			agent string
+		}{
+			"start":        {TaskStart, "start"},
+			"stop":         {TaskStop, "stop"},
+			"shutdown":     {TaskStop, "stop"},
+			"restart":      {TaskRestart, "restart"},
+			"hard-stop":    {TaskStop, "destroy"},
+			"hard-restart": {TaskRestart, "restart"},
 		}[strings.ToLower(strings.TrimSpace(params.Action))]
 		if !valid {
 			v2BadRequest(w, r, "params.action 取值非法",
 				map[string]string{"action": "start, stop, shutdown, restart, hard-stop, hard-restart"})
 			return
 		}
-		taskIDs := globalQueue.EnqueueBatchWithAudit(taskActionOfV2(taskAction), allowed, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
-		auditRequest(r, "api.v2.instances.batch.power", fmt.Sprintf("%v", allowed), "批量 "+params.Action, true, "")
-		v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "count": len(allowed), "skipped": skipped})
+		taskType, agentAction = spec.task, spec.agent
 	case "delete":
 		if !v2RequireScope(w, r, "container:create") {
 			return
 		}
-		taskIDs := globalQueue.EnqueueBatchWithAudit("destroy", allowed, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
-		auditRequest(r, "api.v2.instances.batch.delete", fmt.Sprintf("%v", allowed), "批量删除", true, "")
-		v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "count": len(allowed), "skipped": skipped})
+		taskType, agentAction = TaskDelete, "destroy"
 	case "reinstall":
 		if !v2RequireScope(w, r, "container:reinstall") {
 			return
@@ -1681,10 +1730,55 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 			v2BadRequest(w, r, "缺少必填字段", map[string]string{"template_id": "批量重装必填"})
 			return
 		}
-		taskIDs := globalQueue.EnqueueBatchWithAudit("reinstall", allowed, req.TemplateID, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
-		auditRequest(r, "api.v2.instances.batch.reinstall", fmt.Sprintf("%v", allowed), "批量重装 "+req.TemplateID, true, "")
-		v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "count": len(allowed), "skipped": skipped})
+		taskType, agentAction = TaskReinstall, "reinstall"
+		var params struct {
+			Password string `json:"password"`
+		}
+		if len(req.Params) > 0 {
+			_ = json.Unmarshal(req.Params, &params)
+		}
+		proxyBody, _ = json.Marshal(map[string]string{
+			"template_id": strings.TrimSpace(req.TemplateID),
+			"password":    strings.TrimSpace(params.Password),
+		})
 	default:
 		v2BadRequest(w, r, "action 取值非法", map[string]string{"action": "power, delete, reinstall"})
+		return
 	}
+
+	// 分流执行：节点上的实例转发给被控（本地队列不认识节点容器），本机实例入队异步执行。
+	// 两类结果分开返回，便于集成方对账。
+	proxied := []map[string]interface{}{}
+	failures := []map[string]interface{}{}
+	localIDs := []int{}
+	for _, id := range allowed {
+		c := config.FindContainer(id)
+		if c == nil {
+			continue
+		}
+		if c.NodeID == "" {
+			localIDs = append(localIDs, id)
+			continue
+		}
+		handled, nodeName, err := v2ProxyInstanceToNode(r, c, agentAction, proxyBody)
+		if !handled {
+			localIDs = append(localIDs, id)
+			continue
+		}
+		if err != nil {
+			failures = append(failures, map[string]interface{}{"id": id, "name": c.Name, "error": err.Error()})
+			continue
+		}
+		proxied = append(proxied, map[string]interface{}{"id": id, "name": c.Name, "node": nodeName})
+	}
+	var taskIDs []string
+	if len(localIDs) > 0 {
+		taskIDs = globalQueue.EnqueueBatchWithAudit(taskType, localIDs, req.TemplateID, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	}
+	auditRequest(r, "api.v2.instances.batch."+action, fmt.Sprintf("%v", allowed),
+		fmt.Sprintf("批量 %s（本机 %d / 节点 %d / 失败 %d）", action, len(localIDs), len(proxied), len(failures)), true, "")
+	v2Accepted(w, r, map[string]interface{}{
+		"action": action, "task_ids": taskIDs, "local_count": len(localIDs),
+		"proxied": proxied, "failures": failures, "skipped": skipped,
+	})
 }
