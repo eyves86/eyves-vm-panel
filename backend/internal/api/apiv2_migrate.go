@@ -81,16 +81,35 @@ func v2InstanceMigratePlan(w http.ResponseWriter, r *http.Request) {
 	if c.Locked {
 		blockers = append(blockers, "源实例已锁定，请先解锁")
 	}
+	// 存储视角的迁移可行性（集成方最关心"数据会不会过去"）：
+	//   - 共享存储（NFS/CephFS/RBD/共享 dir）：目标节点能看到同一份数据，
+	//     理论上可免传输迁移；但"接管既有 rootfs"能力尚未实现，当前仍走配置重建。
+	//   - 本地存储：必须自行同步数据。
+	pool := config.StoragePoolByID(c.StoragePoolID)
+	sourcePoolShared := pool != nil && pool.Shared
+	dataPlan := map[string]interface{}{
+		"mode":                  "config-only",
+		"data_transferred":      false,
+		"source_pool_id":        c.StoragePoolID,
+		"source_pool_shared":    sourcePoolShared,
+		"target_can_reuse_data": false,
+	}
+	if sourcePoolShared {
+		dataPlan["note"] = "源实例位于共享存储池：目标节点可直接访问同一份数据，但接管既有 rootfs 的能力尚未实现，当前仍按配置重建处理"
+	} else {
+		dataPlan["note"] = "源实例位于本地存储：配置迁移不复制磁盘数据，请自行同步数据（如 rsync / 从快照恢复）后再启用"
+	}
 	v2OK(w, r, map[string]interface{}{
-		"instance_id":      c.ID,
-		"instance_name":    c.Name,
-		"current_node_id":  c.NodeID,
+		"instance_id":       c.ID,
+		"instance_name":     c.Name,
+		"current_node_id":   c.NodeID,
 		"current_node_name": idcNodeNameV2(c.NodeID),
-		"migration_kind":   "config-only",
-		"data_migrated":    false,
-		"note":             "本产品迁移为配置重建：实例规格与网络参数会复制到目标节点，磁盘内数据不传输（需自行同步数据）。",
-		"blockers":         blockers,
-		"targets":          targets,
+		"migration_kind":    "config-only",
+		"data_migrated":     false,
+		"storage":           dataPlan,
+		"note":              "本产品迁移为配置重建：实例规格与网络参数会复制到目标节点，磁盘内数据不传输（需自行同步数据）。",
+		"blockers":          blockers,
+		"targets":           targets,
 	})
 }
 
@@ -194,17 +213,22 @@ func v2InstanceMigrate(w http.ResponseWriter, r *http.Request) {
 	auditRequest(r, "api.v2.instance.migrate", c.Name,
 		fmt.Sprintf("mode=%s → 节点 %s（配置迁移，数据不迁移）", mode, node.Name), true, "")
 	v2Accepted(w, r, map[string]interface{}{
-		"instance_id":     c.ID,
-		"instance_name":   c.Name,
-		"mode":            mode,
-		"target_node_id":  node.ID,
+		"instance_id":      c.ID,
+		"instance_name":    c.Name,
+		"mode":             mode,
+		"target_node_id":   node.ID,
 		"target_node_name": node.Name,
-		"migration_kind":  "config-only",
-		"data_migrated":   false,
-		"new_instance":    created.Data,
-		"source_deleted":  mode == "move",
-		"delete_task_ids": deleteTasks,
-		"note":            "实例已在目标节点重建；磁盘数据未迁移，请自行同步数据后启用。",
+		"migration_kind":   "config-only",
+		"data_migrated":    false,
+		"new_instance":     created.Data,
+		"source_deleted":   mode == "move",
+		"delete_task_ids":  deleteTasks,
+		"note":             "实例已在目标节点重建；磁盘数据未迁移，请自行同步数据后启用。",
+		"storage": map[string]interface{}{
+			"source_pool_id":     c.StoragePoolID,
+			"source_pool_shared": func() bool { p := config.StoragePoolByID(c.StoragePoolID); return p != nil && p.Shared }(),
+			"data_transferred":   false,
+		},
 	})
 }
 
