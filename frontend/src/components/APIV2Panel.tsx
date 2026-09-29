@@ -161,6 +161,18 @@ export default function APIV2Panel() {
               响应 {`{success, code, message, data, request_id}`}，列表 data.items + data.pagination
             </div>
             <div className="mt-2">curl -s {window.location.origin}/api/v2/instances?page_size=5 -H "Authorization: Bearer &lt;access_token&gt;"</div>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="text-gray-400">OpenAPI 3.0 规范（由服务端路由表自动生成，不会与实现漂移）：</span>
+              <a
+                className="rounded border border-gray-600 px-2 py-0.5 text-brand-200 hover:border-brand-400 hover:text-white"
+                href="/api/v2/openapi.json"
+                target="_blank"
+                rel="noreferrer"
+              >
+                GET /api/v2/openapi.json
+              </a>
+              <span className="text-gray-500">可直接导入 Postman / Swagger UI / 代码生成器</span>
+            </div>
           </div>
 
           <section>
