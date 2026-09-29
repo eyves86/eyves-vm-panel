@@ -62,18 +62,28 @@ func TestBuildAgentInstallScriptDetectLogic(t *testing.T) {
 }
 
 // TestBuildAgentInstallScriptSHA256Verification 确保安装脚本对下载的
-// agent 二进制执行 SHA256 完整性校验（G4 / P1-7），而不是仅靠 --version 自检。
+// agent 二进制执行 SHA256 完整性校验（G4 / P1-7），而不是仅靠 --version 自检；
+// 下载必须走「临时文件 → 校验 → rename 原子替换」——直接覆盖正在运行的二进制
+// 会因 ETXTBSY 失败（升级已安装节点时必然命中）。
 func TestBuildAgentInstallScriptSHA256Verification(t *testing.T) {
 	script := buildAgentInstallScript("", "abc123", "node-1", "")
 	// 必须从响应头提取主控下发的摘要（tolower 匹配，mawk/gawk 均可移植）
 	if !strings.Contains(script, `tolower($1)=="x-binary-sha256:"`) {
 		t.Fatal("X-Binary-SHA256 header extraction missing")
 	}
-	// 必须对落盘文件做 sha256sum 计算
-	if !strings.Contains(script, `sha256sum /usr/local/bin/eyvescloud`) {
-		t.Fatal("binary sha256sum verification missing")
+	// 必须对**下载的临时文件**做 sha256sum 计算（而非直接写目标路径）
+	if !strings.Contains(script, `sha256sum "$TMP_BIN"`) {
+		t.Fatal("temporary-file sha256sum verification missing")
 	}
-	// 校验失败必须删除已下载产物并中止
+	// 必须是原子替换（mv -f 到 /usr/local/bin/eyvescloud）
+	if !strings.Contains(script, `mv -f "$TMP_BIN" "$TARGET_BIN"`) {
+		t.Fatal("atomic replace (rename) missing")
+	}
+	// 不允许再直接覆盖运行中的二进制（ETXTBSY 隐患）
+	if strings.Contains(script, `curl -fsSL -o /usr/local/bin/eyvescloud`) {
+		t.Fatal("must not download directly onto the running binary path")
+	}
+	// 校验失败必须中止安装
 	if !strings.Contains(script, "二进制 SHA256 校验失败") {
 		t.Fatal("mismatch error handling missing")
 	}

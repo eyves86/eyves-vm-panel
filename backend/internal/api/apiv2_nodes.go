@@ -848,11 +848,10 @@ func v2RegionsList(w http.ResponseWriter, r *http.Request) {
 				onlineCount++
 			}
 		}
-		items = append(items, map[string]interface{}{
-			"id": region.ID, "name": region.Name, "location": region.Location,
-			"node_count": nodeCount, "node_online": onlineCount,
-			"created_at": v2Time(region.CreatedAt),
-		})
+		view := v2RegionView(region)
+		view["node_count"] = nodeCount
+		view["node_online"] = onlineCount
+		items = append(items, view)
 	}
 	total := len(items)
 	start, end := query.Slice(total)
@@ -864,8 +863,11 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name     string `json:"name"`
-		Location string `json:"location"`
+		Name         string  `json:"name"`
+		Location     string  `json:"location"`
+		MaxInstances int     `json:"max_instances"`
+		MaxRAMMB     int64   `json:"max_ram_mb"`
+		MaxDiskGB    float64 `json:"max_disk_gb"`
 	}
 	if err := v2Decode(r, &req); err != nil {
 		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
@@ -875,11 +877,19 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 		v2BadRequest(w, r, "缺少必填字段", details)
 		return
 	}
+	if req.MaxInstances < 0 || req.MaxRAMMB < 0 || req.MaxDiskGB < 0 {
+		v2BadRequest(w, r, "配额不能为负数", map[string]string{
+			"max_instances": ">=0", "max_ram_mb": ">=0", "max_disk_gb": ">=0"})
+		return
+	}
 	region := config.Region{
-		ID:        "rg-" + randomHex(6),
-		Name:      strings.TrimSpace(req.Name),
-		Location:  strings.TrimSpace(req.Location),
-		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
+		ID:           "rg-" + randomHex(6),
+		Name:         strings.TrimSpace(req.Name),
+		Location:     strings.TrimSpace(req.Location),
+		CreatedAt:    time.Now().Format("2006-01-02 15:04:05"),
+		MaxInstances: req.MaxInstances,
+		MaxRAMMB:     req.MaxRAMMB,
+		MaxDiskGB:    req.MaxDiskGB,
 	}
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.Regions = append(cfg.Regions, region)
@@ -889,7 +899,48 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRequest(r, "api.v2.region.create", region.Name, "", true, "")
-	v2Created(w, r, map[string]interface{}{"id": region.ID, "name": region.Name, "location": region.Location})
+	v2Created(w, r, v2RegionView(region))
+}
+
+// v2RegionView 区域对外契约（含配额与当前用量，便于前端显示 x/y）。
+func v2RegionView(region config.Region) map[string]interface{} {
+	usedInstances, usedRAM, usedDisk := config.RegionUsage(region.ID)
+	return map[string]interface{}{
+		"id": region.ID, "name": region.Name, "location": region.Location,
+		"created_at":    v2Time(region.CreatedAt),
+		"max_instances": region.MaxInstances, "max_ram_mb": region.MaxRAMMB, "max_disk_gb": region.MaxDiskGB,
+		"used_instances": usedInstances, "used_ram_mb": usedRAM, "used_disk_gb": round2(usedDisk),
+	}
+}
+
+// v2CheckRegionQuota 校验"目标节点所属区域"的配额是否还装得下新增实例。
+// 返回 nil 表示通过；未归属区域或未设配额时一律通过（0 = 不限制）。
+func v2CheckRegionQuota(nodeID string, additional int, ramMB int64, diskGB float64) error {
+	node, ok := config.FindNode(nodeID)
+	if !ok || strings.TrimSpace(node.RegionID) == "" {
+		return nil
+	}
+	region, ok := config.FindRegion(node.RegionID)
+	if !ok {
+		return nil
+	}
+	if region.MaxInstances <= 0 && region.MaxRAMMB <= 0 && region.MaxDiskGB <= 0 {
+		return nil
+	}
+	usedInstances, usedRAM, usedDisk := config.RegionUsage(region.ID)
+	if region.MaxInstances > 0 && usedInstances+additional > region.MaxInstances {
+		return fmt.Errorf("区域「%s」实例数配额已满（%d/%d）：请扩容区域配额或改选其它区域",
+			region.Name, usedInstances, region.MaxInstances)
+	}
+	if region.MaxRAMMB > 0 && usedRAM+ramMB > region.MaxRAMMB {
+		return fmt.Errorf("区域「%s」内存配额不足（已用 %d MB / 上限 %d MB，本次需要 %d MB）",
+			region.Name, usedRAM, region.MaxRAMMB, ramMB)
+	}
+	if region.MaxDiskGB > 0 && usedDisk+diskGB > region.MaxDiskGB {
+		return fmt.Errorf("区域「%s」磁盘配额不足（已用 %.1f GB / 上限 %.1f GB，本次需要 %.1f GB）",
+			region.Name, usedDisk, region.MaxDiskGB, diskGB)
+	}
+	return nil
 }
 
 func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
@@ -898,11 +949,21 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	regionID := strings.TrimSpace(r.PathValue("id"))
 	var req struct {
-		Name     *string `json:"name"`
-		Location *string `json:"location"`
+		Name         *string  `json:"name"`
+		Location     *string  `json:"location"`
+		MaxInstances *int     `json:"max_instances"`
+		MaxRAMMB     *int64   `json:"max_ram_mb"`
+		MaxDiskGB    *float64 `json:"max_disk_gb"`
 	}
 	if err := v2Decode(r, &req); err != nil {
 		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+		return
+	}
+	if (req.MaxInstances != nil && *req.MaxInstances < 0) ||
+		(req.MaxRAMMB != nil && *req.MaxRAMMB < 0) ||
+		(req.MaxDiskGB != nil && *req.MaxDiskGB < 0) {
+		v2BadRequest(w, r, "配额不能为负数", map[string]string{
+			"max_instances": ">=0", "max_ram_mb": ">=0", "max_disk_gb": ">=0"})
 		return
 	}
 	var updated config.Region
@@ -917,6 +978,15 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 			if req.Location != nil {
 				cfg.Regions[i].Location = strings.TrimSpace(*req.Location)
 			}
+			if req.MaxInstances != nil {
+				cfg.Regions[i].MaxInstances = *req.MaxInstances
+			}
+			if req.MaxRAMMB != nil {
+				cfg.Regions[i].MaxRAMMB = *req.MaxRAMMB
+			}
+			if req.MaxDiskGB != nil {
+				cfg.Regions[i].MaxDiskGB = *req.MaxDiskGB
+			}
 			updated = cfg.Regions[i]
 			return
 		}
@@ -925,8 +995,9 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "区域不存在："+regionID)
 		return
 	}
+	_ = config.SaveConfig()
 	auditRequest(r, "api.v2.region.update", updated.Name, "", true, "")
-	v2OK(w, r, map[string]interface{}{"id": updated.ID, "name": updated.Name, "location": updated.Location})
+	v2OK(w, r, v2RegionView(updated))
 }
 
 func v2RegionDelete(w http.ResponseWriter, r *http.Request) {

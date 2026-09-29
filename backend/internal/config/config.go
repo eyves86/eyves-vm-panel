@@ -1366,8 +1366,59 @@ type Cluster struct {
 type Region struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Location  string `json:"location,omitempty"`  // 展示用地域（城市/机房）
+	Location  string `json:"location,omitempty"` // 展示用地域（城市/机房）
 	CreatedAt string `json:"created_at,omitempty"`
+	// 区域级配额（0 = 不限制）：统计口径为「归属该区域的节点上的实例总量」。
+	// 创建实例时按目标节点所属区域校验，避免把同一区域的资源超卖。
+	MaxInstances int     `json:"max_instances,omitempty"`
+	MaxRAMMB     int64   `json:"max_ram_mb,omitempty"`
+	MaxDiskGB    float64 `json:"max_disk_gb,omitempty"`
+}
+
+// RegionUsage 统计区域当前用量：实例数、内存（MB）、磁盘（GB，含数据盘）。
+// 口径：先按 region_id 找出区域下的节点，再累加这些节点上的实例。
+func RegionUsage(regionID string) (instances int, ramMB int64, diskGB float64) {
+	if strings.TrimSpace(regionID) == "" {
+		return 0, 0, 0
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return 0, 0, 0
+	}
+	nodeIDs := make(map[string]bool)
+	for _, n := range AppConfig.Nodes {
+		if n.RegionID == regionID {
+			nodeIDs[n.ID] = true
+		}
+	}
+	if len(nodeIDs) == 0 {
+		return 0, 0, 0
+	}
+	for _, c := range AppConfig.Containers {
+		if c.NodeID == "" || !nodeIDs[c.NodeID] {
+			continue
+		}
+		instances++
+		ramMB += int64(c.RAMMB)
+		diskGB += c.DiskGB + c.DataDiskGB
+	}
+	return instances, ramMB, diskGB
+}
+
+// FindRegion 按 ID 取区域快照。
+func FindRegion(id string) (Region, bool) {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return Region{}, false
+	}
+	for _, region := range AppConfig.Regions {
+		if region.ID == id {
+			return region, true
+		}
+	}
+	return Region{}, false
 }
 
 // IPGroup 定义一组可故障切换（failover）的公网 IP。组内 IP 与跨容器移动由面板管理。

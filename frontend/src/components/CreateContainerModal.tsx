@@ -818,6 +818,23 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                               })()}
                             </div>
                           )}
+                          {/* 区域配额用量（配置了配额才显示）：实例 x/y · 内存% · 磁盘% */}
+                          {selectable && (() => {
+                            const info = regions.find((rg) => rg.id === group.id)
+                            if (!info) return null
+                            const quotaParts: string[] = []
+                            if (info.max_instances && info.max_instances > 0) {
+                              quotaParts.push(`实例 ${info.used_instances || 0}/${info.max_instances}`)
+                            }
+                            if (info.max_ram_mb && info.max_ram_mb > 0) {
+                              quotaParts.push(`内存 ${Math.round(((info.used_ram_mb || 0) / info.max_ram_mb) * 100)}%`)
+                            }
+                            if (info.max_disk_gb && info.max_disk_gb > 0) {
+                              quotaParts.push(`磁盘 ${Math.round(((info.used_disk_gb || 0) / info.max_disk_gb) * 100)}%`)
+                            }
+                            if (quotaParts.length === 0) return null
+                            return <div className="mt-0.5 text-[11px] text-gray-400">配额 {quotaParts.join(' · ')}</div>
+                          })()}
                           <select
                             value={choice}
                             disabled={!selectable}

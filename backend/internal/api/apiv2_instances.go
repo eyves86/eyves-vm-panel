@@ -594,9 +594,14 @@ func v2InstancesCreate(w http.ResponseWriter, r *http.Request) {
 			SSHPassword:       password,
 			SSHKeyIDs:         req.Auth.SSHKeyIDs,
 		}
-		// 远程节点：直接代理创建（同步），本机：进任务队列（异步）。
+		// 远程节点：先校验该节点所属区域的配额，再代理创建（同步）。
+		// 本机：入任务队列（异步），本机容器不计入任何区域用量。
 		if targetNodeID != "" && targetNodeID != "local" {
 			node, _ := config.FindNode(targetNodeID)
+			if quotaErr := v2CheckRegionQuota(node.ID, 1, int64(req.MemoryMB), req.DiskGB+req.DataDiskGB); quotaErr != nil {
+				v2Precondition(w, r, quotaErr.Error())
+				return
+			}
 			body, _ := json.Marshal(cfg)
 			data, status, err := proxyNodeRequest(r, node, http.MethodPost, "/api/agent/containers/create", strings.NewReader(string(body)))
 			if err != nil {

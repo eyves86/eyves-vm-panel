@@ -274,6 +274,12 @@ export interface V2Region {
   location?: string
   node_count?: number
   node_online?: number
+  max_instances?: number
+  max_ram_mb?: number
+  max_disk_gb?: number
+  used_instances?: number
+  used_ram_mb?: number
+  used_disk_gb?: number
 }
 
 export const v2ListRegions = () => call<{ items: V2Region[]; pagination?: unknown }>(client.get('/regions', { params: { all: true } }))
