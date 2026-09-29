@@ -83,3 +83,49 @@
 
 本轮沙箱 shell 通道卡死：起因是执行 `python3 -`（等待标准输入）导致进程挂起，之后所有 `shell_execute` 均超时（含 `echo`），而 `file_read/file_write` 仍可用。
 恢复方式：重启 Minis App（或清理后台进程）后 shell 通道即复位。
+
+---
+
+# 收尾更新（2026-09-29）
+
+**状态：v2 全部规划内端点已实现并线上验证（105 个）。** 部署版本：主控 154.16.173.136 = v2.2.7。
+
+## 线上批量验证结果
+
+读接口（13 个模块全部 `HTTP 200 + success:true`）：
+`images` / `tasks` / `metrics/summary` / `system/health` / `security-groups` / `iso-images` /
+`storage-pools` / `users` / `admins` / `audit-logs` / `webhooks` / `ip-pools` / `backups`
+
+写接口（创建→删除闭环）：
+
+| 用例 | 结果 |
+| --- | --- |
+| 创建 API Key（scopes 子集） | 201，明文密钥仅返回一次（`eyvescloud_sk_…`） |
+| 删除 API Key | 204 |
+| 创建子用户（viewer + 一次性口令） | 201，口令长度 16 |
+| 删除子用户 | 204 |
+| 创建安全组 → 添加规则 → 删除安全组 | 201 / 201 / 204 |
+| 参数校验（`runtime=hyperv`） | 400 `INVALID_ARGUMENT` + `details.runtime` + `request_id` |
+
+## 端点总览（105）
+
+| 模块 | 端点数 | PR |
+| --- | --- | --- |
+| 认证 | 3 | #9 |
+| 实例 | 29 | #8 |
+| 节点 / 节点分组 / 区域 / 调度 | 20 | #10 |
+| 镜像 / ISO / 存储 / SSH 密钥 / 安全组+规则 / IP 池 | 23 | #11 |
+| 任务 / 备份 / Webhook(列表) / 用户(列表) / 管理员(列表) / API Key / 审计 / 监控 / 系统 | 19 | #11 |
+| Webhook / 子用户 / 管理员（增删改）+ 实例安全组绑定 | 11 | #12 |
+
+## 明确推迟（不在本轮范围）
+
+- 备份计划（`backup-plans`）CRUD：需要先确认备份计划的数据结构与调度器接口
+- 任务取消（`POST /tasks/{id}/cancel`）：任务队列当前无按 ID 取消能力（仅有 `CancelPendingSecurityStops`），需先扩展队列
+- 实例迁移（`POST /instances/{id}/migrate`）：需接入节点迁移流水线（`internal/livemigrate` / 迁移包），单独设计
+
+## 下一步（自动继续）
+
+1. **前端改造**：侧边栏按模块重整（实例/节点/镜像/存储/网络/安全/用户/系统）、按钮按 `GET /api/v2/auth/me` 的 `features` 渲染、创建向导接「目标节点 + 自动调度」、列表统一分页/筛选/排序。
+2. **前端功能测试**：逐页点击验证（登录/实例列表/创建/详情/电源/快照/备份/节点/镜像/存储/安全组/用户/审计/系统）。
+3. **全量审计**：接口与 UI 行为一致性、越权路径（子用户与容器绑定密钥）、按钮可用性、错误提示。
