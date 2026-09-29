@@ -59,7 +59,7 @@ import {
   type Region,
   type Template,
 } from '../services/api'
-import { v2UpgradeNodes } from '../services/apiV2'
+import { v2UpgradeNodes, v2UpdateNode } from '../services/apiV2'
 import { useDialog } from '../components/Dialog'
 import { useLanguage } from '../contexts/LanguageContext'
 
@@ -102,6 +102,8 @@ export default function NodeManagement() {
   const [nodes, setNodes] = useState<ManagedNode[]>([])
   const [loading, setLoading] = useState(true)
   const [showCreate, setShowCreate] = useState(false)
+  // 新建节点时选择的区域（创建成功后通过 v2 PATCH 回填 region_id）。
+  const [newRegionId, setNewRegionId] = useState<string>('')
   // 一键升级被控节点（把全部在线节点升到与主控相同版本）的进行态。
   const [upgrading, setUpgrading] = useState(false)
   // 添加模式：quick=一键添加（生成一行安装命令）；manual=手动添加（录入地址 + agent.json 预置配置手工接入）；
@@ -257,8 +259,17 @@ export default function NodeManagement() {
         allow_private: createMode === 'manual' ? newAllowPrivate : undefined,
       })
       const created = res.data.data
+      // 区域归属：v1 创建接口不接收 region_id，创建成功后用 v2 回填（失败不阻塞，仅提示）。
+      if (newRegionId && created?.node?.id) {
+        try {
+          await v2UpdateNode(created.node.id, { region_id: newRegionId })
+        } catch (e: any) {
+          await alert(t("提示"), t("节点已创建，但区域归属设置失败：") + (e?.response?.data?.message || String(e)))
+        }
+      }
       setShowCreate(false)
       setNewName('')
+      setNewRegionId('')
       setNewAddress('')
       setNewBindIP('')
       setNewTLSSkipVerify(false)
@@ -301,6 +312,7 @@ export default function NodeManagement() {
       })
       setShowCreate(false)
       setNewName('')
+      setNewRegionId('')
       setAdoptURL('')
       setAdoptKey('')
       setAdoptAllowPrivate(false)
@@ -1352,6 +1364,27 @@ export default function NodeManagement() {
                   placeholder="node-1"
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
+              </div>
+
+              {/* 区域归属：开通页「先选区域、再选节点」依赖它；留空则归入「默认区域」。
+                  区域在「节点管理 → 区域管理」中创建。 */}
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('所属区域')}（{t('可选')}）</label>
+                <select
+                  value={newRegionId}
+                  onChange={(e) => setNewRegionId(e.target.value)}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                >
+                  <option value="">{t('默认区域（未归属）')}</option>
+                  {regions.map((region) => (
+                    <option key={region.id} value={region.id}>
+                      {region.name}{region.location ? ` · ${region.location}` : ''}
+                    </option>
+                  ))}
+                </select>
+                <p className="mt-1 text-[11px] text-gray-400">
+                  {t('创建实例时可先按区域筛选，再选该区域下的节点。')}
+                </p>
               </div>
 
               {createMode === 'adopt' && (

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, CalendarClock, Check, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { batchCreate, createContainerOnNode, getEnabledImages, getHostInfo, getHostReport, getIPv6Status, getNodes, getRoutingInfo, getStorageInfo, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, ManagedNode, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
-import { V2Error, v2ListNodes, v2Schedule, type V2Node } from '../services/apiV2'
+import { V2Error, v2ListNodes, v2ListRegions, v2Schedule, type V2Node, type V2Region } from '../services/apiV2'
 import { useDialog } from './Dialog'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage, type Language } from '../contexts/LanguageContext'
@@ -78,6 +78,8 @@ function v2NodesToManaged(nodes: V2Node[]): ManagedNode[] {
     ram_used_mb: node.ram_used_mb,
     disk_total_gb: node.disk_total_gb,
     disk_used_gb: node.disk_used_gb,
+    // 区域归属：开通页的「区域卡片 → 卡内节点下拉」依据它分组，不能丢。
+    region_id: node.region_id,
   })) as ManagedNode[]
 }
 
@@ -114,7 +116,11 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
   const [loading, setLoading] = useState(false)
   const [batchCount, setBatchCount] = useState(1)
   const [form, setForm] = useState<CreateContainerRequest>(defaultForm)
-  // 目标节点：'local' = 主控本机；'auto' = 由调度器按剩余资源自动挑选；其余为节点 ID。
+  // 目标节点：'local' = 主控本机；'auto' = 自动（全局或所选区域内按剩余资源）；其余为节点 ID。
+  // 两级选择：先点「区域卡片」定区域，再在卡片内下拉选该区域的节点（或"自动（该区域）"）。
+  const [targetRegion, setTargetRegion] = useState<string>('')
+  const [regionChoice, setRegionChoice] = useState<Record<string, string>>({})
+  const [regions, setRegions] = useState<V2Region[]>([])
   const [nodes, setNodes] = useState<ManagedNode[]>([])
   const [nodesLoading, setNodesLoading] = useState(false)
   const [targetNode, setTargetNode] = useState<string>('local')
@@ -135,6 +141,10 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
   useEffect(() => {
     if (!isOpen || !isAdmin) return
     setNodesLoading(true)
+    // 区域与节点并行拉取：区域用于「区域卡片」，节点归属由 node.region_id 决定。
+    void v2ListRegions()
+      .then((res) => setRegions(res.items || []))
+      .catch(() => setRegions([]))
     v2ListNodes({ page_size: 200 })
       .then((list) => {
         setNodes(v2NodesToManaged(list.items))
@@ -154,8 +164,73 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
     const found = nodes.find((node) => node.id === targetNode)
     if (!found || !nodeSelectable(found)) {
       setTargetNode('local')
+      setTargetRegion('')
     }
   }, [nodes, targetNode])
+
+  // ---- 区域 → 节点 两级选择 ----
+  // 分组规则：按节点的 region_id 归入区域卡片；无区域的节点进入「默认区域」卡片。
+  // 顺序：有在线节点的区域优先，其次按名称排序。
+  const regionGroups = (() => {
+    const byId = new Map<string, { id: string; name: string; location: string; nodes: ManagedNode[] }>()
+    for (const node of nodes) {
+      const rid = (node as ManagedNode).region_id || '__default__'
+      if (!byId.has(rid)) {
+        const region = regions.find((item) => item.id === rid)
+        byId.set(rid, {
+          id: rid,
+          name: region?.name || (rid === '__default__' ? '默认区域' : rid),
+          location: region?.location || '',
+          nodes: [],
+        })
+      }
+      byId.get(rid)!.nodes.push(node)
+    }
+    return Array.from(byId.values()).sort((a, b) => {
+      const onlineA = a.nodes.filter(nodeSelectable).length
+      const onlineB = b.nodes.filter(nodeSelectable).length
+      if (onlineA !== onlineB) return onlineB - onlineA
+      return a.name.localeCompare(b.name)
+    })
+  })()
+
+  // 区域内"自动"：在可调度节点中按剩余内存比例挑选（与全局调度的评分口径一致）。
+  const bestNodeInRegion = (regionId: string): ManagedNode | null => {
+    const group = regionGroups.find((item) => item.id === regionId)
+    if (!group) return null
+    const candidates = group.nodes.filter(nodeSelectable)
+    if (candidates.length === 0) return null
+    return candidates.reduce((best, node) => {
+      const free = (n: ManagedNode) => (n.ram_total_mb && n.ram_used_mb !== undefined ? (n.ram_total_mb - n.ram_used_mb) / n.ram_total_mb : 0)
+      return free(node) > free(best) ? node : best
+    }, candidates[0])
+  }
+
+  // 点区域卡片：选中该区域，并沿用该区域上次的节点选择（默认"自动（该区域）"）。
+  const selectRegion = (regionId: string) => {
+    setTargetRegion(regionId)
+    const choice = regionChoice[regionId]
+    if (choice && choice !== 'auto') {
+      setTargetNode(choice)
+      return
+    }
+    const best = bestNodeInRegion(regionId)
+    setTargetNode(best ? best.id : 'auto')
+  }
+
+  // 区域卡片内下拉变更：记录并生效。
+  const pickRegionNode = (regionId: string, value: string) => {
+    setRegionChoice((prev) => ({ ...prev, [regionId]: value }))
+    setTargetRegion(regionId)
+    if (value === 'auto') {
+      const best = bestNodeInRegion(regionId)
+      setTargetNode(best ? best.id : 'auto')
+      return
+    }
+    setTargetNode(value)
+  }
+
+  const selectedRegionName = targetRegion ? regionGroups.find((g) => g.id === targetRegion)?.name || targetRegion : ''
 
   useEffect(() => {
     if (!isOpen) return
@@ -623,12 +698,12 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
           {batchCount > 1 && <p className="text-xs text-gray-400">将创建 {batchCount} 个容器：{form.name}-{batchStartIndex} 至 {form.name}-{batchStartIndex + batchCount - 1}</p>}
 
           {isAdmin && (
-            <Field label="目标节点">
-              <div className="space-y-2">
+            <Field label="选择区域 / 节点">
+              <div className="space-y-3">
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setTargetNode('local')}
+                    onClick={() => { setTargetNode('local'); setTargetRegion('') }}
                     className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${targetNode === 'local' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
                     本机（主控）
@@ -637,42 +712,74 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     type="button"
                     disabled={nodes.filter(nodeSelectable).length === 0}
                     title={nodes.filter(nodeSelectable).length === 0 ? '没有可用的在线节点' : '按剩余内存/磁盘自动评分挑选'}
-                    onClick={() => setTargetNode('auto')}
-                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${targetNode === 'auto' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    onClick={() => { setTargetNode('auto'); setTargetRegion('') }}
+                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${targetNode === 'auto' && !targetRegion ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                   >
-                    自动选择（按剩余资源）
+                    自动（全局，按剩余资源）
                   </button>
-                  {nodesLoading && <span className="self-center text-xs text-gray-400">正在加载节点…</span>}
+                  {nodesLoading && <span className="self-center text-xs text-gray-400">正在加载区域与节点…</span>}
                 </div>
-                {nodes.length > 0 && (
-                  <div className="grid grid-cols-2 gap-2">
-                    {nodes.map((node) => {
-                      const selectable = nodeSelectable(node)
-                      const active = targetNode === node.id
+
+                {/* 区域卡片：先选区域，再在卡片内下拉选该区域的节点（自动 = 该区域按剩余资源） */}
+                {regionGroups.length > 0 && (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    {regionGroups.map((group) => {
+                      const onlineNodes = group.nodes.filter(nodeSelectable)
+                      const selectable = onlineNodes.length > 0
+                      const active = targetRegion === group.id
+                      const choice = regionChoice[group.id] || 'auto'
                       return (
-                        <button
-                          key={node.id}
-                          type="button"
-                          disabled={!selectable}
-                          onClick={() => selectable && setTargetNode(node.id)}
-                          className={`rounded-md border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 ${active ? 'border-brand-600 bg-brand-50' : 'border-gray-300 hover:bg-gray-50'}`}
+                        <div
+                          key={group.id}
+                          className={`rounded-xl border p-3 transition-colors ${active ? 'border-2 border-brand-600 bg-white' : 'border-gray-200 bg-white hover:border-gray-300'}`}
                         >
-                          <span className="flex items-center gap-2">
-                            <span className={`text-sm font-medium ${selectable ? 'text-gray-800' : 'text-gray-400'}`}>{node.name || node.id}</span>
-                            <span className={`rounded px-1.5 py-0.5 text-[10px] ${selectable ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
-                              {node.maintenance_mode ? '维护中' : (node.status === 'online' ? '在线' : '离线')}
+                          <button
+                            type="button"
+                            disabled={!selectable}
+                            onClick={() => selectRegion(group.id)}
+                            className="flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed"
+                          >
+                            <span className="min-w-0">
+                              <span className={`block truncate text-sm font-medium ${selectable ? 'text-gray-900' : 'text-gray-400'}`}>
+                                {group.name}
+                              </span>
+                              {group.location && <span className="block truncate text-[11px] text-gray-400">{group.location}</span>}
                             </span>
-                          </span>
-                          <span className="mt-0.5 block text-xs text-gray-500">{nodeUsageText(node)}</span>
-                        </button>
+                            <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${selectable ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                              {selectable ? `${onlineNodes.length} 台在线` : '暂无可用节点'}
+                            </span>
+                          </button>
+                          <select
+                            value={choice}
+                            disabled={!selectable}
+                            onChange={(event) => pickRegionNode(group.id, event.target.value)}
+                            className="mt-2 w-full rounded-md border border-gray-300 bg-white px-2 py-1.5 text-xs disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+                          >
+                            <option value="auto">{selectable ? '自动（该区域按剩余资源）' : '暂无可用节点'}</option>
+                            {group.nodes.map((node) => (
+                              <option key={node.id} value={node.id} disabled={!nodeSelectable(node)}>
+                                {(node.name || node.id) +
+                                  (node.maintenance_mode ? '（维护中）' : node.status === 'online' ? '' : '（节点离线）') +
+                                  (node.container_count !== undefined ? ` · ${node.container_count} 台` : '')}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
                       )
                     })}
                   </div>
                 )}
+                {!nodesLoading && nodes.length === 0 && (
+                  <p className="text-xs text-gray-400">暂无被控节点：实例将创建在主控本机。可先在「节点管理」接入被控后获得区域/节点选择。</p>
+                )}
+
                 {targetNode !== 'local' && (
                   <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                    实例将下发到{targetNode === 'auto' ? '调度器挑选的节点' : `节点「${nodes.find((n) => n.id === targetNode)?.name || targetNode}」`}：
-                    存储盘与网络（NAT 端口 / IP 分配）由该节点自动处理，本页「存储磁盘」「网络配置」中的本机专属选项不会生效。
+                    实例将下发到{targetNode === 'auto' && !targetRegion
+                      ? '调度器挑选的节点'
+                      : `节点「${nodes.find((n) => n.id === targetNode)?.name || targetNode}」${selectedRegionName ? `（区域：${selectedRegionName}）` : ''}`}：
+                    存储盘与网络（NAT 端口 / IP 分配）由该节点自动处理，本页「存储磁盘」「网络配置」中的本机专属选项不会生效；
+                    若目标节点缺少所选系统镜像，请先在该节点的「镜像管理」中下载。
                     创建后容器由该节点上报同步到主控，列表约 10 秒内出现。
                   </p>
                 )}

@@ -179,6 +179,8 @@ export interface V2Node {
   disk_used_gb?: number
   container_count?: number
   memory_used_percent?: number
+  region_id?: string
+  region_name?: string
 }
 
 export const v2ListNodes = (query: Record<string, unknown> = {}) =>
@@ -263,3 +265,20 @@ export const v2UpgradeNodes = (payload: {
   target_version?: string
   check_only?: boolean
 } = {}) => call<V2NodeUpgradeResult>(client.post('/nodes/upgrade', payload))
+
+// ---- 区域（开通页的"先选区域、再选节点"两级选择）----
+
+export interface V2Region {
+  id: string
+  name: string
+  location?: string
+  node_count?: number
+  online_node_count?: number
+}
+
+export const v2ListRegions = () => call<{ items: V2Region[]; pagination?: unknown }>(client.get('/regions', { params: { all: true } }))
+
+// v2UpdateNode 修改节点（部分更新：名称/地址/TLS/区域/分组）。用于把节点归入区域，
+// 使开通页能按「区域 → 节点」两级选择。
+export const v2UpdateNode = (nodeId: string, payload: { name?: string; address?: string; region_id?: string; node_group_id?: string; tls_skip_verify?: boolean }) =>
+  call<Record<string, unknown>>(client.patch(`/nodes/${encodeURIComponent(nodeId)}`, payload))

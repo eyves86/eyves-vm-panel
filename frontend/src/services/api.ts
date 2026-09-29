@@ -1263,6 +1263,7 @@ export interface ManagedNode {
   disk_total_gb?: number
   disk_used_gb?: number
   container_count?: number
+  region_id?: string
   created_at?: string
   // 维护模式下调度器不再把新容器放到该节点（升级/维修前开启）。
   maintenance_mode?: boolean
