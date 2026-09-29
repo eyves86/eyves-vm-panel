@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ArrowLeft, ArrowRight, CalendarClock, Check, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
-import { batchCreate, createContainerOnNode, getEnabledImages, getHostInfo, getHostReport, getIPv6Status, getNodes, getRoutingInfo, getStorageInfo, scheduleNode, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, ManagedNode, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
+import { batchCreate, createContainerOnNode, getEnabledImages, getHostInfo, getHostReport, getIPv6Status, getNodes, getRoutingInfo, getStorageInfo, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, ManagedNode, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
+import { V2Error, v2ListNodes, v2Schedule, type V2Node } from '../services/apiV2'
 import { useDialog } from './Dialog'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage, type Language } from '../contexts/LanguageContext'
@@ -61,6 +62,25 @@ const defaultForm: CreateContainerRequest = {
   expires_at: '',
 }
 
+// v2NodesToManaged 把 v2 节点结构映射为向导内部使用的 ManagedNode 结构。
+// v2 的字段口径（maintenance / container_count / memory_used_percent）与 v1 略有差异，
+// 这里统一收敛，避免 UI 代码分叉判断。
+function v2NodesToManaged(nodes: V2Node[]): ManagedNode[] {
+  return nodes.map((node) => ({
+    id: node.id,
+    name: node.name,
+    address: node.address,
+    status: node.status,
+    maintenance_mode: node.maintenance,
+    container_count: node.container_count,
+    cpu_count: node.cpu_count,
+    ram_total_mb: node.ram_total_mb,
+    ram_used_mb: node.ram_used_mb,
+    disk_total_gb: node.disk_total_gb,
+    disk_used_gb: node.disk_used_gb,
+  })) as ManagedNode[]
+}
+
 // nodeSelectable：节点是否可作为发机目标（在线且非维护模式）。
 function nodeSelectable(node: ManagedNode): boolean {
   if (node.maintenance_mode) return false
@@ -110,25 +130,32 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
     if (isOpen) setCurrentStep(0)
   }, [isOpen])
 
-  // 目标节点列表：仅管理员可见（子用户不能跨节点发机）。打开弹窗时拉取一次。
+  // 目标节点列表：优先走 API v2（契约稳定），失败时回退 v1，保证向导不会因
+  // 单点接口问题不可用。子用户不可跨节点发机，因此仅管理员拉取。
   useEffect(() => {
     if (!isOpen || !isAdmin) return
     setNodesLoading(true)
-    getNodes()
-      .then((res) => {
-        const list = res.data.data || []
-        setNodes(list)
-        // 选中的节点若已不可用（下线/维护/被删），回退到本机，避免提交时才报错。
-        setTargetNode((prev) => {
-          if (prev === 'local' || prev === 'auto') return prev
-          const found = list.find((n) => n.id === prev)
-          if (!found || !nodeSelectable(found)) return 'local'
-          return prev
-        })
+    v2ListNodes({ page_size: 200 })
+      .then((list) => {
+        setNodes(v2NodesToManaged(list.items))
       })
-      .catch(() => setNodes([]))
+      .catch(() => {
+        // v2 不可用（例如旧版本面板）→ 回退 v1
+        return getNodes()
+          .then((res) => setNodes(res.data.data || []))
+          .catch(() => setNodes([]))
+      })
       .finally(() => setNodesLoading(false))
   }, [isOpen, isAdmin])
+
+  // 目标节点变化时校验可用性（离线/维护/被删 → 回退本机，避免提交时才报错）。
+  useEffect(() => {
+    if (targetNode === 'local' || targetNode === 'auto') return
+    const found = nodes.find((node) => node.id === targetNode)
+    if (!found || !nodeSelectable(found)) {
+      setTargetNode('local')
+    }
+  }, [nodes, targetNode])
 
   useEffect(() => {
     if (!isOpen) return
@@ -465,22 +492,24 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
 
     if (targetNode === 'auto') {
       try {
-        const res = await scheduleNode({
+        // 调度决策走 API v2：返回 top-N 候选与拒绝理由，失败时给出可读原因。
+        const result = await v2Schedule({
           ram_mb: containers[0]?.ram_mb,
           disk_gb: containers[0]?.disk_gb,
           virt: containers[0]?.virtualization,
-          count: containers.length,
         })
-        const chosen = res.data.data?.chosen
-        if (!res.data.success || !chosen) {
-          dialog.alert('没有可用节点', res.data.message || '调度器未找到满足条件的节点（需在线、未维护、容量足够）')
+        const chosen = result.chosen
+        if (!chosen) {
+          dialog.alert('没有可用节点', result.reason || '调度器未找到满足条件的节点（需在线、未维护、容量足够）')
           return
         }
         nodeId = chosen.id
         nodeLabel = chosen.name || chosen.id
       } catch (err: unknown) {
-        const error = err as { response?: { data?: { message?: string } } }
-        dialog.alert('调度失败', error.response?.data?.message || '请稍后重试或手动选择节点')
+        const detail = err instanceof V2Error
+          ? err.message + (err.requestId ? `（request_id=${err.requestId}）` : '')
+          : (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+        dialog.alert('调度失败', detail || '请稍后重试，或手动选择节点')
         return
       }
     }

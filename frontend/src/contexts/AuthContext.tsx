@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useNavigate } from 'react-router'
-import api, { login as apiLogin, checkAuth, setAuthToken, logoutRequest, LoginResponse } from '../services/api'
+import api, { getAuthToken, setAuthToken, logoutRequest, login as apiLogin, checkAuth, LoginResponse } from '../services/api'
+import { v2Me } from '../services/apiV2'
 import { adminUrl } from '../services/panelPath'
 
 // CheckAuthData 与服务端 /check-auth 返回的解析结果对应。
@@ -32,6 +33,10 @@ interface AuthContextType {
   accessCodeLogin: (code: string, password: string, turnstileToken?: string) => Promise<void>
   logout: () => void
   token: string | null
+  /** API v2 身份返回的功能点（按钮显隐依据）；v2 不可用时为空对象，前端退回角色判断。 */
+  features: Record<string, boolean>
+  /** can 判断当前会话是否具备某功能点（如 instance_create / node_manage）。 */
+  can: (feature: string) => boolean
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -45,7 +50,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isReadOnly, setIsReadOnly] = useState(false)
   const [containerIdentifiers, setContainerIdentifiers] = useState<string[]>([])
   const [token, setToken] = useState<string | null>(null)
+  // 功能点（来自 API v2 /auth/me）：驱动按钮显隐与禁用，避免"点了才报 403"。
+  const [features, setFeatures] = useState<Record<string, boolean>>({})
   const navigate = useNavigate()
+
+  // loadFeatures 拉取功能点；失败静默（v2 未启用时前端退回角色判断，不阻塞使用）。
+  const loadFeatures = async () => {
+    try {
+      const me = await v2Me()
+      setFeatures(me.features || {})
+    } catch {
+      setFeatures({})
+    }
+  }
+
+  const can = (feature: string) => features[feature] === true
 
   const saveAuth = (t: string, u: string, sub: boolean, ids: string[], readOnly = false) => {
     // 审计 H-6：不再写入 localStorage。令牌由服务端 HttpOnly Cookie 承载
@@ -57,6 +76,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setIsReadOnly(sub && readOnly)
     setContainerIdentifiers(ids)
     setIsAuthenticated(true)
+    void loadFeatures()
   }
 
   useEffect(() => {
@@ -76,6 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUsername(savedUsername || null)
         }
         setIsAuthenticated(true)
+        void loadFeatures()
       })
       .catch(() => {
         setAuthToken(null)
@@ -139,7 +160,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, isSubUser, isAdmin: isAuthenticated && !isSubUser, adminRole, isReadOnly, containerIdentifiers, adminLogin, adminLoginWith2FA, userLogin, accessCodeLogin, logout, token }}>
+    <AuthContext.Provider value={{ isAuthenticated, isLoading, username, isSubUser, isAdmin: isAuthenticated && !isSubUser, adminRole, isReadOnly, containerIdentifiers, adminLogin, adminLoginWith2FA, userLogin, accessCodeLogin, logout, token, features, can }}>
       {children}
     </AuthContext.Provider>
   )
