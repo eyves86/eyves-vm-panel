@@ -1343,6 +1343,69 @@ const exact: Record<string, string> = {
   '并发': "Concurrency",
   '输入 upgrade 开始升级': "Type upgrade to start",
   '为降低成本，建议先释放不再使用的实例': "Tip: release unused instances to reduce cost",
+  "队列（并发 {n}）": "Queue (concurrency {n})",
+  "{n} 运行 / {n} 排队": "{n} running / {n} pending",
+  "共 {n} 个容器": "{n} containers",
+  "，已选 {n} 个": ", {n} selected",
+  "{n} 个": "{n} items",
+  "历史执行记录": "Execution history",
+  "主控节点": "Controller Nodes",
+  "统一管理多台被控服务器": "Manage multiple worker servers from one place",
+  "一键安装": "One-click install",
+  "管理安全组与出入站规则": "Manage security groups and ingress/egress rules",
+  "并绑定到容器控制流量策略": "Bind them to containers to enforce traffic policies",
+  "容器绑定": "Container bindings",
+  "定时为指定容器或全部运行中容器创建磁盘备份": "Schedule disk backups for specific containers or all running ones",
+  "并按保留份数自动轮换": "and rotate automatically by retention count",
+  "校验哈希链": "Verify hash chain",
+  "导出": "Export",
+  "新建子用户": "New sub-user",
+  "按容器授权": "Authorize per container",
+  "两步验证": "Two-factor authentication",
+  "审计合规": "Audit & compliance",
+  "容灾备份": "Disaster recovery backups",
+  "全部属主": "All owners",
+  "属主": "Owner",
+  "节点": "Node",
+  "导出 CSV": "Export CSV",
+  "导出 JSON": "Export JSON",
+  "是否成功": "Success",
+  "操作人": "Actor",
+  "主控节点：统一管理多台被控服务器（一键安装 Agent 后自动接入）": "Controller nodes: manage multiple worker servers (auto-join after one-click Agent install)",
+  "迁移池 / 策略池：同组节点共享迁移范围与资源策略": "Migration / policy pool: nodes in a group share scope and resource policy",
+  "暂无节点分组，点击「新建分组」创建": "No node groups yet — click “New group” to create one",
+  "跨分组的高可用 / 迁移域：容器默认只允许在同集群内迁移": "Cross-group HA / migration domain: containers migrate within the same cluster by default",
+  "暂无集群，点击「新建集群」创建": "No clusters yet — click “New cluster” to create one",
+  "按 cron 定时为指定容器或全部运行中容器创建磁盘备份，并按保留份数自动轮换": "Scheduled disk backups for a container or all running containers, rotated by retention count",
+  "异地备份（SSH/SCP）": "Off-site backup (SSH/SCP)",
+  "把每份实例备份额外复制到自备的备份服务器，应对本机磁盘损坏 / 整机丢失": "Replicate every instance backup to your own server to survive disk or host loss",
+  "私钥路径（可选，留空使用面板数据目录内的默认密钥）": "Private key path (optional; defaults to the key in the panel data directory)",
+  "请把下面公钥加入远端 ~/.ssh/authorized_keys": "Add the public key below to ~/.ssh/authorized_keys on the remote host",
+  "暂无备份计划，点击「新建计划」创建第一个定时备份任务": "No backup plans yet — click “New plan” to schedule your first backup",
+  "新建安全组": "New security group",
+  "暂无安全组": "No security groups yet",
+  "点击「新建安全组」创建第一个安全组": "Click “New security group” to create your first one",
+  "添加节点": "Add node",
+  "资源": "Resources",
+  "最后心跳": "Last heartbeat",
+  "批量 power（本机 {n} / 节点 {n} / 失败 {n}）": "Batch power (local {n} / node {n} / failed {n})",
+  "容器 ct-{n}({n}) 删除时清理卷": "Clean up volume when deleting container ct-{n}({n})",
+  "删除实例（节点 节点{n}）": "Delete instance (node node{n})",
+  "批量删除（本机 {n} / 节点 {n} / 失败 {n}）": "Batch delete (local {n} / node {n} / failed {n})",
+  "批量重装（本机 {n} / 节点 {n} / 失败 {n}）": "Batch reinstall (local {n} / node {n} / failed {n})",
+  "新建计划": "New plan",
+  "主机": "Host",
+  "租户": "Tenant",
+  "限流": "Rate limit",
+  "告警推送": "Alert delivery",
+  "新建分组": "New group",
+  "新建集群": "New cluster",
+  "分组": "Group",
+  "集群": "Cluster",
+  "区域": "Region",
+  "搜索节点": "Search nodes",
+  "全部节点": "All nodes",
+  "维护中": "Maintenance",
 }
 
 const artifactPatterns: RegExp[] = [
@@ -1469,6 +1532,12 @@ export function translateText(value: string): string {
   const body = value.trim()
   if (!body) return value
   if (exact[body]) return leading + exact[body] + trailing
+  // 数字归一化匹配：把 "队列（并发 2）" 归一为 "队列（并发 {n}）" 再查表，
+  // 命中后把原始数字填回。这样"标签 + 数字"型模板也能翻译，不必改写页面代码。
+  const numeric = translateWithNumberTemplate(body)
+  if (numeric !== '') {
+    return leading + numeric + trailing
+  }
   // 顺序很重要：先做**贪婪最长匹配**的词典翻译（整词优先），再跑正则替换做兜底。
   // 反过来的话，"历史运行记录"会先被正则把"运行"换成 run，变成"历史run记录"，
   // 之后词典里的复合词条就再也匹配不上（实测英文界面出现过该现象）。
@@ -1540,4 +1609,24 @@ function cleanupTranslatedText(value: string): string {
     .replace(/AutoStop\s*Off/g, 'Auto-stop off')
     .replace(/AutoStop\s*On/g, 'Auto-stop on')
     .replace(/\s{2,}/g, ' ')
+}
+
+// translateWithNumberTemplate 处理"标签 + 数字"型文本。
+//
+// 例：页面上渲染出「队列（并发 2）」「0 运行 / 0 排队」「共 7 个容器」——这类文本
+// 每次数字不同，无法靠整句词条覆盖。做法：把连续数字归一为 {n} 后查词典
+// （词典里存 '队列（并发 {n}）' 这样的模板），命中则把原数字依次填回。
+// 返回空串表示未命中（调用方继续走常规流程）。
+function translateWithNumberTemplate(value: string): string {
+  if (!/\d/.test(value)) {
+    return ''
+  }
+  const numbers = value.match(/\d+(?:\.\d+)?/g) || []
+  const normalized = value.replace(/\d+(?:\.\d+)?/g, '{n}')
+  const template = exact[normalized]
+  if (!template) {
+    return ''
+  }
+  let index = 0
+  return template.replace(/\{n\}/g, () => numbers[index++] ?? '{n}')
 }

@@ -41,7 +41,14 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
         setLanguageLocal(language)
       }
     },
-    t: (text: string) => language === 'en' ? translateText(text) : text,
+    t: (text: string, vars?: Record<string, string | number>) => {
+      const translated = language === 'en' ? translateText(text) : text
+      if (!vars) return translated
+      // 模板占位：词典存带 {name} 占位符的整句，翻译后再替换变量。这样
+      // 「队列（并发 {n}）」这类模板在英文界面也能正确显示，而不是回落成中文。
+      return translated.replace(/\{(\w+)\}/g, (_, key: string) =>
+        vars[key] !== undefined ? String(vars[key]) : `{${key}}`)
+    },
   }), [language])
 
   useEffect(() => {
