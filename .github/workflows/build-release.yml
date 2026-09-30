@@ -151,6 +151,7 @@ jobs:
           if [ -n "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" ]; then
             echo "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" > /tmp/signing.key
             ( cd backend && go run ./cmd/releasetool sign -key "$(cat /tmp/signing.key | tr -d '[:space:]')" -in ../artifacts/SHA256SUMS > ../artifacts/SHA256SUMS.minisig )
+            cp artifacts/SHA256SUMS.minisig artifacts/SHA256SUMS.minisign
             rm -f /tmp/signing.key
             echo "SHA256SUMS.minisig 已生成"
           else
@@ -172,7 +173,7 @@ jobs:
             -d "$payload" >/dev/null || true
           id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -n 1)"
           [ -n "$id" ] || { echo "无法获取 Codeberg release id"; exit 1; }
-          for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.minisig' \)); do
+          for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.minisig' -o -name 'SHA256SUMS.minisign' \)); do
             echo "upload $f"
             curl -fsSL -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
               -H "Authorization: token $CODEBERG_TOKEN" \
