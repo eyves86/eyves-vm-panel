@@ -612,6 +612,11 @@ func ensureSchemaMigrations() error {
 		{"containers", "remark", "TEXT"},
 		{"containers", "locked", "INTEGER NOT NULL DEFAULT 0"},
 		{"containers", "recycled_at", "TEXT"},
+		// 节点容器归属持久化（此前不落库：面板重启后节点容器"变成本机"，
+		// orphan 检测失配、代理调用找不到映射 —— 生产实测踩坑）。
+		{"containers", "node_id", "TEXT"},
+		// node_local_id：实例在所属被控上的本地 ID（代理调用用）。
+		{"containers", "node_local_id", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		wasAdded, err := ensureColumn(column.table, column.name, column.def)
 		if err != nil {
@@ -1223,6 +1228,7 @@ func saveContainers(tx *sql.Tx) error {
 		allowedImageIDs := encodeStringSlice(c.AllowedImageIDs)
 		if _, err := tx.Exec(`INSERT INTO containers (
 			id, uuid, name, virtualization, lxc_name, kvm_name, disk_image, storage_pool_id, storage_path, mac_address, template,
+			node_id, node_local_id,
 			vcpu, cpu_percent, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
 			monthly_traffic_gb, traffic_mode, traffic_in_gb,
 			traffic_out_gb, traffic_used_rx, traffic_used_tx, traffic_reset_date,
@@ -1237,8 +1243,9 @@ func saveContainers(tx *sql.Tx) error {
 			tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
 			rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
 			suspended, suspended_at, suspended_reason, remark, locked, recycled_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
 			c.ID, c.UUID, c.Name, c.Virtualization, c.LXCName, c.KVMName, c.DiskImage, c.StoragePoolID, c.StoragePath, c.MACAddress, c.Template,
+			c.NodeID, c.NodeLocalID,
 			c.VCPU, c.CPUPercent, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
 			c.MonthlyTrafficGB, c.TrafficMode, c.TrafficInGB,
 			c.TrafficOutGB, c.TrafficUsedRX, c.TrafficUsedTX, c.TrafficResetDate,
@@ -1621,6 +1628,7 @@ func saveSnapshots(tx *sql.Tx) error {
 func loadContainers() ([]Container, error) {
 	rows, err := db.Query(`SELECT
 		id, uuid, name, virtualization, lxc_name, kvm_name, disk_image, storage_pool_id, storage_path, mac_address, template,
+		node_id, node_local_id,
 		vcpu, cpu_percent, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
 		monthly_traffic_gb, traffic_mode, traffic_in_gb,
 		traffic_out_gb, traffic_used_rx, traffic_used_tx, traffic_reset_date,
@@ -1663,10 +1671,13 @@ func loadContainers() ([]Container, error) {
 		var remarkCol sql.NullString
 		var lockedCol int
 		var recycledCol sql.NullString
+		var nodeIDCol sql.NullString
+		var nodeLocalIDCol sql.NullInt64
 		// ssh_password 以 enc:v1: 密文落库（审计 H-5）：先扫进临时变量再解密。
 		var sshPasswordCol sql.NullString
 		if err := rows.Scan(
 			&c.ID, &c.UUID, &c.Name, &c.Virtualization, &c.LXCName, &c.KVMName, &c.DiskImage, &storagePoolID, &storagePath, &c.MACAddress, &c.Template,
+			&nodeIDCol, &nodeLocalIDCol,
 			&c.VCPU, &c.CPUPercent, &c.RAMMB, &c.DiskGB, &c.NetworkBWMbps, &c.NetworkDownMbps, &c.NetworkUpMbps,
 			&c.MonthlyTrafficGB, &c.TrafficMode, &c.TrafficInGB,
 			&c.TrafficOutGB, &c.TrafficUsedRX, &c.TrafficUsedTX, &c.TrafficResetDate,
@@ -1704,6 +1715,8 @@ func loadContainers() ([]Container, error) {
 		c.Remark = remarkCol.String
 		c.Locked = lockedCol != 0
 		c.RecycledAt = recycledCol.String
+		c.NodeID = nodeIDCol.String
+		c.NodeLocalID = int(nodeLocalIDCol.Int64)
 		c.Tenant = tenant.String
 		c.StoragePoolID = storagePoolID.String
 		c.StoragePath = storagePath.String

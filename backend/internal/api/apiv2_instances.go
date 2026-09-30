@@ -871,6 +871,7 @@ func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 				v2Upstream(w, r, err.Error())
 				return
 			}
+			removeNodeContainerRecord(c.UUID)
 			auditRequest(r, "api.v2.instance.delete", c.Name, "彻底删除（节点 "+nodeName+"）", true, "")
 			v2Accepted(w, r, map[string]interface{}{
 				"id": c.ID, "name": c.Name, "node_id": c.NodeID, "node_name": nodeName,
@@ -890,7 +891,14 @@ func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if wasRunning {
-		globalQueue.EnqueueWithAudit(c.ID, name, TaskStop, "", nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		if c.NodeID != "" {
+			// 节点容器：本地队列不认识它，直接代理被控停机（best-effort）。
+			if handled, _, _ := v2ProxyInstanceToNode(r, c, "stop", nil); !handled {
+				// 不可能到达（NodeID 非空必然 handled），保留分支完整性。
+			}
+		} else {
+			globalQueue.EnqueueWithAudit(c.ID, name, TaskStop, "", nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		}
 	}
 	auditRequest(r, "api.v2.instance.delete", name, "移入回收站（可恢复）", true, "")
 	v2Accepted(w, r, map[string]interface{}{
@@ -981,7 +989,7 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, agentAction), nil)
+			fmt.Sprintf("/api/agent/containers/%d/%s", nodeLocalID(c), agentAction), nil)
 		if err != nil {
 			v2Upstream(w, r, "代理节点失败："+err.Error())
 			return
@@ -1065,7 +1073,7 @@ func v2InstanceReinstall(w http.ResponseWriter, r *http.Request) {
 		}
 		body, _ := json.Marshal(map[string]string{"template_id": req.TemplateID, "password": req.Password})
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/reinstall", c.ID), strings.NewReader(string(body)))
+			fmt.Sprintf("/api/agent/containers/%d/reinstall", nodeLocalID(c)), strings.NewReader(string(body)))
 		if err != nil {
 			v2Upstream(w, r, "代理节点失败："+err.Error())
 			return
@@ -1116,7 +1124,7 @@ func v2InstanceResetPassword(w http.ResponseWriter, r *http.Request) {
 		}
 		body, _ := json.Marshal(map[string]string{"password": password})
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/reset-password", c.ID), strings.NewReader(string(body)))
+			fmt.Sprintf("/api/agent/containers/%d/reset-password", nodeLocalID(c)), strings.NewReader(string(body)))
 		if err != nil {
 			v2Upstream(w, r, "代理节点失败："+err.Error())
 			return
@@ -1330,7 +1338,7 @@ func v2InstanceXML(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data, status, err := proxyNodeRequest(r, node, http.MethodGet,
-			fmt.Sprintf("/api/agent/containers/%d/xml", c.ID), nil)
+			fmt.Sprintf("/api/agent/containers/%d/xml", nodeLocalID(c)), nil)
 		if err != nil {
 			v2Upstream(w, r, "代理节点失败："+err.Error())
 			return
@@ -1704,7 +1712,7 @@ func v2ProxyInstanceToNode(r *http.Request, c *config.Container, agentAction str
 		reader = bytes.NewReader(body)
 	}
 	data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, agentAction), reader)
+		fmt.Sprintf("/api/agent/containers/%d/%s", nodeLocalID(c), agentAction), reader)
 	if err != nil {
 		return true, node.Name, fmt.Errorf("代理节点失败：%w", err)
 	}
@@ -1856,6 +1864,9 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			failures = append(failures, map[string]interface{}{"id": id, "name": c.Name, "error": err.Error()})
 			continue
+		}
+		if agentAction == "destroy" {
+			removeNodeContainerRecord(c.UUID)
 		}
 		proxied = append(proxied, map[string]interface{}{"id": id, "name": c.Name, "node": nodeName})
 	}

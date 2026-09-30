@@ -715,7 +715,8 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		DiskUsedGB     float64 `json:"disk_used_gb"`
 		ContainerCount int     `json:"container_count"`
 		// 容器摘要（可选）：agent 心跳时附带的轻量容器列表，供主控聚合。
-		ContainerSummaries []heartbeatContainerSummary `json:"containers,omitempty"`
+		// 指针类型用于区分"字段缺失"（老 agent，跳过同步）与"空数组"（节点上零容器，需要同步清理 orphan）。
+		ContainerSummaries *[]heartbeatContainerSummary `json:"containers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -748,9 +749,10 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		return
 	}
 
-	// 增量同步容器列表（仅当 agent 上报了 containers 字段时）
-	if len(req.ContainerSummaries) > 0 {
-		syncAgentContainers(nodeID, req.ContainerSummaries)
+	// 增量同步容器列表（agent 上报了 containers 字段就同步——空数组同样有效，
+	// 否则节点上清空容器后主控永远无法进入 orphan 清理）。
+	if req.ContainerSummaries != nil {
+		syncAgentContainers(nodeID, *req.ContainerSummaries)
 	}
 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "ok"})
@@ -782,6 +784,30 @@ type heartbeatContainerSummary struct {
 	DiskRead  float64 `json:"disk_read,omitempty"`
 	DiskWrite float64 `json:"disk_write,omitempty"`
 	MetricTS  int64   `json:"metric_ts,omitempty"`
+}
+
+// allocateNodeContainerID 为节点容器分配主控侧全局唯一 ID
+// （避开本机容器与其它节点容器已占用的号段；NextContainerID 计数器同步推进）。
+func allocateNodeContainerID(cfg *config.EyvescloudConfig) int {
+	used := make(map[int]bool, len(cfg.Containers))
+	maxID := 0
+	for i := range cfg.Containers {
+		used[cfg.Containers[i].ID] = true
+		if cfg.Containers[i].ID > maxID {
+			maxID = cfg.Containers[i].ID
+		}
+	}
+	id := cfg.NextContainerID
+	if id <= maxID {
+		id = maxID + 1
+	}
+	for used[id] {
+		id++
+	}
+	if cfg.NextContainerID <= id {
+		cfg.NextContainerID = id + 1
+	}
+	return id
 }
 
 // syncAgentContainers 将 agent 心跳上报的容器摘要增量合并到主控容器列表。
@@ -818,6 +844,9 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 				if cfg.Containers[i].UUID == s.UUID {
 					// 更新心跳同步的字段（主控侧独占字段如 OwnerSubUserID/SSHPassword 保留）
 					cfg.Containers[i].NodeID = nodeID
+					if s.ID > 0 {
+						cfg.Containers[i].NodeLocalID = s.ID
+					}
 					if cfg.Containers[i].Status != s.Status {
 						statusChanges = append(statusChanges, containerStatusChange{
 							id:   cfg.Containers[i].ID,
@@ -847,9 +876,14 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 				}
 			}
 			if !found {
-				// 主控没有此容器：从 agent 推送的摘要新增（最简版，细节由主控按需拉）
+				// 主控没有此容器：从 agent 推送的摘要新增。
+				// 主控侧 ID 必须全局唯一（SQLite 主键）：节点本地 ID 可能与本机
+				// 容器撞号（实测：节点 id=3 与本机 id=3 撞 → 整笔保存事务主键冲突
+				// 回滚 → 所有配置写入静默失败）。这里分配主控唯一 ID，
+				// 节点本地 ID 另存 NodeLocalID 供代理调用。
 				newC := config.Container{
-					ID: s.ID, UUID: s.UUID, Name: s.Name,
+					ID: allocateNodeContainerID(cfg), NodeLocalID: s.ID,
+					UUID: s.UUID, Name: s.Name,
 					Status: s.Status, Virtualization: s.Virtualization,
 					Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
 					DiskGB: s.DiskGB, NodeID: nodeID,

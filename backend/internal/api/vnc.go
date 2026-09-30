@@ -342,7 +342,7 @@ func handleContainerVNCTicketPost(w http.ResponseWriter, r *http.Request, c *con
 		if ok && node.Address != "" {
 			// 转发到 agent 端的 /api/agent/containers/{id}/vnc-ticket
 			data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-				fmt.Sprintf("/api/agent/containers/%d/vnc-ticket", c.ID),
+				fmt.Sprintf("/api/agent/containers/%d/vnc-ticket", nodeLocalID(c)),
 				strings.NewReader("{}"))
 			if err == nil && status < 500 {
 				w.Header().Set("Content-Type", "application/json")

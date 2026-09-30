@@ -186,10 +186,14 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return true
 		}
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, agentAction), body)
+			fmt.Sprintf("/api/agent/containers/%d/%s", nodeLocalID(c), agentAction), body)
 		if err != nil {
 			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
 			return true
+		}
+		// destroy 成功 = 被控已确认销毁：主控侧记录立即清除。
+		if agentAction == "destroy" && status < 300 {
+			removeNodeContainerRecord(c.UUID)
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -265,8 +269,16 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if wasRunning {
-			// 排停机任务（异步），回收站中的实例保持关机。
-			globalQueue.EnqueueWithAudit(id, name, TaskStop, "", nil, requestActor(r), clientIP(r), r.UserAgent())
+			if c.NodeID != "" {
+				// 节点容器：本地队列不认识它，代理被控停机（best-effort）。
+				if node, ok := config.FindNode(c.NodeID); ok && node.Address != "" {
+					_, _, _ = proxyNodeRequest(r, node, http.MethodPost,
+						fmt.Sprintf("/api/agent/containers/%d/stop", nodeLocalID(c)), nil)
+				}
+			} else {
+				// 本机容器：排停机任务（异步），回收站中的实例保持关机。
+				globalQueue.EnqueueWithAudit(id, name, TaskStop, "", nil, requestActor(r), clientIP(r), r.UserAgent())
+			}
 		}
 		auditRequest(r, "container.recycle", name, "移入回收站（可恢复）", true, "")
 		jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "Container moved to recycle bin", Data: map[string]interface{}{
@@ -585,18 +597,18 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			switch {
 			case r.Method == http.MethodDelete:
 				sid := strings.TrimPrefix(action, "snapshots/")
-				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshots/delete", id)
+				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshots/delete", nodeLocalID(c))
 				b, _ := json.Marshal(map[string]interface{}{"snapshot_id": sid})
 				agentBodyStr = string(b)
 			case strings.HasSuffix(action, "/restore"):
 				sid := strings.TrimSuffix(strings.TrimPrefix(action, "snapshots/"), "/restore")
-				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshots/restore", id)
+				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshots/restore", nodeLocalID(c))
 				b, _ := json.Marshal(map[string]interface{}{"snapshot_id": sid})
 				agentBodyStr = string(b)
 			default:
 				bodyBytes, _ := io.ReadAll(r.Body)
 				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshot", id)
+				agentPath = fmt.Sprintf("/api/agent/containers/%d/snapshot", nodeLocalID(c))
 				agentBodyStr = string(bodyBytes)
 			}
 			data, status, err := proxyNodeRequest(r, node, http.MethodPost,
@@ -1249,7 +1261,7 @@ func updateResourceLimit(w http.ResponseWriter, r *http.Request, id int) {
 				}
 				agentBody, _ := json.Marshal(map[string]interface{}{"disk_gb": newDiskGB})
 				data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-					fmt.Sprintf("/api/agent/containers/%d/resize", id), strings.NewReader(string(agentBody)))
+					fmt.Sprintf("/api/agent/containers/%d/resize", nodeLocalID(c)), strings.NewReader(string(agentBody)))
 				if err != nil {
 					jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
 					return
@@ -1949,7 +1961,7 @@ func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
 			"start_after_clone": req.StartAfterClone,
 		})
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/clone", src.ID), strings.NewReader(string(agentBody)))
+			fmt.Sprintf("/api/agent/containers/%d/clone", nodeLocalID(src)), strings.NewReader(string(agentBody)))
 		if err != nil {
 			auditRequest(r, "container.clone", src.Name, "target="+req.Name+" agent-err="+err.Error(), false, err.Error())
 			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})
@@ -2181,7 +2193,7 @@ func purgeContainerAction(w http.ResponseWriter, r *http.Request, c *config.Cont
 			return
 		}
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/destroy", c.ID), nil)
+			fmt.Sprintf("/api/agent/containers/%d/destroy", nodeLocalID(c)), nil)
 		if err != nil {
 			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理节点失败：" + err.Error()})
 			return
@@ -2190,6 +2202,8 @@ func purgeContainerAction(w http.ResponseWriter, r *http.Request, c *config.Cont
 			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "节点执行失败：" + strings.TrimSpace(string(data))})
 			return
 		}
+		// 被控已确认销毁：主控侧记录立即清除（否则列表残留到重启）。
+		removeNodeContainerRecord(c.UUID)
 		auditRequest(r, "container.purge", c.Name, "彻底删除（节点 "+node.Name+"）", true, "")
 		jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "Purge accepted", Data: map[string]interface{}{
 			"id": c.ID, "name": c.Name, "node": node.Name,

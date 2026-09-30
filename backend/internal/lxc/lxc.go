@@ -3809,6 +3809,12 @@ func (m *Manager) refreshContainerIPv4Details(c *config.Container) {
 func (m *Manager) ListContainers() ([]config.Container, error) {
 	containers := config.AppConfig.Containers
 	for i := range containers {
+		// 节点容器：本地无法探测（不在本机 LXC 里），状态/网络由主控心跳同步
+		// 维护。此前未跳过：本地同名 LXC 的探测结果会把心跳维护的状态
+		// （如 orphaned）覆写回 stopped —— 生产实测踩坑（v2.2.36）。
+		if containers[i].NodeID != "" {
+			continue
+		}
 		if containers[i].IsKVM() {
 			continue
 		}

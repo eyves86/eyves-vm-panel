@@ -57,7 +57,7 @@ func HandleContainerRescue(w http.ResponseWriter, r *http.Request) {
 	if c.NodeID != "" {
 		if node, ok := config.FindNode(c.NodeID); ok && node.Address != "" {
 			data, status, pErr := proxyNodeRequest(r, node, http.MethodPost,
-				fmt.Sprintf("/api/agent/containers/%d/rescue", c.ID),
+				fmt.Sprintf("/api/agent/containers/%d/rescue", nodeLocalID(c)),
 				bytes.NewReader(buf))
 			if pErr == nil && status < 500 {
 				w.Header().Set("Content-Type", "application/json")

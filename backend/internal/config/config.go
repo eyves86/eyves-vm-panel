@@ -124,6 +124,9 @@ type Container struct {
 	UUID           string  `json:"uuid"`
 	Name           string  `json:"name"`
 	NodeID         string  `json:"node_id,omitempty"` // 所在节点 ID；空 = 主控本机（向后兼容）
+	// NodeLocalID 是实例在被控节点上的本地 ID（代理调用 /api/agent/containers/{该值}/...）。
+	// 与主控侧 ID（c.ID，全局唯一）分离：节点本地 ID 可能与本机容器撞号。
+	NodeLocalID    int     `json:"node_local_id,omitempty"`
 	Virtualization string  `json:"virtualization,omitempty"`
 	LXCName        string  `json:"lxc_name,omitempty"`
 	KVMName        string  `json:"kvm_name,omitempty"`
@@ -4225,6 +4228,13 @@ func CleanStaleContainers() {
 	valid := make([]Container, 0)
 	changed := false
 	for _, c := range AppConfig.Containers {
+		// 节点容器：主控本地文件系统没有它的 LXC 目录/KVM 镜像，存在性由
+		// 被控心跳维护（syncAgentContainers 的 orphan 机制）。此前未跳过：
+		// 每次主控重启都会把节点容器当"过期记录"误删（生产实测，v2.2.36）。
+		if c.NodeID != "" {
+			valid = append(valid, c)
+			continue
+		}
 		if c.IsKVM() {
 			if c.DiskImage == "" {
 				valid = append(valid, c)

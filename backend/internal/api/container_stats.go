@@ -290,7 +290,7 @@ func routeToAgent(w http.ResponseWriter, r *http.Request, c *config.Container, a
 		r.Body = io.NopCloser(bytes.NewReader(buf))
 	}
 	data, status, err := proxyNodeRequest(r, node, method,
-		fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, action), body)
+		fmt.Sprintf("/api/agent/containers/%d/%s", nodeLocalID(c), action), body)
 	if err != nil || status >= 500 {
 		// 转发失败，但 r.Body 已经被上面重建过，handler 继续读没问题。
 		return false

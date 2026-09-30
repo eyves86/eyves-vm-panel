@@ -102,6 +102,7 @@ func v2InstancePurge(w http.ResponseWriter, r *http.Request) {
 			v2Upstream(w, r, err.Error())
 			return
 		}
+		removeNodeContainerRecord(c.UUID)
 		auditRequest(r, "api.v2.instance.purge", c.Name, "彻底删除（节点 "+nodeName+"）", true, "")
 		v2Accepted(w, r, map[string]interface{}{"id": c.ID, "name": c.Name, "node": nodeName, "purged": true})
 		return

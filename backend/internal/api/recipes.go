@@ -400,7 +400,7 @@ func executeRecipe(w http.ResponseWriter, r *http.Request, recipeID string) {
 			"timeout": timeout,
 		})
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
-			fmt.Sprintf("/api/agent/containers/%d/recipes/execute", c.ID), strings.NewReader(string(agentBody)))
+			fmt.Sprintf("/api/agent/containers/%d/recipes/execute", nodeLocalID(c)), strings.NewReader(string(agentBody)))
 		if err != nil {
 			auditRequest(r, "recipe.execute", recipe.Name, "container="+c.Name+" agent-err="+err.Error(), false, err.Error())
 			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理被控节点失败: " + err.Error()})

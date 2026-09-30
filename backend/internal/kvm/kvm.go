@@ -2245,6 +2245,10 @@ func parseWindowsGuestMetrics(stdout string) (windowsGuestMetrics, error) {
 
 func (m *Manager) ListContainers(containers []config.Container) []config.Container {
 	for i := range containers {
+		// 节点容器：本地不探测（见 lxc.ListContainers 同款说明）。
+		if containers[i].NodeID != "" {
+			continue
+		}
 		if !containers[i].IsKVM() {
 			continue
 		}
