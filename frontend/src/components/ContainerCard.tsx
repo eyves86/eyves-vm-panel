@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router'
+import { adminPath } from '../services/panelPath'
 import {
   Server,
   Cpu,
@@ -61,7 +62,7 @@ export default function ContainerCard({ container, onRefresh }: ContainerCardPro
           </div>
           <div>
             <button
-              onClick={() => navigate(`/container/${encodeURIComponent(String(containerIdentifier))}`)}
+              onClick={() => navigate(adminPath('container', encodeURIComponent(String(containerIdentifier))))}
               className="font-semibold text-black hover:underline text-left"
             >
               {container.name}

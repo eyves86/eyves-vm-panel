@@ -178,6 +178,10 @@ export interface Container {
   suspended_at?: string
   owner_sub_user_id?: string
   node_id?: string
+  /** 客户接入端点（后端计算：节点容器指向所属节点，本机容器指向面板） */
+  access_host?: string
+  access_ssh_port?: number
+  access_via?: 'node' | 'panel'
 }
 
 export interface Template {
@@ -232,6 +236,10 @@ export interface CreateContainerRequest {
   ipv6_addresses?: string[]
   ssh_auth_mode?: string
   ssh_password?: string
+  /** 客户接入端点（后端计算：节点容器指向所属节点，本机容器指向面板） */
+  access_host?: string
+  access_ssh_port?: number
+  access_via?: 'node' | 'panel'
   ssh_public_key?: string
   allowed_image_ids?: string[]
   image_limit_configured?: boolean

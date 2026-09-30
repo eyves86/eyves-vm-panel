@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { adminPath } from '../services/panelPath'
 import { Globe2, Network, Pencil, Plus, RefreshCw, Router, Save, ScanSearch, Search, Server, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { useLanguage, type Language } from '../contexts/LanguageContext'
@@ -407,7 +408,7 @@ export default function Routing() {
                       <td className="px-4 py-3 font-mono text-xs text-gray-600">{ip.subnet_mask || (ip.prefix_len ? subnetMaskFromPrefixLen(ip.prefix_len) : '-')}</td>
                       <td className="px-4 py-3">
                         {assigned ? (
-                          <button onClick={() => navigate(`/container/${assigned.container_id}`)} className="font-medium text-black hover:underline">
+                          <button onClick={() => navigate(adminPath('container', String(assigned.container_id)))} className="font-medium text-black hover:underline">
                             {assigned.container_name}
                           </button>
                         ) : (
@@ -441,7 +442,7 @@ export default function Routing() {
                     <div className="mt-1 text-sm text-gray-700">{editingIPv4Assignment?.container_name || text.available}</div>
                   </div>
                   {editingIPv4Assignment && (
-                    <button onClick={() => navigate(`/container/${editingIPv4Assignment.container_id}`)} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-white">
+                    <button onClick={() => navigate(adminPath('container', String(editingIPv4Assignment.container_id)))} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-white">
                       <Server className="h-3.5 w-3.5" />
                       {text.openContainer}
                     </button>
@@ -712,7 +713,7 @@ export default function Routing() {
                 {lanDHCPAssignments.map((item: LANDHCPRoute) => (
                   <tr key={`${item.container_id}-${item.interface}-${item.mac_address || item.address}`} className="hover:bg-gray-50">
                     <td className="px-4 py-3">
-                      <button onClick={() => navigate(`/container/${item.container_id}`)} className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline">
+                      <button onClick={() => navigate(adminPath('container', String(item.container_id)))} className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline">
                         <Server className="h-4 w-4 text-gray-400" />
                         {item.container_name}
                       </button>
@@ -755,7 +756,7 @@ export default function Routing() {
                   {pagedNat4Mappings.map((mapping, index) => (
                     <tr key={`${mapping.container_id}-${mapping.host_ip}-${mapping.host_port}-${mapping.protocol}-${index}`} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
-                        <button onClick={() => navigate(`/container/${mapping.container_id}`)} className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline">
+                        <button onClick={() => navigate(adminPath('container', String(mapping.container_id)))} className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline">
                           <Server className="h-4 w-4 text-gray-400" />
                           {mapping.container_name}
                         </button>
@@ -798,7 +799,7 @@ export default function Routing() {
                   {pagedIPv6Assignments.map((item) => (
                     <tr key={`${item.container_id}-${item.address}`} className="hover:bg-gray-50">
                       <td className="px-4 py-3">
-                        <button onClick={() => navigate(`/container/${item.container_id}`)} className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline">
+                        <button onClick={() => navigate(adminPath('container', String(item.container_id)))} className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline">
                           <Server className="h-4 w-4 text-gray-400" />
                           {item.container_name}
                         </button>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { adminPath } from '../services/panelPath'
 import { useNavigate } from 'react-router'
 import {
   Download,
@@ -218,7 +219,7 @@ export default function ImageManagement() {
             <AlertCircle className="h-4 w-4 shrink-0" />
             尚未开启镜像缓存存储，无法下载新镜像。
           </div>
-          <button onClick={() => navigate('/storage')} className="shrink-0 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-amber-100">
+          <button onClick={() => navigate(adminPath('storage'))} className="shrink-0 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-amber-100">
             去开启
           </button>
         </div>

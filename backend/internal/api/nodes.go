@@ -765,6 +765,8 @@ type heartbeatContainerSummary struct {
 	Name           string `json:"name"`
 	Status         string `json:"status"`
 	Virtualization string `json:"virtualization"`
+	// Template 是实例的系统镜像/模板 ID（列表与详情页的"系统"列展示用）。
+	Template string `json:"template,omitempty"`
 	// IP / SSHPort 由被控上报，供主控列表直接展示节点容器地址（此前主控侧为空）。
 	IP            string  `json:"ip,omitempty"`
 	SSHPort       int     `json:"ssh_port,omitempty"`
@@ -857,6 +859,9 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 						cfg.Containers[i].Status = s.Status
 					}
 					cfg.Containers[i].Virtualization = s.Virtualization
+					if s.Template != "" {
+						cfg.Containers[i].Template = s.Template
+					}
 					cfg.Containers[i].Suspended = s.Suspended
 					cfg.Containers[i].VCPU = s.VCPU
 					cfg.Containers[i].RAMMB = s.RAMMB
@@ -884,7 +889,7 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 				newC := config.Container{
 					ID: allocateNodeContainerID(cfg), NodeLocalID: s.ID,
 					UUID: s.UUID, Name: s.Name,
-					Status: s.Status, Virtualization: s.Virtualization,
+					Status: s.Status, Virtualization: s.Virtualization, Template: s.Template,
 					Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
 					DiskGB: s.DiskGB, NodeID: nodeID,
 					IP: s.IP, SSHPort: s.SSHPort,

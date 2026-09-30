@@ -73,6 +73,7 @@ func v2NodeView(n config.Node) map[string]interface{} {
 	view["maintenance"] = n.MaintenanceMode
 	view["maintenance_since"] = v2Time(n.MaintenanceSince)
 	view["tls_skip_verify"] = n.TLSSkipVerify
+	view["public_host"] = n.PublicHost
 	view["last_seen"] = v2Time(n.LastSeen)
 	view["created_at"] = v2Time(n.CreatedAt)
 	view["region_name"] = v2RegionName(n.RegionID)
@@ -473,6 +474,8 @@ func v2NodeUpdate(w http.ResponseWriter, r *http.Request) {
 		TLSSkipVerify *bool   `json:"tls_skip_verify"`
 		RegionID      *string `json:"region_id"`
 		NodeGroupID   *string `json:"node_group_id"`
+		// PublicHost：客户接入地址（公网 IP/域名）。留空自动取 Address 的 host。
+		PublicHost *string `json:"public_host"`
 	}
 	if err := v2Decode(r, &req); err != nil {
 		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
@@ -506,6 +509,10 @@ func v2NodeUpdate(w http.ResponseWriter, r *http.Request) {
 		if req.NodeGroupID != nil {
 			n.NodeGroupID = *req.NodeGroupID
 			changed["node_group_id"] = n.NodeGroupID
+		}
+		if req.PublicHost != nil {
+			n.PublicHost = normalizeAccessHost(*req.PublicHost)
+			changed["public_host"] = n.PublicHost
 		}
 	})
 	if len(changed) == 0 {

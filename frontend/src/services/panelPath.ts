@@ -31,3 +31,17 @@ export function adminUrl(...segments: string[]): string | null {
   if (tail) return `${base}/${tail}`
   return base || '/'
 }
+
+/**
+ * adminPath：管理端内部跳转路径（自动带上可自定义的管理入口前缀）。
+ *
+ * 背景（生产实测 bug）：管理入口路径可自定义（如 /admin-xxxx），但页面里曾用
+ * 绝对路径 navigate('/container/5') —— 匹配不到路由会落到通配符被重定向回首页。
+ * 所有管理端内部跳转必须经此函数拼接。
+ */
+export function adminPath(...segments: string[]): string {
+  const url = adminUrl(...segments)
+  if (url !== null) return url
+  const tail = segments.filter((s) => s !== '').join('/')
+  return tail ? `/${tail}` : '/'
+}

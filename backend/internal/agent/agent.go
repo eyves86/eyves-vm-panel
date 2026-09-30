@@ -351,6 +351,7 @@ func collectNodeStatus() map[string]interface{} {
 			Name           string  `json:"name"`
 			Status         string  `json:"status"`
 			Virtualization string  `json:"virtualization"`
+			Template       string  `json:"template,omitempty"`
 			IP             string  `json:"ip,omitempty"`
 			SSHPort        int     `json:"ssh_port,omitempty"`
 			Suspended      bool    `json:"suspended,omitempty"`
@@ -373,7 +374,7 @@ func collectNodeStatus() map[string]interface{} {
 		for _, c := range config.AppConfig.Containers {
 			s := containerSummary{
 				ID: c.ID, UUID: c.UUID, Name: c.Name, Status: c.Status,
-				Virtualization: c.Virtualization, Suspended: c.Suspended,
+				Virtualization: c.Virtualization, Template: c.Template, Suspended: c.Suspended,
 				IP: c.IP, SSHPort: c.SSHPort,
 				VCPU: c.VCPU, RAMMB: c.RAMMB, DiskGB: c.DiskGB,
 				ExpiresAt: c.ExpiresAt, TrafficUsedRX: c.TrafficUsedRX,

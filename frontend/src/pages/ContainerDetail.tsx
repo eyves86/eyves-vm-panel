@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
+import { adminPath } from '../services/panelPath'
 import { useParams, useNavigate } from 'react-router'
 import {
   ArrowLeft,
@@ -536,7 +537,7 @@ export default function ContainerDetail() {
         case 'delete':
           if (!(await dialog.confirm('删除容器', `确定要删除容器 ${container?.name} 吗？此操作不可撤销。`))) return
           await deleteContainer(containerIdentifier)
-          navigate('/containers')
+          navigate(adminPath('containers'))
           return
       }
       await fetchContainer()
@@ -1589,7 +1590,7 @@ export default function ContainerDetail() {
     return (
       <div className="text-center py-20">
         <p className="text-gray-500">容器不存在</p>
-        <button onClick={() => navigate('/containers')} className="mt-4 text-sm text-black underline">
+        <button onClick={() => navigate(adminPath('containers'))} className="mt-4 text-sm text-black underline">
           返回列表
         </button>
       </div>
@@ -1618,7 +1619,10 @@ export default function ContainerDetail() {
   const panelReachableHost = PUBLIC_HOST
   const backendPublicIPv4 = hostInfo?.network.public_ipv4 || ''
   const usesIndependentIPv4 = assignedIPv4List.length > 0
-  const publicHost = usesIndependentIPv4 ? assignedIPv4List[0] : (panelReachableHost || backendPublicIPv4)
+  // 接入端点以后端计算为准（access_host）：节点容器指向所属节点，
+  // 本机容器指向面板。回退：独立 IPv4 → 面板可达地址 → 后端上报公网 IP。
+  const accessFallback = panelReachableHost || backendPublicIPv4
+  const publicHost = container.access_host || (usesIndependentIPv4 ? assignedIPv4List[0] : accessFallback)
   const ipv6List = (container.ipv6_addresses || [])
     .map((item) => item.address)
     .filter(Boolean)
@@ -1647,10 +1651,11 @@ export default function ContainerDetail() {
     if (!isWindows) {
       sshCommand = `ssh root@[${ipv6List[0]}]`
     }
-  } else if (container.ssh_port > 0) {
-    // NAT port mapping mode
-    publicEndpoint = `${publicHost}:${container.ssh_port}`
-    sshCommand = `ssh -p ${container.ssh_port} root@${publicHost}`
+  } else if (container.ssh_port > 0 || (container.access_ssh_port || 0) > 0) {
+    // NAT port mapping mode（端口以后端下发为准）
+    const sshPort = container.access_ssh_port || container.ssh_port
+    publicEndpoint = `${publicHost}:${sshPort}`
+    sshCommand = `ssh -p ${sshPort} root@${publicHost}`
   }
   const editingSSH = draft.index !== null && !!container.port_mappings?.[draft.index] && (
     container.port_mappings[draft.index].description === 'SSH' || container.port_mappings[draft.index].container_port === 22 ||
@@ -1752,7 +1757,7 @@ export default function ContainerDetail() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <button
-          onClick={() => navigate('/containers')}
+          onClick={() => navigate(adminPath('containers'))}
           className="flex items-center gap-1.5 text-sm text-gray-600 hover:text-black transition-colors"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -2426,7 +2431,7 @@ export default function ContainerDetail() {
             {!storageLoading && !snapshotStorageReady && (
               <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                 <span>尚未开启快照存储，无法新建或启用定时快照。</span>
-                <button onClick={() => { setShowSnapshots(false); navigate('/storage') }} className="shrink-0 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-amber-100">
+                <button onClick={() => { setShowSnapshots(false); navigate(adminPath('storage')) }} className="shrink-0 rounded-md border border-amber-300 bg-white px-3 py-1.5 text-xs font-medium hover:bg-amber-100">
                   去开启
                 </button>
               </div>

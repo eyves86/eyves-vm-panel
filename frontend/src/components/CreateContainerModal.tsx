@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { adminPath } from '../services/panelPath'
 import { ArrowLeft, ArrowRight, CalendarClock, Check, Plus, RefreshCw, Trash2, X } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { batchCreate, createContainerOnNode, getEnabledImages, getHostInfo, getHostReport, getIPv6Status, getNodes, getRoutingInfo, getStorageInfo, CreateContainerRequest, HostInfo, HostProbeReport, IPv6Status, ManagedNode, PortMapping, RoutingInfo, StorageInfo, Template } from '../services/api'
@@ -1028,7 +1029,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 <span>尚未开启{form.virtualization === 'kvm' ? ' KVM 磁盘' : ' LXC 容器'}存储，当前无法创建。</span>
                 <button
                   type="button"
-                  onClick={() => { onClose(); navigate('/storage') }}
+                  onClick={() => { onClose(); navigate(adminPath('storage')) }}
                   className="shrink-0 rounded-md border border-amber-300 bg-white px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
                 >
                   去开启

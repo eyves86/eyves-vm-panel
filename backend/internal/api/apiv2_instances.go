@@ -177,6 +177,18 @@ func v2InstanceView(c config.Container) map[string]interface{} {
 			"disk_image":   c.DiskImage,
 		}
 	}
+	// access：客户接入端点（节点容器指向所属节点；主控本机指向面板）。
+	// 计费系统/集成方只消费该对象，勿自行推断地址。
+	host, port, via := containerAccessEndpoint(nil, &c)
+	access := map[string]interface{}{
+		"host":     host,
+		"ssh_port": port,
+		"via":      via,
+	}
+	if host != "" && port > 0 {
+		access["ssh_command"] = fmt.Sprintf("ssh -p %d root@%s", port, host)
+	}
+	view["access"] = access
 	return view
 }
 

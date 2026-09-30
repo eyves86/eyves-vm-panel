@@ -1318,6 +1318,10 @@ type Node struct {
 	ID                  string   `json:"id"`
 	Name                string   `json:"name"`
 	Address             string   `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
+	// PublicHost 是该节点上容器对外提供服务的接入地址（公网 IP 或域名）。
+	// 留空时由 Address 的 host 推导。用于生成容器的 SSH/RDP 接入端点
+	// （NAT 端口映射挂在节点上，端点必须指向节点而不是主控）。
+	PublicHost string `json:"public_host,omitempty"`
 	Token               string   `json:"token,omitempty"`
 	InstallKey          string   `json:"install_key,omitempty"`
 	InstallKeyCreatedAt string   `json:"install_key_created_at,omitempty"`

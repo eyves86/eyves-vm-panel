@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { adminPath } from '../services/panelPath'
 import { useNavigate } from 'react-router'
 import {
   ArrowDown,
@@ -668,7 +669,7 @@ export default function Containers() {
                       </td>
                       <td className="px-2.5 py-2 align-top">
                         <button
-                          onClick={() => navigate(`/container/${encodeURIComponent(container.uuid || String(container.id))}`)}
+                          onClick={() => navigate(adminPath('container', encodeURIComponent(container.uuid || String(container.id))))}
                           disabled={isPlaceholder}
                           className="font-medium text-black hover:underline text-xs disabled:no-underline disabled:text-gray-500 disabled:cursor-not-allowed whitespace-nowrap"
                         >
@@ -841,7 +842,7 @@ export default function Containers() {
                             </button>
                           ) : (
                             <button
-                              onClick={() => navigate(`/container/${encodeURIComponent(container.uuid || String(container.id))}`)}
+                              onClick={() => navigate(adminPath('container', encodeURIComponent(container.uuid || String(container.id))))}
                               disabled={isPlaceholder}
                               className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-gray-300 text-[11px] text-gray-700 hover:bg-gray-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed whitespace-nowrap"
                             >

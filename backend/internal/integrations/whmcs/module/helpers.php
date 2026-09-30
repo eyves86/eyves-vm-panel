@@ -1041,6 +1041,15 @@ function eyvescloud_first_string($value)
 function eyvescloud_public_host_from_container($container = [])
 {
     if (is_array($container)) {
+        // access_host 是面板计算出的**权威接入地址**（节点容器指向所属节点，
+        // 本机容器指向面板）。必须优先使用，避免计费系统自行推断地址
+        // 导致客户连接到错误主机（节点上的 NAT 端口只在该节点可达）。
+        if (!empty($container['access_host'])) {
+            $host = trim((string)$container['access_host']);
+            if ($host !== '') {
+                return $host;
+            }
+        }
         foreach (['public_ipv4s', 'public_ipv4', 'public_ip', 'ipv4_addresses', 'ipv4', 'nat_public_ip', 'host_ip', 'external_ip', 'node_ip', 'nat_host'] as $key) {
             if (!empty($container[$key])) {
                 $value = eyvescloud_first_string($container[$key]);

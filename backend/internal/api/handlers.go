@@ -1015,8 +1015,71 @@ func getContainer(w http.ResponseWriter, r *http.Request, id int) {
 		_, _ = kvmManager.RefreshNetwork(c.ID)
 	}
 	res := *c
+	// 节点容器：主控只保存归属与心跳摘要，详情页需要的系统模板 / SSH 密码 /
+	// 创建时间等字段按需向被控拉取（节点 token 鉴权通道；凭据不在主控落库）。
+	if res.NodeID != "" {
+		enrichNodeContainerDetail(r, &res)
+	}
 	sanitizeContainerResponse(r, &res)
-	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: res})
+	accessHost, accessPort, accessVia := containerAccessEndpoint(r, c)
+	payload, _ := json.Marshal(res)
+	data := map[string]interface{}{}
+	if err := json.Unmarshal(payload, &data); err != nil {
+		// 极端情况下退回结构化响应（不影响既有字段）。
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: res})
+		return
+	}
+	data["access_host"] = accessHost
+	data["access_ssh_port"] = accessPort
+	data["access_via"] = accessVia
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: data})
+}
+
+// enrichNodeContainerDetail 用被控的完整记录补齐主控侧缺失字段。
+// 失败时静默保留主控已有数据（详情页降级显示，不阻断）。
+func enrichNodeContainerDetail(r *http.Request, c *config.Container) {
+	node, ok := config.FindNode(c.NodeID)
+	if !ok || node.Address == "" {
+		return
+	}
+	data, status, err := proxyNodeRequest(r, node, http.MethodGet, "/api/agent/containers", nil)
+	if err != nil || status >= 300 {
+		return
+	}
+	var payload struct {
+		Data []config.Container `json:"data"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return
+	}
+	for _, remote := range payload.Data {
+		if remote.UUID != c.UUID {
+			continue
+		}
+		// 仅补齐展示/操作用字段；归属（NodeID）等主控权威字段不覆盖。
+		if c.Template == "" {
+			c.Template = remote.Template
+		}
+		if c.CreatedAt == "" {
+			c.CreatedAt = remote.CreatedAt
+		}
+		if c.SSHPassword == "" {
+			c.SSHPassword = remote.SSHPassword
+		}
+		if c.SSHHostKey == "" {
+			c.SSHHostKey = remote.SSHHostKey
+		}
+		if remote.IP != "" {
+			c.IP = remote.IP
+		}
+		if remote.SSHPort > 0 {
+			c.SSHPort = remote.SSHPort
+		}
+		if remote.Remark != "" && c.Remark == "" {
+			c.Remark = remote.Remark
+		}
+		return
+	}
 }
 
 // suspendContainer 实现 suspend / unsuspend（欠费停机 / 复机，供财务系统或管理员调用）。

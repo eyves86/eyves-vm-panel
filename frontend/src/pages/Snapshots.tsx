@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { adminPath } from '../services/panelPath'
 import { Camera, RefreshCw, Server, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { deleteContainerSnapshot, getSnapshots, Snapshot } from '../services/api'
@@ -96,7 +97,7 @@ export default function Snapshots() {
                 <tr key={snapshot.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => navigate(`/container/${snapshot.container_id}`)}
+                      onClick={() => navigate(adminPath('container', String(snapshot.container_id)))}
                       className="inline-flex items-center gap-2 text-left font-medium text-black hover:underline"
                     >
                       <Server className="h-4 w-4 text-gray-400" />
