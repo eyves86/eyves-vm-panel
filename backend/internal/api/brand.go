@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/license"
 )
 
 // maxBrandImageBytes 允许的 Logo/favicon data URL 上限（2MB）。
@@ -27,19 +28,27 @@ const maxBrandImageBytes = 2 * 1024 * 1024
 // brandResponse GET 响应体（公开字段，无敏感信息）。
 func brandResponse() map[string]any {
 	config.AppConfigMu.RLock()
-	defer config.AppConfigMu.RUnlock()
 	name := strings.TrimSpace(config.AppConfig.BrandName)
 	if name == "" {
 		name = "EyvesCloud"
 	}
 	loginTitle := strings.TrimSpace(config.AppConfig.BrandLoginTitle)
 	poweredHidden := config.AppConfig.BrandPoweredHidden
+	dataDir := config.AppConfig.DataDir
+	config.AppConfigMu.RUnlock()
+	// 授权判定（license 包）：powered_hidden 只在持有有效 license 时生效；
+	// 未授权/过期/无效 → 强制 false（回落免费形态，页脚显示 Powered by）。
+	licensed := license.IsWhiteLabelLicensed(dataDir)
+	if poweredHidden && !licensed {
+		poweredHidden = false
+	}
 	return map[string]any{
 		"name":           name,
 		"logo":           config.AppConfig.BrandLogo,
 		"favicon":        config.AppConfig.BrandFavicon,
 		"login_title":    loginTitle,
 		"powered_hidden": poweredHidden,
+		"licensed":       licensed,
 		"footer_text":    config.AppConfig.LoginFooterText,
 		"footer_hidden":  config.AppConfig.LoginFooterHidden,
 	}

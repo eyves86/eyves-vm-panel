@@ -15,6 +15,7 @@ import (
 	"eyvescloud/internal/config"
 	"eyvescloud/internal/kvm"
 	"eyvescloud/internal/lxc"
+	"eyvescloud/internal/manage"
 	"eyvescloud/internal/server"
 	"eyvescloud/internal/version"
 
@@ -116,6 +117,11 @@ func main() {
 	}
 
 	if isServerMode || (!isTerminal && !isCliMode) {
+		// 本机管理通道（unix socket，root-only）：CLI 的写类命令（account
+		// rename/reset 等）经它让运行中的面板原子执行，避免 CLI 直改数据库
+		// 被面板周期性回写覆盖（实测"vm 改密码是假的"的根因）。
+		manage.StartServer()
+
 		installShutdownStateCapture()
 
 		// 同机"面板即被控节点"：若本机已通过配对/安装注册为被控节点，

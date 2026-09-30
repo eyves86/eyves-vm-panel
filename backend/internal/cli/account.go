@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/manage"
 	"eyvescloud/internal/version"
 )
 
@@ -18,10 +19,11 @@ import (
 // 打印一次。
 //
 // 用法：
-//   eyvescloud account                   查看面板信息、管理员账号、两步验证状态
-//   eyvescloud account rename <新账号>   更改管理员账号（旧会话全部失效）
-//   eyvescloud account reset             重设管理员密码（自动生成强密码）
-//   eyvescloud account reset --password <新密码>
+//
+//	eyvescloud account                   查看面板信息、管理员账号、两步验证状态
+//	eyvescloud account rename <新账号>   更改管理员账号（旧会话全部失效）
+//	eyvescloud account reset             重设管理员密码（自动生成强密码）
+//	eyvescloud account reset --password <新密码>
 func RunAccountCommand(args []string) error {
 	action := "show"
 	if len(args) > 0 {
@@ -88,6 +90,15 @@ func accountShow() error {
 // accountRename 更改管理员账号名（CLI 直改，等价服务器 root 权限）。
 // 同步递增 AdminTokenVersion，使旧账号名签发的所有会话立即失效。
 func accountRename(args []string) error {
+	// 优先走本机管理通道（面板运行中时内存+数据库原子更新）。
+	if ok, output, connected := manage.Call("account.rename", args); connected {
+		if !ok {
+			return fmt.Errorf("%s", output)
+		}
+		fmt.Print(output)
+		return nil
+	}
+	// 面板未运行：回退直改数据库（不存覆写竞争）。
 	cfg := config.AppConfig
 	if cfg == nil || cfg.AdminUser == "" {
 		fmt.Fprintln(os.Stderr, "EyvesCloud 尚未初始化，无法更改账号。")
@@ -121,6 +132,7 @@ func accountRename(args []string) error {
 		fmt.Println("新账号与当前账号相同，无需更改。")
 		return nil
 	}
+	oldUser := cfg.AdminUser // 先记旧值：MutateGlobal 改的是同一个 AppConfig 指针
 	if err := config.MutateGlobal(func(c *config.EyvescloudConfig) {
 		c.AdminUser = newUser
 		c.AdminTokenVersion++
@@ -130,7 +142,7 @@ func accountRename(args []string) error {
 	fmt.Println("=====================================")
 	fmt.Println("  管理员账号已更改")
 	fmt.Println("=====================================")
-	fmt.Println("  原账号：", cfg.AdminUser)
+	fmt.Println("  原账号：", oldUser)
 	fmt.Println("  新账号：", newUser)
 	fmt.Println("  提醒：所有已登录的管理员会话已失效，需重新登录。")
 	fmt.Println("=====================================")
@@ -159,8 +171,27 @@ func accountReset(args []string) error {
 	newPassword := strings.TrimSpace(custom)
 	if newPassword == "" {
 		newPassword = randomStrongPassword()
+		// 面板运行中：必须走管理通道（直改库会被回写覆盖）。
+		if _, _, connected := manage.Call("ping", nil); connected {
+			if ok, output, _ := manage.Call("account.reset", []string{newPassword, "--display-password"}); connected {
+				if !ok {
+					return fmt.Errorf("%s", output)
+				}
+				fmt.Print(output)
+				return nil
+			}
+		}
 	} else if len(newPassword) < 10 {
 		return fmt.Errorf("密码长度至少 10 位")
+	}
+
+	// 非空自定义密码也优先走管理通道（面板运行期间直改库=被覆写，"假的"）。
+	if ok, output, connected := manage.Call("account.reset", []string{newPassword}); connected {
+		if !ok {
+			return fmt.Errorf("%s", output)
+		}
+		fmt.Print(output)
+		return nil
 	}
 
 	if err := config.ResetAdminPassword(newPassword); err != nil {
