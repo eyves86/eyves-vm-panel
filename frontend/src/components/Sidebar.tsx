@@ -451,7 +451,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
                   type="button"
                   onClick={() => toggleGroup(group.id)}
                   aria-expanded={open}
-                  className="mb-1 flex w-full items-center justify-between rounded-md px-3 py-1.5 text-xs font-medium text-gray-400 transition-colors hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300"
+                  className="mb-1 flex w-full items-center justify-between rounded-md px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
                 >
                   <span>{group.label}</span>
                   <ChevronDown
@@ -512,7 +512,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
 
         {/* Version */}
         {version && (
-          <div className={`px-3 py-2 text-xs text-gray-400 dark:text-gray-500 ${expanded ? '' : 'text-center'}`}>
+          <div className={`px-3 py-2 text-xs text-gray-500 dark:text-gray-400 ${expanded ? '' : 'text-center'}`}>
             {expanded ? (
               <div className="flex min-w-0 items-center gap-2">
                 <button

@@ -47,14 +47,20 @@ export default {
         black: '#111111',
       },
       fontFamily: {
-        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'sans-serif'],
+        sans: ["'Inter Variable'", 'Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'sans-serif'],
+        mono: ["'JetBrains Mono Variable'", 'ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
+      },
+      letterSpacing: {
+        tightest: '-0.03em',
+        title: '-0.02em',
       },
       boxShadow: {
-        // Cal：克制的中性阴影（无彩色荧光）
+        // Cal：克制的中性阴影（无彩色荧光）；x 系列为多层叠加，更自然
         brand: '0 1px 2px rgba(17, 17, 17, 0.08)',
-        'brand-hover': '0 2px 6px rgba(17, 17, 17, 0.12)',
-        card: '0 1px 2px rgba(17, 17, 17, 0.04)',
-        'card-hover': '0 4px 12px rgba(17, 17, 17, 0.08)',
+        'brand-hover': '0 3px 10px rgba(17, 17, 17, 0.14)',
+        card: '0 1px 2px rgba(16, 17, 19, 0.05)',
+        'card-hover': '0 2px 4px rgba(16, 17, 19, 0.04), 0 8px 24px rgba(16, 17, 19, 0.08)',
+        overlay: '0 4px 8px rgba(16, 17, 19, 0.04), 0 16px 48px rgba(16, 17, 19, 0.16)',
       },
       transitionTimingFunction: {
         // 参考站 --motion-ease

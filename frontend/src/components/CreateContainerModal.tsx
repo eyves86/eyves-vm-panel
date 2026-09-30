@@ -112,6 +112,12 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
   const networkText = createNetworkText[language]
   const wizardSteps = [t('基础信息'), t('镜像选择'), t('网络配置'), t('预览清单')]
   const [currentStep, setCurrentStep] = useState(0)
+  // 步骤切换方向：前进/后退决定过渡动画方向（微交互：方向一致的运动暗示）
+  const [stepDirection, setStepDirection] = useState<1 | -1>(1)
+  const goToStep = (next: number) => {
+    setStepDirection(next >= currentStep ? 1 : -1)
+    setCurrentStep(next)
+  }
   const [templates, setTemplates] = useState<Template[]>([])
   const [loading, setLoading] = useState(false)
   const [batchCount, setBatchCount] = useState(1)
@@ -493,7 +499,11 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
 
   const handleNextStep = () => {
     if (!validateStep(currentStep)) return
-    setCurrentStep((step) => Math.min(wizardSteps.length - 1, step + 1))
+    goToStep(Math.min(wizardSteps.length - 1, currentStep + 1))
+  }
+
+  const handlePrevStep = () => {
+    goToStep(Math.max(0, currentStep - 1))
   }
 
   const handleSubmit = async () => {
@@ -689,46 +699,69 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-lg font-semibold text-black">创建新容器</h2>
-          <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded text-gray-500" title="关闭">
-            <X className="w-5 h-5" />
+    <div className="modal-overlay animate-overlay-in fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
+      <div className="animate-modal-in flex max-h-[94vh] w-full max-w-5xl flex-col overflow-hidden rounded-t-2xl border border-gray-200 bg-white shadow-overlay sm:rounded-2xl dark:border-gray-700 dark:bg-gray-900">
+        {/* 头部：标题 + 上下文副标题 + 关闭 */}
+        <div className="flex items-start justify-between gap-4 border-b border-gray-100 px-5 py-4 sm:px-6 dark:border-gray-800">
+          <div className="min-w-0">
+            <h2 className="text-[16px] font-semibold tracking-title text-black dark:text-white">{t('创建新容器')}</h2>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              {t('第')} {currentStep + 1} / {wizardSteps.length} {t('步')} · {wizardSteps[currentStep]}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="-mr-1 rounded-lg p-1.5 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800 dark:hover:text-gray-200"
+            title={t('关闭')}
+          >
+            <X className="w-4.5 h-4.5" />
           </button>
         </div>
 
-        <nav aria-label={t('创建步骤')} className="border-b border-gray-200 px-5 py-3">
-          <ol className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {/* 步骤条：横向紧凑 + 连接线；已完成可回跳 */}
+        <nav aria-label={t('创建步骤')} className="border-b border-gray-100 px-5 py-3 sm:px-6 dark:border-gray-800">
+          <ol className="flex items-center gap-1.5 sm:gap-3">
             {wizardSteps.map((label, index) => {
               const completed = index < currentStep
               const active = index === currentStep
               return (
-                <li key={label} className="min-w-0">
+                <li key={label} className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-3">
                   <button
                     type="button"
                     disabled={index > currentStep}
-                    onClick={() => setCurrentStep(index)}
+                    onClick={() => goToStep(index)}
                     aria-current={active ? 'step' : undefined}
-                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors disabled:cursor-default ${
-                      active ? 'bg-gray-100 text-black' : completed ? 'text-gray-700 hover:bg-gray-50' : 'text-gray-400'
+                    className={`group flex min-w-0 items-center gap-2 rounded-lg px-1.5 py-1 text-left transition-all disabled:cursor-default ${
+                      active ? 'text-black dark:text-white' : completed ? 'text-gray-600 hover:bg-gray-50 dark:text-gray-300 dark:hover:bg-gray-800' : 'text-gray-500 dark:text-gray-500'
                     }`}
                   >
-                    <span className={`inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold ${
-                      active || completed ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 bg-white'
-                    }`}>
+                    <span
+                      className={`inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full text-[11px] font-semibold transition-all duration-200 ${
+                        active
+                          ? 'bg-brand-600 text-white shadow-brand ring-4 ring-gray-100 dark:ring-gray-800'
+                          : completed
+                            ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-300'
+                            : 'border border-gray-200 bg-white text-gray-500 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-500'
+                      }`}
+                    >
                       {completed ? <Check className="h-3.5 w-3.5" /> : index + 1}
                     </span>
-                    <span className="min-w-0 truncate text-xs font-medium sm:text-sm">{label}</span>
+                    <span className={`hidden min-w-0 truncate text-xs font-medium sm:block ${active ? 'text-black dark:text-white' : ''}`}>{label}</span>
                   </button>
+                  {index < wizardSteps.length - 1 && (
+                    <span
+                      aria-hidden
+                      className={`h-px min-w-3 flex-1 transition-colors duration-300 ${completed ? 'bg-emerald-200 dark:bg-emerald-900' : 'bg-gray-150 bg-gray-200 dark:bg-gray-800'}`}
+                    />
+                  )}
                 </li>
               )
             })}
           </ol>
         </nav>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="space-y-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5 sm:px-6">
+          <div key={currentStep} className={`space-y-6 ${stepDirection < 0 ? 'animate-step-in-back' : 'animate-step-in'}`}>
           {currentStep === 0 && (
             <>
           <div className="grid grid-cols-2 gap-3">
@@ -747,7 +780,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               <NumberInput value={batchCount} min={1} max={50} onChange={(value) => setBatchCount(Math.max(1, value || 1))} />
             </Field>
           </div>
-          {batchCount > 1 && <p className="text-xs text-gray-400">将创建 {batchCount} 个容器：{form.name}-{batchStartIndex} 至 {form.name}-{batchStartIndex + batchCount - 1}</p>}
+          {batchCount > 1 && <p className="text-xs text-gray-500">将创建 {batchCount} 个容器：{form.name}-{batchStartIndex} 至 {form.name}-{batchStartIndex + batchCount - 1}</p>}
 
           {isAdmin && (
             <Field label="选择区域 / 节点">
@@ -756,8 +789,14 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                   <button
                     type="button"
                     onClick={() => { setTargetNode('local'); setTargetRegion('') }}
-                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${targetNode === 'local' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    aria-pressed={targetNode === 'local'}
+                    className={`group inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-all duration-200 ${
+                      targetNode === 'local'
+                        ? 'border-black bg-gray-50 text-black shadow-[0_1px_2px_rgba(16,17,19,0.06)] dark:border-white dark:bg-gray-800 dark:text-white'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
+                    }`}
                   >
+                    <span className={`h-1.5 w-1.5 rounded-full transition-colors ${targetNode === 'local' ? 'bg-emerald-500' : 'bg-gray-300 group-hover:bg-gray-400'}`} />
                     本机（主控）
                   </button>
                   <button
@@ -765,11 +804,17 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     disabled={nodes.filter(nodeSelectable).length === 0}
                     title={nodes.filter(nodeSelectable).length === 0 ? '没有可用的在线节点' : '按剩余内存/磁盘自动评分挑选'}
                     onClick={() => { setTargetNode('auto'); setTargetRegion('') }}
-                    className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${targetNode === 'auto' && !targetRegion ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    aria-pressed={targetNode === 'auto' && !targetRegion}
+                    className={`group inline-flex items-center gap-2 rounded-lg border px-3.5 py-2 text-[13px] font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 dark:disabled:border-gray-800 dark:disabled:bg-gray-900 dark:disabled:text-gray-600 ${
+                      targetNode === 'auto' && !targetRegion
+                        ? 'border-black bg-gray-50 text-black shadow-[0_1px_2px_rgba(16,17,19,0.06)] dark:border-white dark:bg-gray-800 dark:text-white'
+                        : 'border-gray-200 text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800'
+                    }`}
                   >
+                    <span className={`h-1.5 w-1.5 rounded-full transition-colors ${targetNode === 'auto' && !targetRegion ? 'bg-emerald-500' : 'bg-gray-300 group-hover:bg-gray-400'}`} />
                     自动（全局，按剩余资源）
                   </button>
-                  {nodesLoading && <span className="self-center text-xs text-gray-400">正在加载区域与节点…</span>}
+                  {nodesLoading && <span className="self-center text-xs text-gray-500">正在加载区域与节点…</span>}
                 </div>
 
                 {/* 区域卡片：先选区域，再在卡片内下拉选该区域的节点（自动 = 该区域按剩余资源） */}
@@ -792,10 +837,10 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                             className="flex w-full items-center justify-between gap-2 text-left disabled:cursor-not-allowed"
                           >
                             <span className="min-w-0">
-                              <span className={`block truncate text-sm font-medium ${selectable ? 'text-gray-900' : 'text-gray-400'}`}>
+                              <span className={`block truncate text-sm font-medium ${selectable ? 'text-gray-900' : 'text-gray-500'}`}>
                                 {group.name}
                               </span>
-                              {group.location && <span className="block truncate text-[11px] text-gray-400">{group.location}</span>}
+                              {group.location && <span className="block truncate text-[11px] text-gray-500">{group.location}</span>}
                             </span>
                             <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${selectable ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                               {selectable ? `${onlineNodes.length} 台在线` : '暂无可用节点'}
@@ -833,7 +878,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                               quotaParts.push(`磁盘 ${Math.round(((info.used_disk_gb || 0) / info.max_disk_gb) * 100)}%`)
                             }
                             if (quotaParts.length === 0) return null
-                            return <div className="mt-0.5 text-[11px] text-gray-400">配额 {quotaParts.join(' · ')}</div>
+                            return <div className="mt-0.5 text-[11px] text-gray-500">配额 {quotaParts.join(' · ')}</div>
                           })()}
                           <select
                             value={choice}
@@ -856,7 +901,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                   </div>
                 )}
                 {!nodesLoading && nodes.length === 0 && (
-                  <p className="text-xs text-gray-400">暂无被控节点：实例将创建在主控本机。可先在「节点管理」接入被控后获得区域/节点选择。</p>
+                  <p className="text-xs text-gray-500">暂无被控节点：实例将创建在主控本机。可先在「节点管理」接入被控后获得区域/节点选择。</p>
                 )}
 
                 {targetNode !== 'local' && (
@@ -874,27 +919,39 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
           )}
 
           <Field label="虚拟化架构">
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => setForm((prev) => applyTemplateDefaults({ ...prev, virtualization: 'lxc', template_id: '', storage_pool_id: '', allowed_image_ids: [], image_limit_configured: false }))}
-                className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors ${form.virtualization === 'lxc' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-              >
-                LXC 容器
-              </button>
-              <button
-                type="button"
-                disabled={!kvmAvailable}
-                title={kvmAvailable ? '' : '当前宿主机不支持 KVM'}
-                onClick={() => {
-                  if (kvmAvailable) {
-                    setForm((prev) => applyTemplateDefaults({ ...prev, virtualization: 'kvm', template_id: '', storage_pool_id: '', allowed_image_ids: [], image_limit_configured: false }))
-                  }
-                }}
-                className={`rounded-md border px-3 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-400 ${form.virtualization === 'kvm' ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
-              >
-                KVM 虚拟机
-              </button>
+            <div className="grid grid-cols-2 gap-2.5">
+              {([
+                { key: 'lxc' as const, title: 'LXC 容器', desc: '轻量、启动快、开销低', disabled: false },
+                { key: 'kvm' as const, title: 'KVM 虚拟机', desc: '完整虚拟化、可装任意系统', disabled: !kvmAvailable },
+              ]).map((option) => {
+                const active = form.virtualization === option.key
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    disabled={option.disabled}
+                    title={option.disabled ? t('当前宿主机不支持 KVM') : ''}
+                    onClick={() => {
+                      if (option.disabled) return
+                      setForm((prev) => applyTemplateDefaults({ ...prev, virtualization: option.key, template_id: '', storage_pool_id: '', allowed_image_ids: [], image_limit_configured: false }))
+                    }}
+                    aria-pressed={active}
+                    className={`group relative min-w-0 rounded-xl border p-3 text-left transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-45 ${
+                      active
+                        ? 'border-black bg-gray-50 shadow-[0_1px_3px_rgba(16,17,19,0.07)] dark:border-white dark:bg-gray-800'
+                        : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50/70 dark:border-gray-700 dark:hover:bg-gray-800/60'
+                    }`}
+                  >
+                    <span className={`absolute right-2.5 top-2.5 flex h-4 w-4 items-center justify-center rounded-full border transition-all duration-200 ${
+                      active ? 'border-black bg-black dark:border-white dark:bg-white' : 'border-gray-300 bg-white dark:border-gray-600 dark:bg-gray-900'
+                    }`}>
+                      {active && <Check className="h-2.5 w-2.5 text-white dark:text-black" />}
+                    </span>
+                    <span className="block truncate text-[13px] font-semibold text-black dark:text-white">{option.title}</span>
+                    <span className="mt-0.5 block truncate text-[11px] leading-4 text-gray-500 dark:text-gray-400">{option.desc}</span>
+                  </button>
+                )
+              })}
             </div>
           </Field>
             </>
@@ -1014,9 +1071,9 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
           )}
 
           {currentStep === 0 && linuxTemplate && (
-            <div className="rounded-md border border-gray-200 bg-white px-3 py-3 text-sm">
-              <div className="mb-2 font-medium text-gray-800">登录方式</div>
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div>
+              <label className="mb-1.5 block text-[13px] font-medium leading-5 text-gray-700 dark:text-gray-300">{t('登录方式')}</label>
+              <div className="grid grid-cols-3 gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-800">
                 {([
                   ['auto_password', '自动生成密码'],
                   ['password', '自定义密码'],
@@ -1026,7 +1083,12 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                     key={mode}
                     type="button"
                     onClick={() => setForm({ ...form, ssh_auth_mode: mode })}
-                    className={`rounded-md border px-3 py-2 text-xs font-medium transition-colors ${sshAuthMode === mode ? 'border-brand-600 bg-brand-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                    aria-pressed={sshAuthMode === mode}
+                    className={`h-8 rounded-md px-2 text-xs font-medium transition-all duration-200 ${
+                      sshAuthMode === mode
+                        ? 'bg-white text-black shadow-[0_1px_2px_rgba(16,17,19,0.10)] dark:bg-gray-950 dark:text-white'
+                        : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200'
+                    }`}
                   >
                     {label}
                   </button>
@@ -1068,7 +1130,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               <button
                 type="button"
                 onClick={() => setForm({ ...form, cloud_init_user_data: '' })}
-                className="text-xs text-gray-400 hover:text-gray-600"
+                className="text-xs text-gray-500 hover:text-gray-600"
               >
                 {form.cloud_init_user_data ? t('清空') : ''}
               </button>
@@ -1079,14 +1141,14 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               className={`${inputClass} min-h-24 resize-y font-mono text-xs`}
               placeholder={'#cloud-config\nruncmd:\n  - echo "hello" > /root/hello.txt'}
             />
-            <p className="mt-1 text-xs text-gray-400">
+            <p className="mt-1 text-xs text-gray-500">
               {t('容器首次启动时由 cloud-init 执行，支持 #cloud-config 或 shell 脚本')}
             </p>
           </div>
 
           {currentStep === 2 && (
           <div className="grid gap-3 lg:grid-cols-2">
-          <div className={`rounded-md border px-3 py-2 text-sm ${ipv4Available ? 'border-gray-200 bg-white' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
+          <div className={`rounded-xl border px-4 py-3.5 text-sm transition-colors ${ipv4Available ? 'border-gray-200 bg-white hover:border-gray-300 dark:border-gray-700 dark:bg-gray-900' : 'border-gray-200 bg-gray-50 text-gray-400 dark:border-gray-800 dark:bg-gray-900/50'}`}>
             <label className="flex items-start gap-3">
               <input
                 type="checkbox"
@@ -1151,8 +1213,8 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                             }}
                           />
                           <span className="truncate font-mono">{ip.address}</span>
-                          <span className="shrink-0 text-gray-400">{ip.interface}</span>
-                          {ip.gateway && <span className="shrink-0 text-gray-400">gw {ip.gateway}</span>}
+                          <span className="shrink-0 text-gray-500">{ip.interface}</span>
+                          {ip.gateway && <span className="shrink-0 text-gray-500">gw {ip.gateway}</span>}
                         </label>
                       ))}
                     </div>
@@ -1162,7 +1224,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
             )}
           </div>
 
-          <div className={`rounded-md border px-3 py-2 text-sm ${form.virtualization === 'lxc' && lanInterfaces.length > 0 ? 'border-gray-200 bg-white' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
+          <div className={`rounded-md border px-3 py-2 text-sm ${form.virtualization === 'lxc' && lanInterfaces.length > 0 ? 'border-gray-200 bg-white' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
             <div className="flex items-start justify-between gap-3">
               <label className="flex min-w-0 flex-1 items-start gap-3">
                 <input
@@ -1256,7 +1318,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
             )}
           </div>
 
-          <div className={`rounded-md border px-3 py-2 text-sm ${ipv6Available ? 'border-gray-200 bg-white' : 'border-gray-200 bg-gray-50 text-gray-400'}`}>
+          <div className={`rounded-md border px-3 py-2 text-sm ${ipv6Available ? 'border-gray-200 bg-white' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
             <div className="flex items-start justify-between gap-3">
               <label className="flex min-w-0 flex-1 items-start gap-3">
                 <input
@@ -1391,7 +1453,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                         placeholder={language === 'en' ? 'Auto' : '自动'}
                       />
                     </label>
-                    <ArrowRight className="mb-3 h-4 w-4 text-gray-400" />
+                    <ArrowRight className="mb-3 h-4 w-4 text-gray-500" />
                     <label className="min-w-0 text-[11px] text-gray-500">
                       <span className="mb-1 block">{language === 'en' ? 'Container target port' : '容器目标端口'}</span>
                       <input
@@ -1457,7 +1519,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                           className={`${inputClass} min-w-0 font-mono text-xs`}
                           placeholder="30080"
                         />
-                        <ArrowRight className="h-4 w-4 text-gray-400" />
+                        <ArrowRight className="h-4 w-4 text-gray-500" />
                         <input
                           type="number"
                           min={1}
@@ -1493,7 +1555,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                             const next = customNATMappings.filter((_, itemIndex) => itemIndex !== index)
                             setForm({ ...form, nat_port_mappings: next, port_mapping_count: next.length + 1 })
                           }}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded text-gray-400 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+                          className="inline-flex h-8 w-8 items-center justify-center rounded text-gray-500 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
                           title={language === 'en' ? 'Remove mapping' : '删除映射'}
                         >
                           <Trash2 className="h-4 w-4" />
@@ -1515,7 +1577,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                         }]
                         setForm({ ...form, nat_port_mappings: next, port_mapping_count: next.length + 1 })
                       }}
-                      className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
+                      className="inline-flex items-center gap-1 rounded-lg border border-gray-200 px-3 h-8 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40"
                     >
                       <Plus className="h-3.5 w-3.5" />
                       {language === 'en' ? 'Add mapping' : '添加映射'}
@@ -1625,7 +1687,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               {form.traffic_mode === 'total' ? (
                 <div className="flex items-center gap-2">
                   <NumberInput value={form.monthly_traffic_gb} min={0} onChange={(value) => setForm({ ...form, monthly_traffic_gb: value })} />
-                  <span className="shrink-0 text-xs text-gray-400">GB</span>
+                  <span className="shrink-0 text-xs text-gray-500">GB</span>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
@@ -1648,7 +1710,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
             </Field>
             <Field label="到期时间">
               <div className="relative">
-                <CalendarClock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <CalendarClock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500" />
                 <input
                   type="date"
                   value={form.expires_at}
@@ -1657,7 +1719,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                   className={`${inputClass} pl-10`}
                 />
               </div>
-              <p className="mt-1 text-[11px] leading-4 text-gray-400">不选则长期有效</p>
+              <p className="mt-1 text-[11px] leading-4 text-gray-500">不选则长期有效</p>
             </Field>
           </div>
           )}
@@ -1665,7 +1727,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
           {currentStep === 3 && (
             <div className="space-y-5">
               <section>
-                <h3 className="mb-2 text-sm font-semibold text-gray-900">{t('基础信息')}</h3>
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">{t('基础信息')}</h3>
                 <dl className="grid grid-cols-1 border-y border-gray-200 sm:grid-cols-2 lg:grid-cols-4">
                   <ReviewItem label={t('容器名称')} value={batchCount > 1 ? `${form.name}-${batchStartIndex} … ${form.name}-${batchStartIndex + batchCount - 1}` : form.name} />
                   <ReviewItem label={t('创建数量')} value={String(batchCount)} />
@@ -1679,7 +1741,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               </section>
 
               <section>
-                <h3 className="mb-2 text-sm font-semibold text-gray-900">{t('镜像与登录')}</h3>
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">{t('镜像与登录')}</h3>
                 <dl className="grid grid-cols-1 border-y border-gray-200 sm:grid-cols-3">
                   <ReviewItem label={t('系统镜像')} value={selectedTemplate?.name || '-'} />
                   <ReviewItem label={t('登录方式')} value={
@@ -1705,7 +1767,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
               </section>
 
               <section>
-                <h3 className="mb-2 text-sm font-semibold text-gray-900">{t('网络配置')}</h3>
+                <h3 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">{t('网络配置')}</h3>
                 <dl className="grid grid-cols-1 border-y border-gray-200 sm:grid-cols-2">
                   <ReviewItem label={t('主要网络')} value={networkSummary} />
                   <ReviewItem
@@ -1734,18 +1796,21 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
           </div>
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-gray-200 px-6 py-4">
-          <button onClick={onClose} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md transition-colors">
+        <div className="flex items-center justify-between gap-3 border-t border-gray-100 bg-gray-50/60 px-5 py-3.5 sm:px-6 dark:border-gray-800 dark:bg-gray-900/60">
+          <button
+            onClick={onClose}
+            className="h-9 rounded-lg px-3.5 text-[13px] font-medium text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-800 active:scale-[0.98] dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+          >
             {t('取消')}
           </button>
           <div className="flex items-center gap-2">
             {currentStep > 0 && (
               <button
                 type="button"
-                onClick={() => setCurrentStep((step) => Math.max(0, step - 1))}
-                className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+                onClick={handlePrevStep}
+                className="group inline-flex h-9 items-center gap-2 rounded-lg border border-gray-200 bg-white px-3.5 text-[13px] font-medium text-gray-700 shadow-[0_1px_1px_rgba(16,17,19,0.03)] transition-all duration-200 hover:border-gray-300 hover:bg-gray-50 active:scale-[0.98] dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
               >
-                <ArrowLeft className="h-4 w-4" />
+                <ArrowLeft className="h-3.5 w-3.5 transition-transform duration-200 group-hover:-translate-x-0.5" />
                 {t('上一步')}
               </button>
             )}
@@ -1754,7 +1819,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 type="button"
                 onClick={handleNextStep}
                 disabled={currentStep === 0 && storageLoading}
-                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="group inline-flex h-9 items-center gap-2 rounded-lg bg-brand-600 px-4 text-[13px] font-medium text-white shadow-brand transition-all duration-200 hover:bg-brand-700 hover:shadow-brand-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-brand"
               >
                 {t('下一步')}
                 <ArrowRight className="h-4 w-4" />
@@ -1764,7 +1829,7 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
                 type="button"
                 onClick={handleSubmit}
                 disabled={loading}
-                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="group inline-flex h-9 items-center gap-2 rounded-lg bg-brand-600 px-4 text-[13px] font-medium text-white shadow-brand transition-all duration-200 hover:bg-brand-700 hover:shadow-brand-hover active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:shadow-brand"
               >
                 {loading ? t('创建中...') : t('确认创建')}
               </button>
@@ -1778,19 +1843,53 @@ export default function CreateContainerModal({ isOpen, onClose, onSuccess, exist
 
 function ReviewItem({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 border-b border-gray-100 px-3 py-2.5 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
-      <dt className="text-xs text-gray-500">{label}</dt>
-      <dd className="mt-1 break-words text-sm font-medium text-gray-800">{value || '-'}</dd>
+    <div className="min-w-0 border-b border-gray-100 px-3.5 py-3 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0 dark:border-gray-800">
+      <dt className="text-[11px] uppercase tracking-[0.06em] text-gray-500 dark:text-gray-400">{label}</dt>
+      <dd className="mt-1 break-words text-[13px] font-medium tabular-nums text-black dark:text-white">{value || '-'}</dd>
     </div>
   )
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
-    <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1.5">{label}</label>
+    <div className="min-w-0">
+      <label className="mb-1.5 block text-[13px] font-medium leading-5 text-gray-700 dark:text-gray-300">{label}</label>
       {children}
+      {hint && <p className="mt-1.5 text-[11px] leading-4 text-gray-500 dark:text-gray-400">{hint}</p>}
     </div>
+  )
+}
+
+/** SectionHeading：步骤内容里的分组标题（小标题 + 说明 + 细分隔线），建立视觉层级。 */
+function SectionHeading({ title, hint }: { title: string; hint?: string }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 border-b border-gray-100 pb-2 dark:border-gray-800">
+      <span className="text-[12px] font-semibold uppercase tracking-[0.08em] text-gray-500 dark:text-gray-400">{title}</span>
+      {hint && <span className="truncate text-[11px] text-gray-500 dark:text-gray-400">{hint}</span>}
+    </div>
+  )
+}
+
+/** FormSection：表单分组容器（标题 + 说明 + 内容），统一节奏与层级。 */
+function FormSection({
+  title,
+  description,
+  children,
+  className = '',
+}: {
+  title: string
+  description?: string
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <section className={`min-w-0 ${className}`}>
+      <div className="mb-3.5">
+        <h3 className="text-[13px] font-semibold tracking-title text-black dark:text-white">{title}</h3>
+        {description && <p className="mt-0.5 text-[11px] leading-4 text-gray-400 dark:text-gray-500">{description}</p>}
+      </div>
+      <div className="space-y-3.5">{children}</div>
+    </section>
   )
 }
 
@@ -2264,4 +2363,4 @@ function symmetricLimit(a: number, b: number) {
 }
 
 const inputClass =
-  'w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white focus:outline-none focus:ring-2 focus:ring-brand-500 focus:border-brand-500'
+  'h-10 w-full rounded-lg border border-gray-300 bg-white px-3 text-[13px] text-black shadow-[0_1px_1px_rgba(16,17,19,0.03)] transition-[border-color,box-shadow] duration-150 placeholder:text-gray-400 hover:border-gray-400 focus:border-black focus:outline-none focus:ring-[3px] focus:ring-black/8 dark:border-gray-700 dark:bg-gray-900 dark:text-white dark:placeholder:text-gray-600 dark:hover:border-gray-600 dark:focus:border-white dark:focus:ring-white/10'
