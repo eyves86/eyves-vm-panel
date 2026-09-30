@@ -2869,15 +2869,17 @@ menu() {
     echo "  5) 查看面板服务状态"
     echo "  6) 查看面板运行日志"
     echo "  7) 查看节点对接信息（接入其他主控）"
+    echo "  8) 检查并升级面板（与主控同版本）"
     echo "  0) 退出"
     echo "====================================="
 }
 
 while true; do
     menu
-    printf "请选择 [0-7]: "
+    printf "请选择 [0-8]: "
     read -r choice || exit 0
     case "$choice" in
+        "") continue ;;
         1) "$BIN" account show ;;
         2)
             printf "请输入新的管理员账号："
@@ -2897,6 +2899,10 @@ while true; do
         5) svc_status ;;
         6) svc_logs ;;
         7) "$BIN" node-link ;;
+        8)
+            echo "正在检查更新（走发行签名校验，升级后服务会自动重启）..."
+            "$BIN" self-update || true
+            ;;
         0|q|Q) exit 0 ;;
         *) echo "无效选择：$choice" ;;
     esac

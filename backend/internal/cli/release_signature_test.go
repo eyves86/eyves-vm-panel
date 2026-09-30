@@ -36,7 +36,7 @@ func TestVerifyReleaseSignature(t *testing.T) {
 
 	sums := []byte("aaaa  eyvescloud-linux-amd64.tar.gz\n")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, releaseSignatureSuffix) {
+		if strings.HasSuffix(r.URL.Path, releaseSignatureSuffix) || strings.HasSuffix(r.URL.Path, releaseSignatureSuffixLegacy) {
 			_, _ = w.Write(sign(sums))
 			return
 		}
@@ -91,4 +91,33 @@ func TestVerifyReleaseSignature(t *testing.T) {
 			t.Fatalf("开发构建不应因签名中断：%v", err)
 		}
 	})
+}
+
+// TestFetchReleaseSignatureLegacySuffix 兼容历史命名：只存在 .minisign 时也要能取到。
+func TestFetchReleaseSignatureLegacySuffix(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+	sums := []byte("aaaa  eyvescloud-linux-amd64.tar.gz\n")
+	sig := ed25519.Sign(priv, sums)
+	blob := append([]byte{0x00, 0x00}, sig...)
+	sigBody := "untrusted comment: m\n" + base64.StdEncoding.EncodeToString(blob) + "\n"
+	// 仅提供 legacy 命名的签名文件；".minisig" 一律 404。
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, releaseSignatureSuffixLegacy) {
+			_, _ = w.Write([]byte(sigBody))
+			return
+		}
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+	restore := releasePubKeyHex
+	releasePubKeyHex = pubB64
+	t.Cleanup(func() { releasePubKeyHex = restore })
+
+	if err := verifyReleaseSignature(srv.URL+"/SHA256SUMS", sums); err != nil {
+		t.Fatalf("legacy .minisign 兼容失败：%v", err)
+	}
 }

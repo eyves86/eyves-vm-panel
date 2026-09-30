@@ -33,8 +33,14 @@ import (
 	"eyvescloud/internal/version"
 )
 
-// releaseSignatureSuffix 是签名文件的 release asset 命名约定。
-const releaseSignatureSuffix = ".minisign"
+// releaseSignatureSuffix 是签名文件的 release asset 命名约定（minisign 官方后缀）。
+// 修复历史笔误：曾写作 ".minisign"（多一个 n），导致升级器请求
+// SHA256SUMS.minisign 404、所有签名发布都无法自动升级（生产实测踩坑）。
+// 升级器对新旧两种命名都做尝试（".minisig" 优先，".minisign" 兼容）。
+const releaseSignatureSuffix = ".minisig"
+
+// releaseSignatureSuffixLegacy 是历史错误命名的兼容后缀。
+const releaseSignatureSuffixLegacy = ".minisign"
 
 // buildReleasePublicKey 由 ldflags 注入（-X eyvescloud/internal/cli.releasePubKeyHex=...）。
 // 留空 = 未配置签发公钥（开发构建），验签跳过并提示。
@@ -130,8 +136,15 @@ func verifyReleaseSignature(checksumsURL string, checksumsBody []byte) error {
 		// 未配置公钥 = 开发构建或旧版升级器：退回纯 SHA-256 语义（不制造新故障）。
 		return nil
 	}
-	sigURL := signURLFor(checksumsURL)
+	sigURL := strings.TrimRight(checksumsURL, "/") + releaseSignatureSuffix
 	sigBody, err := fetchReleaseSignature(sigURL)
+	if err != nil {
+		// 兼容历史命名：部分旧发布把签名传成了 SHA256SUMS.minisign。
+		sigURL2 := strings.TrimRight(checksumsURL, "/") + releaseSignatureSuffixLegacy
+		if body2, err2 := fetchReleaseSignature(sigURL2); err2 == nil {
+			sigBody, err = body2, nil
+		}
+	}
 	if err != nil {
 		if allowUnsigned() {
 			cliPrintf("警告：未获取到 %s（%v），已按 %s=1 放行无签名清单（不推荐）。\n",
