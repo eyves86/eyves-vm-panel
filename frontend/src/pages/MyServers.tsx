@@ -4,6 +4,7 @@ import { Cpu, Globe, HardDrive, Play, RotateCw, Server, Square } from 'lucide-re
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import { getContainers, startContainer, stopContainer, restartContainer } from '../services/api'
+import ServerUsageBadge from '../components/ServerUsageBadge'
 
 // MyServer 只声明本页用到的字段，避免与全局 Container 类型强耦合。
 type MyServer = {
@@ -139,7 +140,14 @@ export default function MyServers() {
                     </span>
                     <span>{s.ram_mb ?? '-'} MB</span>
                   </div>
+                  {(s as MyServer & { expires_at?: string }).expires_at && (
+                    <div className="text-gray-500 dark:text-gray-500">
+                      {t('到期')}：{String((s as MyServer & { expires_at?: string }).expires_at).slice(0, 10)}
+                    </div>
+                  )}
                 </div>
+
+                {!isReadOnly && <ServerUsageBadge serverId={key} />}
 
                 <div className="mt-4 flex items-center gap-2">
                   {running ? (

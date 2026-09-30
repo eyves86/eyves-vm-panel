@@ -1,14 +1,15 @@
 package api
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
-	"context"
 	"strconv"
 	"strings"
 	"time"
@@ -492,9 +493,12 @@ func executeRecipeOnKVM(c *config.Container, script string, timeoutSec int) (str
 	if c.SSHPassword != "" {
   _ctx1, _cancel1 := context.WithTimeout(context.Background(), 30*time.Second)
   defer _cancel1()
-		sshCmd := exec.CommandContext(_ctx1, "sshpass", "-p", c.SSHPassword,
+		// N-1：用 SSHPASS 环境变量传密码（sshpass -e），避免密码出现在
+		// 进程参数列表（宿主机其他用户可 ps 看到）。
+		sshCmd := exec.CommandContext(_ctx1, "sshpass", "-e",
 			"ssh", "-o", "StrictHostKeyChecking=no", "-o", "ConnectTimeout=10",
 			"-p", fmt.Sprintf("%d", sshPort), "root@"+sshTarget, "bash", "-c", script)
+		sshCmd.Env = append(os.Environ(), "SSHPASS="+c.SSHPassword)
 		out2, err2 := sshCmd.CombinedOutput()
 		return string(out2), err2
 	}

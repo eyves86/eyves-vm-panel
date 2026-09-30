@@ -237,6 +237,8 @@ func v2InstancesList(w http.ResponseWriter, r *http.Request) {
 		containers = append([]config.Container(nil), config.AppConfig.Containers...)
 	}
 	containers = filterContainersForRequest(r, containers)
+	// 回收站视图：?recycled=true 只看回收站；默认排除回收站实例。
+	containers = listContainersFilterRecycledV2(containers, r)
 
 	// 过滤参数（命名自定，语义清晰）：
 	//   status=running|stopped|...   runtime=lxc|kvm   node_id=   owner=
@@ -807,8 +809,9 @@ func v2InstanceUpdate(w http.ResponseWriter, r *http.Request) {
 			target.MonthlyTrafficGB = *req.TrafficQuotaGB
 			changed["traffic_quota_gb"] = target.MonthlyTrafficGB
 		}
-		if false {
-
+		if req.CPULimit != nil && *req.CPULimit > 0 && *req.CPULimit <= 100 {
+			target.CPUPercent = *req.CPULimit
+			changed["cpu_percent"] = target.CPUPercent
 		}
 		if req.SnapshotLimit != nil {
 			target.SnapshotLimit = idcLimitFromValueV2(*req.SnapshotLimit)
@@ -845,6 +848,9 @@ func v2InstanceUpdate(w http.ResponseWriter, r *http.Request) {
 	v2OK(w, r, v2InstanceView(*updated))
 }
 
+// v2InstanceDelete DELETE /api/v2/instances/{id}
+// 回收站语义（F 系列 NetJett 对齐）：默认软删除（进回收站，可恢复）；
+// ?purge=true 才真正销毁（计费终止释放资源）。
 func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 	if !v2RequireScope(w, r, "container:create") {
 		return
@@ -857,21 +863,40 @@ func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 		v2Precondition(w, r, "实例已锁定，请先解锁")
 		return
 	}
-	// 节点上的实例：删除由被控执行（agent 的 destroy 动作），主控不排本地任务。
-	if handled, nodeName, err := v2ProxyInstanceToNode(r, c, "destroy", nil); handled {
-		if err != nil {
-			v2Upstream(w, r, err.Error())
+	// 显式 purge：走真删除（数据面销毁）。
+	if strings.EqualFold(r.URL.Query().Get("purge"), "true") {
+		// 节点上的实例：删除由被控执行（agent 的 destroy 动作），主控不排本地任务。
+		if handled, nodeName, err := v2ProxyInstanceToNode(r, c, "destroy", nil); handled {
+			if err != nil {
+				v2Upstream(w, r, err.Error())
+				return
+			}
+			auditRequest(r, "api.v2.instance.delete", c.Name, "彻底删除（节点 "+nodeName+"）", true, "")
+			v2Accepted(w, r, map[string]interface{}{
+				"id": c.ID, "name": c.Name, "node_id": c.NodeID, "node_name": nodeName,
+				"purged": true,
+			})
 			return
 		}
-		auditRequest(r, "api.v2.instance.delete", c.Name, "删除实例（节点 "+nodeName+"）", true, "")
-		v2Accepted(w, r, map[string]interface{}{
-			"id": c.ID, "name": c.Name, "node_id": c.NodeID, "node_name": nodeName, "deleted_on_node": true,
-		})
+		taskIDs := globalQueue.EnqueueBatchWithAudit(TaskDelete, []int{c.ID}, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		auditRequest(r, "api.v2.instance.delete", c.Name, "彻底删除", true, "")
+		v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "id": c.ID, "name": c.Name, "purged": true})
 		return
 	}
-	taskIDs := globalQueue.EnqueueBatchWithAudit(TaskDelete, []int{c.ID}, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
-	auditRequest(r, "api.v2.instance.delete", c.Name, "删除实例", true, "")
-	v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "id": c.ID, "name": c.Name})
+	// 默认：软删除进回收站（数据面不动）。
+	name, wasRunning, err := config.RecycleContainer(c.ID, "deleted")
+	if err != nil {
+		v2Internal(w, r, err.Error())
+		return
+	}
+	if wasRunning {
+		globalQueue.EnqueueWithAudit(c.ID, name, TaskStop, "", nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	}
+	auditRequest(r, "api.v2.instance.delete", name, "移入回收站（可恢复）", true, "")
+	v2Accepted(w, r, map[string]interface{}{
+		"id": c.ID, "name": name, "recycled": true,
+		"hint": "恢复：POST /api/v2/instances/{id}/restore；彻底删除：POST /api/v2/instances/{id}/purge 或 DELETE ?purge=true",
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -899,6 +924,9 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 	actionMap := map[string]string{
 		"start": "start", "stop": "stop", "shutdown": "stop", "restart": "restart",
 		"hard-stop": "hardoff", "hardoff": "hardoff", "hard-restart": "hard_reboot",
+		// 欠费停机（挂起）：与 v1 /containers/{id}/suspend|unsuspend 语义一致。
+		// suspend = 停机 + Suspended 标记（开机被拦截直至 unsuspend）。
+		"suspend": "suspend", "unsuspend": "unsuspend",
 	}
 	taskAction, valid := actionMap[action]
 	if !valid {
@@ -908,19 +936,32 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 挂起/到期/超流量拦截（与面板一致：电源类操作全部禁止）。
-	if taskAction == "start" || taskAction == "restart" {
-		switch {
-		case c.Suspended:
-			v2Precondition(w, r, "实例已挂起（欠费停机），不允许开机")
-			return
-		case lxc.IsExpired(*c):
-			v2Precondition(w, r, "实例已到期，不允许开机")
-			return
-		case lxc.IsTrafficExceeded(*c):
-			v2Precondition(w, r, "实例流量已超限，不允许开机")
-			return
+		if taskAction == "start" || taskAction == "restart" || taskAction == "unsuspend" {
+			switch {
+			case c.Suspended && taskAction != "unsuspend":
+				v2Precondition(w, r, "实例已挂起（欠费停机），不允许开机")
+				return
+			case lxc.IsExpired(*c) && taskAction != "unsuspend":
+				v2Precondition(w, r, "实例已到期，不允许开机")
+				return
+			case lxc.IsTrafficExceeded(*c) && taskAction != "unsuspend":
+				v2Precondition(w, r, "实例流量已超限，不允许开机")
+				return
+			}
 		}
-	}
+		// 节点实例：agent 有 suspend/unsuspend 动作，直接代理。
+		if c.NodeID != "" && (taskAction == "suspend" || taskAction == "unsuspend") {
+			handled, nodeName, err := v2ProxyInstanceToNode(r, c, taskAction, nil)
+			if handled {
+				if err != nil {
+					v2Upstream(w, r, err.Error())
+					return
+				}
+				auditRequest(r, "api.v2.instance.power", c.Name, "action="+action+" node="+nodeName, true, "")
+				v2Accepted(w, r, map[string]interface{}{"id": c.ID, "action": action, "node_id": c.NodeID})
+				return
+			}
+		}
 	// 跨节点实例：代理到被控执行。
 	if c.NodeID != "" {
 		node, ok := config.FindNode(c.NodeID)
@@ -928,7 +969,17 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 			v2Upstream(w, r, "实例所属节点不可用")
 			return
 		}
-		agentAction := map[string]string{"start": "start", "stop": "stop", "restart": "restart", "hardoff": "destroy", "hard_reboot": "restart"}[taskAction]
+		// hard-stop/hard-restart 必须映射到 force-stop/force-restart（不删除的
+		// 强制断电）。绝不能映射到 destroy——destroy 在被控侧是 lxc-destroy/virsh
+		// undefine，会连磁盘一起删掉（历史 bug：曾把 hardoff 映射为 destroy 导致误删）。
+		agentAction := map[string]string{
+			"start": "start", "stop": "stop", "restart": "restart",
+			"hardoff": "force-stop", "hard_reboot": "force-restart",
+		}[taskAction]
+		if agentAction == "" {
+			v2BadRequest(w, r, "action 取值非法", map[string]string{"action": action})
+			return
+		}
 		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
 			fmt.Sprintf("/api/agent/containers/%d/%s", c.ID, agentAction), nil)
 		if err != nil {
@@ -943,11 +994,19 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 		v2Accepted(w, r, map[string]interface{}{"id": c.ID, "action": action, "node_id": node.ID})
 		return
 	}
+	// 本机挂起/恢复：复用 v1 的 suspendContainer（含通知与审计）。
+	if taskAction == "suspend" || taskAction == "unsuspend" {
+		suspendContainer(w, r, c.ID, taskAction == "suspend")
+		return
+	}
 	// 本机：入任务队列（异步执行，返回 task_ids 供轮询）。
 	taskIDs := globalQueue.EnqueueWithAudit(c.ID, c.Name, taskActionOfV2(taskAction), "", nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
 	auditRequest(r, "api.v2.instance.power", c.Name, "action="+action, true, "")
 	v2Accepted(w, r, map[string]interface{}{"id": c.ID, "action": action, "task_ids": taskIDs})
 }
+
+// suspendLocalContainer 已并入 suspendContainer 复用路径（v2 power 挂起/恢复直接
+// 调用 v1 handler，保证语义、通知、审计一致）；保留占位避免文档断链。
 
 func taskActionOfV2(action string) TaskType {
 	switch action {
@@ -957,10 +1016,13 @@ func taskActionOfV2(action string) TaskType {
 		return "stop"
 	case "restart":
 		return "restart"
+	// 任务队列动作用「stop/restart」，被控映射已改为 force-stop/force-restart
+	// （不删除的强制操作）。此处不再需要 destroy 语义。
 	case "hardoff":
-		// 本机走队列的停止流程（被控侧 hardoff 会映射为 agent 的 destroy，即真正强制停止）。
+		// 本机走队列的停止流程（节点实例走 agent 的 force-stop，强制断电不删除）。
 		return "stop"
 	case "hard_reboot":
+		// 强制重启：节点实例先用 force-stop 断电再 start。
 		return "restart"
 	}
 	return TaskType(action)
@@ -1653,9 +1715,6 @@ func v2ProxyInstanceToNode(r *http.Request, c *config.Container, agentAction str
 }
 
 func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
-	if !v2RequireScope(w, r, "container:power") {
-		return
-	}
 	var req struct {
 		Action     string          `json:"action"`
 		IDs        []int           `json:"ids"`
@@ -1664,6 +1723,28 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := v2Decode(r, &req); err != nil {
 		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+		return
+	}
+	// 批量扩展动作（NetJett 对齐）：按动作粒度校验 scope（改密≠电源权限），
+	// 同步逐实例执行，结果逐实例返回；与 power/delete/reinstall（任务队列语义）分流。
+	switch strings.ToLower(strings.TrimSpace(req.Action)) {
+	case "reset-password", "remark", "expiry":
+		extendedAction := strings.ToLower(strings.TrimSpace(req.Action))
+		scope := "container:account"
+		if extendedAction == "reset-password" {
+			scope = "container:password"
+		}
+		if !v2RequireScope(w, r, scope) {
+			return
+		}
+		if len(req.IDs) == 0 {
+			v2BadRequest(w, r, "缺少必填字段", map[string]string{"ids": "必填（实例 ID 数组）"})
+			return
+		}
+		v2InstancesBatchExtended(w, r, extendedAction, req)
+		return
+	}
+	if !v2RequireScope(w, r, "container:power") {
 		return
 	}
 	if len(req.IDs) == 0 {
@@ -1713,8 +1794,10 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 			"stop":         {TaskStop, "stop"},
 			"shutdown":     {TaskStop, "stop"},
 			"restart":      {TaskRestart, "restart"},
-			"hard-stop":    {TaskStop, "destroy"},
-			"hard-restart": {TaskRestart, "restart"},
+			// hard-stop/hard-restart 映射到 force-stop（强制断电，不删除）；
+			// 绝不能映射 destroy（= lxc-destroy，会真删除实例）。
+			"hard-stop":    {TaskStop, "force-stop"},
+			"hard-restart": {TaskStop, "force-restart"},
 		}[strings.ToLower(strings.TrimSpace(params.Action))]
 		if !valid {
 			v2BadRequest(w, r, "params.action 取值非法",

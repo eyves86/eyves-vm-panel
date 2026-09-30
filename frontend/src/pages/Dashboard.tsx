@@ -138,10 +138,12 @@ export default function Dashboard() {
         <p className="text-sm text-gray-500 mt-1">宿主机资源状态与容器概览</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SummaryCard icon={<Server className="w-5 h-5" />} title="容器总数" value={stats?.total_containers || 0} />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
+        <SummaryCard icon={<Server className="w-5 h-5" />} title="实例总数" value={stats?.total_containers || 0} />
         <SummaryCard dot="bg-green-500" title="运行中" value={stats?.running || 0} />
         <SummaryCard dot="bg-red-500" title="已停止" value={stats?.stopped || 0} muted />
+        <SummaryCard dot="bg-amber-500" title="已挂起" value={stats?.suspended || 0} muted />
+        <SummaryCard dot="bg-blue-500" title="在线节点" value={`${stats?.nodes_online || 0}/${stats?.nodes_total || 0}`} />
       </div>
 
       {host && (
@@ -174,7 +176,7 @@ function SummaryCard({
   icon?: ReactNode
   dot?: string
   title: string
-  value: number
+  value: number | string
   muted?: boolean
 }) {
   return (

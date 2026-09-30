@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router'
+import { useBrand } from '../utils/brand'
 import {
   ChevronDown,
   ChevronLeft,
@@ -185,6 +186,7 @@ function LanguageIcon({ className = '' }: { className?: string }) {
 }
 
 export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: SidebarProps) {
+  const brand = useBrand()
   const navigate = useNavigate()
   const location = useLocation()
   const { logout, isSubUser } = useAuth()
@@ -394,7 +396,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
             <div className="w-7 h-7 flex items-center justify-center">
               <AppIcon className="w-5 h-5" />
             </div>
-            <span className="font-bold text-black text-sm dark:text-white">EyvesCloud</span>
+            <span className="font-bold text-black text-sm dark:text-white">{brand.name}</span>
           </div>
         )}
         {!expanded && (
@@ -520,7 +522,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
                   className="inline-flex min-w-0 items-center gap-1 rounded text-gray-500 transition-colors hover:text-gray-950 dark:text-gray-400 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <GitHubIcon className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">EyvesCloud</span>
+                  <span className="truncate">{brand.name}</span>
                 </button>
                 <span className="shrink-0">v{version}</span>
                 {hasUpdate && (
@@ -542,7 +544,7 @@ export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose
               <button
                 onClick={openUpdateManager}
                 disabled={upgrading}
-                title={`EyvesCloud v${version}（点击管理更新）`}
+                title={`${brand.name} v${version}（点击管理更新）`}
                 className="inline-flex items-center justify-center rounded text-gray-400 transition-colors hover:text-gray-900 dark:text-gray-500 dark:hover:text-white disabled:cursor-not-allowed disabled:opacity-60"
               >
                 <GitHubIcon className="h-4 w-4" />

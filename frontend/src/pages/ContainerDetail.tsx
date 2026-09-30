@@ -21,6 +21,8 @@ import {
   Network,
   Pencil,
   Play,
+  PauseCircle,
+  PlayCircle,
   Plus,
   RefreshCw,
   Save,
@@ -89,6 +91,8 @@ import {
   resetSSHPassword,
   createContainerAccount,
   restartContainer,
+  suspendContainer,
+  unsuspendContainer,
   startContainer,
   stopContainer,
   Snapshot,
@@ -489,8 +493,11 @@ export default function ContainerDetail() {
     return () => clearInterval(t)
   }, [containerIdentifier, container?.id])
 
+    const [showMoreActions, setShowMoreActions] = useState(false)
+  const secondaryActionsCount = 10
   const taskActionLabels: Record<string, string> = {
     start: '开机中...', stop: '关机中...', restart: '重启中...', delete: '删除中...', reinstall: '重装中...',
+    suspend: '挂起中...', unsuspend: '解除挂起中...',
   }
 
   const ensureSubUserCanOperate = async () => {
@@ -517,6 +524,14 @@ export default function ContainerDetail() {
           break
         case 'restart':
           await restartContainer(containerIdentifier)
+          break
+        case 'suspend':
+          if (!(await dialog.confirm('挂起实例', `确定挂起 ${container?.name} 吗？挂起后服务器将关机且用户无法开机（欠费停机）。`))) return
+          await suspendContainer(containerIdentifier)
+          break
+        case 'unsuspend':
+          if (!(await dialog.confirm('解除挂起', `确定解除 ${container?.name} 的挂起状态并开机吗？`))) return
+          await unsuspendContainer(containerIdentifier)
           break
         case 'delete':
           if (!(await dialog.confirm('删除容器', `确定要删除容器 ${container?.name} 吗？此操作不可撤销。`))) return
@@ -799,6 +814,13 @@ export default function ContainerDetail() {
 
   const handleReinstall = async () => {
     if (!containerIdentifier || !selectedTemplate) return
+    // 危险动作分级确认：重装会清空系统盘，要求输入实例名防手滑。
+    const typed = (await dialog.prompt('重装系统确认', `输入实例名 ${container?.name} 以确认重装（系统盘将被清空）`))
+    if (typed === null) return
+    if (typed.trim() !== container?.name) {
+      await dialog.alert('确认失败', '输入的实例名不匹配，重装已取消')
+      return
+    }
     const linuxTemplate = !isWindowsTemplate(selectedTemplate)
     if (linuxTemplate && reinstallAuthMode === 'password') {
       const validationError = sshPasswordError(reinstallPasswordDraft.trim())
@@ -1781,6 +1803,26 @@ export default function ContainerDetail() {
                   <RefreshCw className="w-3.5 h-3.5" />
                   {isSubUserPolicyBlocked ? '已封禁' : isExpired ? '已到期' : taskStatus === 'restart' ? taskActionLabels['restart'] : '重启'}
                 </ActionButton>
+                {/* 挂起/解除挂起：管理员对欠费/风控实例的强制停机手段（F-6 补入口）。 */}
+                {!container?.suspended ? (
+                  <ActionButton
+                    disabled={!!taskStatus || isExpired || isSubUserPolicyBlocked || readOnly || !featureGate('instance_power', true)}
+                    title={t('欠费停机：关机并禁止用户开机，直至解除挂起')}
+                    onClick={() => handleAction('suspend')}
+                  >
+                    <PauseCircle className="w-3.5 h-3.5" />
+                    {taskStatus === 'suspend' ? taskActionLabels['suspend'] : '挂起'}
+                  </ActionButton>
+                ) : (
+                  <ActionButton
+                    dark
+                    disabled={!!taskStatus || !featureGate('instance_power', true)}
+                    onClick={() => handleAction('unsuspend')}
+                  >
+                    <PlayCircle className="w-3.5 h-3.5" />
+                    {taskStatus === 'unsuspend' ? taskActionLabels['unsuspend'] : '解除挂起'}
+                  </ActionButton>
+                )}
                 {!isWindows && (
                   // LXC 与 KVM 的控制台不同：LXC 直接走容器内 sshd（平台注入口令）；
                   // KVM 需要客户机自身在跑 sshd，图形界面请用 WebVNC。未运行时禁用。
@@ -1823,6 +1865,15 @@ export default function ContainerDetail() {
                 IPv4 NAT 管理
               </ActionButton>
             )}
+            {/* 移动端折叠：以下为次要动作，<sm 屏收进「更多操作」抽屉。
+                核心动作（电源/WebSSH/VNC）始终常显。 */}
+            <button
+              onClick={() => setShowMoreActions(v => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 sm:hidden"
+            >
+              {showMoreActions ? '收起' : `更多操作（${secondaryActionsCount}）`}
+            </button>
+            <div className={showMoreActions ? 'contents' : 'hidden sm:contents'}>
             <ActionButton onClick={openFirewall} disabled={isSubUserPolicyBlocked || readOnly}>
               <FirewallIcon className="w-3.5 h-3.5" />
               防火墙
@@ -1869,6 +1920,7 @@ export default function ContainerDetail() {
               <FileCode2 className="w-3.5 h-3.5" />
               脚本
             </ActionButton>
+            </div>
             {isKVM && !isSubUser && (
               <ActionButton
                 onClick={openRescue}

@@ -355,7 +355,13 @@ func listByRuntime() ([]config.Container, error) {
 		containers = config.AppConfig.Containers
 	}
 	containers = kvmManager.ListContainers(containers)
-	return containers, err
+	// 防御性拷贝（实测踩坑）：下游所有列表过滤普遍使用 `filtered := containers[:0]`
+	// 原地复用底层数组；若这里与全局 config 共享切片，任何一次带过滤的列表请求
+	// 都会原地写坏内存态全局配置（回收站视图过滤曾触发：被回收实例的记录被
+	// 后续元素覆写消失）。列表语义必须只读，这里统一拷贝隔离。
+	out := make([]config.Container, len(containers))
+	copy(out, containers)
+	return out, err
 }
 
 // resizeDiskByRuntime 扩容系统盘（仅允许扩大），按运行时分发：

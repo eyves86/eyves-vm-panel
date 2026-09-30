@@ -334,6 +334,9 @@ export interface DashboardStats {
   total_containers: number
   running: number
   stopped: number
+  suspended?: number
+  nodes_total?: number
+  nodes_online?: number
 }
 
 export interface HostInfo {
@@ -1056,6 +1059,11 @@ export const stopContainer = (id: ContainerIdentifier) =>
 
 export const restartContainer = (id: ContainerIdentifier) =>
   api.post<APIResponse>(`/containers/${id}/restart`)
+// 欠费停机（挂起/恢复）：suspend=停机+标记（开机被拦直至 unsuspend）。管理员操作。
+export const suspendContainer = (id: ContainerIdentifier) =>
+  api.post<APIResponse>(`/containers/${id}/suspend`)
+export const unsuspendContainer = (id: ContainerIdentifier) =>
+  api.post<APIResponse>(`/containers/${id}/unsuspend`)
 
 export const reinstallContainer = (id: ContainerIdentifier, templateId: string, options?: ReinstallContainerOptions) =>
   api.post<APIResponse>(`/containers/${id}/reinstall`, { template_id: templateId, ...(options || {}) })

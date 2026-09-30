@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -249,10 +250,35 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:delete") {
 			return
 		}
-		if routeToAgent("destroy", nil) {
+		// 回收站语义（NetJett/魔方云同款）：DELETE 默认软删除（进回收站，可恢复），
+		// ?purge=true 才真正销毁。计费系统 Terminate 用 purge（释放资源语义）。
+		if strings.EqualFold(r.URL.Query().Get("purge"), "true") {
+			if routeToAgent("destroy", nil) {
+				return
+			}
+			HandleSingleTaskAction(w, r, id, "delete")
 			return
 		}
-		HandleSingleTaskAction(w, r, id, "delete")
+		name, wasRunning, err := config.RecycleContainer(id, "deleted")
+		if err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
+		if wasRunning {
+			// 排停机任务（异步），回收站中的实例保持关机。
+			globalQueue.EnqueueWithAudit(id, name, TaskStop, "", nil, requestActor(r), clientIP(r), r.UserAgent())
+		}
+		auditRequest(r, "container.recycle", name, "移入回收站（可恢复）", true, "")
+		jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "Container moved to recycle bin", Data: map[string]interface{}{
+			"id": id, "name": name, "recycled": true,
+			"hint": "彻底删除请调用 POST /api/containers/{id}/purge 或等待保留期自动清理",
+		}})
+	case action == "restore" && r.Method == http.MethodPost:
+		// 回收站恢复（v2 为主契约；v1 保留同语义入口供旧集成使用）。
+		restoreContainerAction(w, r, c)
+	case action == "purge" && r.Method == http.MethodPost:
+		// 彻底删除（真销毁）：回收站模型唯一的真删除入口之一。
+		purgeContainerAction(w, r, c)
 	case action == "reset-password" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:password") {
 			return
@@ -699,6 +725,8 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 func listContainers(w http.ResponseWriter, r *http.Request) {
 	containers, _ := listByRuntime()
 	containers = filterContainersForRequest(r, containers)
+	// 回收站视图：?recycled=true 只看回收站；默认视图排除回收站实例。
+	containers = listContainersFilterRecycled(containers, r)
 	// 标签过滤（企业成本分摊 / 按标签过滤，类比 AWS DescribeInstances Filters）。
 	// 支持两种形式：?tag=key:value（精确匹配）；?tag-key=key（存在性匹配）。
 	if tagFilter := strings.TrimSpace(r.URL.Query().Get("tag")); tagFilter != "" {
@@ -1493,9 +1521,25 @@ func HandleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	containers, _ := listByRuntime()
 	containers = filterContainersForRequest(r, containers)
+	// 排除回收站实例（软删除不计入运营指标）。
+	containers = listContainersFilterRecycled(containers, r)
 	running := 0
 	stopped := 0
+	suspended := 0
+	nodesTotal := 0
+	nodesOnline := 0
+	config.AppConfigMu.RLock()
+	nodesTotal = len(config.AppConfig.Nodes)
+	for _, n := range config.AppConfig.Nodes {
+		if n.Status == "online" {
+			nodesOnline++
+		}
+	}
+	config.AppConfigMu.RUnlock()
 	for _, c := range containers {
+		if c.Suspended {
+			suspended++
+		}
 		if c.Status == "running" {
 			running++
 		} else {
@@ -1506,6 +1550,9 @@ func HandleDashboard(w http.ResponseWriter, r *http.Request) {
 		"total_containers": len(containers),
 		"running":          running,
 		"stopped":          stopped,
+		"suspended":        suspended,
+		"nodes_total":      nodesTotal,
+		"nodes_online":     nodesOnline,
 	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: stats})
 }
@@ -2077,4 +2124,125 @@ func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *co
 			"disk_gb": c.DiskGB,
 		},
 	})
+}
+
+// ---------------------------------------------------------------------------
+// 回收站（软删除，NetJett/魔方云同款能力）
+// ---------------------------------------------------------------------------
+
+// listContainers 增加回收站视图：?recycled=true 只返回回收站实例。
+// 默认视图（不传参）排除回收站实例——所有列表调用方（UI/WHMCS/集成）自动获得
+// "回收站不可见"语义；按 ID/名称的定位（find）不受影响，计费挂起/删除仍可命中。
+func listContainersFilterRecycled(containers []config.Container, r *http.Request) []config.Container {
+	wantRecycled := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("recycled")), "true")
+	filtered := containers[:0]
+	for _, c := range containers {
+		if wantRecycled == (c.RecycledAt != "") {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
+// restoreContainerAction POST /api/containers/{id}/restore：从回收站恢复。
+func restoreContainerAction(w http.ResponseWriter, r *http.Request, c *config.Container) {
+	if !requireScope(w, r, "container:create") {
+		return
+	}
+	if c.RecycledAt == "" {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Container is not in recycle bin"})
+		return
+	}
+	if err := config.RestoreContainer(c.ID); err != nil {
+		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
+	auditRequest(r, "container.restore", c.Name, "从回收站恢复", true, "")
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Container restored", Data: map[string]interface{}{
+		"id": c.ID, "name": c.Name,
+	}})
+}
+
+// purgeContainerAction POST /api/containers/{id}/purge：彻底删除（真销毁数据面）。
+// 这是回收站模型里唯一的真删除入口；WHMCS Terminate 与到期清理走这里。
+func purgeContainerAction(w http.ResponseWriter, r *http.Request, c *config.Container) {
+	if !requireScope(w, r, "container:delete") {
+		return
+	}
+	if c.Locked {
+		jsonResponse(w, http.StatusPreconditionFailed, APIResponse{Success: false, Message: "Container is locked"})
+		return
+	}
+	// 节点实例：真删除由被控 destroy 执行。
+	if c.NodeID != "" {
+		node, ok := config.FindNode(c.NodeID)
+		if !ok || node.Address == "" {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "实例所属节点不可用"})
+			return
+		}
+		data, status, err := proxyNodeRequest(r, node, http.MethodPost,
+			fmt.Sprintf("/api/agent/containers/%d/destroy", c.ID), nil)
+		if err != nil {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "代理节点失败：" + err.Error()})
+			return
+		}
+		if status >= 300 {
+			jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "节点执行失败：" + strings.TrimSpace(string(data))})
+			return
+		}
+		auditRequest(r, "container.purge", c.Name, "彻底删除（节点 "+node.Name+"）", true, "")
+		jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "Purge accepted", Data: map[string]interface{}{
+			"id": c.ID, "name": c.Name, "node": node.Name,
+		}})
+		return
+	}
+	taskIDs := globalQueue.EnqueueBatchWithAudit(TaskDelete, []int{c.ID}, "", requestActor(r), clientIP(r), r.UserAgent())
+	auditRequest(r, "container.purge", c.Name, "彻底删除", true, "")
+	jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: "Purge accepted", Data: map[string]interface{}{
+		"id": c.ID, "name": c.Name, "task_ids": taskIDs,
+	}})
+}
+
+// HandleRecycleBin GET /api/recycle-bin：回收站列表（管理员与按容器绑定过滤）。
+func HandleRecycleBin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	if !requireScope(w, r, "container:read") {
+		return
+	}
+	items := config.RecycledContainers()
+	items = filterContainersForRequest(r, items)
+	for i := range items {
+		sanitizeContainerResponse(r, &items[i])
+		items[i].SSHPassword = ""
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: items})
+}
+
+// StartRecyclePurgeWorker 启动回收站自动清理：每小时检查一次，超过保留期
+// （EYVESCLOUD_RECYCLE_DAYS，默认 7 天）的回收站实例入真删除任务。
+func StartRecyclePurgeWorker() {
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		purgeOnce := func() {
+			retention := config.RecycleRetentionDays
+			if v := strings.TrimSpace(os.Getenv("EYVESCLOUD_RECYCLE_DAYS")); v != "" {
+				if n, err := strconv.Atoi(v); err == nil && n > 0 {
+					retention = n
+				}
+			}
+			for _, id := range config.RecyclePurgeDue(retention) {
+				if c := config.FindContainer(id); c != nil && !c.Locked {
+					globalQueue.EnqueueBatchWithAudit(TaskDelete, []int{id}, "", "system:recycle-purge", "", "")
+				}
+			}
+		}
+		purgeOnce()
+		for range ticker.C {
+			purgeOnce()
+		}
+	}()
 }

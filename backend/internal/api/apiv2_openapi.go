@@ -40,10 +40,10 @@ func v2OpenAPIMetadata() map[string]v2OpenAPIMeta {
 		"GET /api/v2/instances":         {Summary: "实例列表", Query: []string{"page", "page_size", "all", "status", "runtime", "node_id", "owner", "tenant", "template_id", "locked", "q", "sort", "order"}},
 		"POST /api/v2/instances":        {Summary: "创建实例（支持 node_id=auto 调度与批量 count）", Body: "name / runtime / template_id / node_id / count / vcpu / memory_mb / disk_gb / down_mbps / up_mbps / traffic_quota_gb / ssh_port / nat_ports / public_ipv4_count / ipv6_count / storage_pool_id / auth{mode,password,ssh_key_ids} / cloud_init / snapshot_limit / owner / tenant / remark / expires_at / firewall_enabled"},
 		"GET /api/v2/instances/{id}":    {Summary: "实例详情（含快照、备份、安全组）"},
-		"PATCH /api/v2/instances/{id}":  {Summary: "部分更新实例", Body: "vcpu / memory_mb / disk_gb / data_disk_gb / down_mbps / up_mbps / traffic_quota_gb / snapshot_limit / remark / expires_at / tenant / firewall_enabled"},
+		"PATCH /api/v2/instances/{id}":  {Summary: "部分更新实例", Body: "vcpu / cpu_percent(1-100) / memory_mb / disk_gb / data_disk_gb / down_mbps / up_mbps / traffic_quota_gb / snapshot_limit / remark / expires_at / tenant / firewall_enabled"},
 		"DELETE /api/v2/instances/{id}": {Summary: "删除实例（节点上的实例由被控执行）"},
 
-		"POST /api/v2/instances/{id}/power":                   {Summary: "电源操作", Body: "action: start|stop|shutdown|restart|hard-stop|hard-restart"},
+		"POST /api/v2/instances/{id}/power":                   {Summary: "电源操作", Body: "action: start|stop|shutdown|restart|hard-stop|hard-restart|suspend|unsuspend（hard-stop=强制断电不删除）"},
 		"POST /api/v2/instances/{id}/reinstall":               {Summary: "重装系统", Body: "template_id / password"},
 		"POST /api/v2/instances/{id}/reset-password":          {Summary: "重置 root 密码", Body: "password（留空自动生成，仅返回一次）"},
 		"POST /api/v2/instances/{id}/console":                 {Summary: "获取控制台票据", Body: "type: ssh|vnc（LXC 仅 ssh；KVM 两者皆可，需运行中）"},

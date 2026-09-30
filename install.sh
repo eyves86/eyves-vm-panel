@@ -2334,6 +2334,66 @@ compute_sha256() {
     printf '%s\n' ""
 }
 
+# verify_release_signature_offline：安装脚本侧的 ed25519 验签（F-7）。
+# 公钥来源：EYVESCLOUD_RELEASE_PUBKEY（minisign 信封第二行 base64）或内置默认值。
+# 签名文件不存在 → 警告后通过（安装器面向首次安装，保持可用性优先；面板内
+# 自升级是更严格的默认中止，见 internal/cli/release_signature.go）。
+# 签名存在但验证失败 → 返回非零（调用方中止）。
+EYVESCLOUD_INSTALL_RELEASE_PUBKEY="${EYVESCLOUD_RELEASE_PUBKEY:-Xyv7jh+bDXBzIf57+PhyfzCUsfEPOIuyUog/j6burGI=}"
+
+verify_release_signature_offline() {
+    _vs_url="$1"
+    _vs_sums="$2"
+    _vs_pub="${EYVESCLOUD_INSTALL_RELEASE_PUBKEY}"
+    [ -n "$_vs_pub" ] || { warn "未内置签发公钥，跳过清单签名校验（仅哈希比对）"; return 0; }
+
+    _vs_sig="$(mktemp 2>/dev/null || printf '%s' "/tmp/eyvescloud-SHA256SUMS.minisig.$$")"
+    _vs_sig_url="${_vs_url}.minisig"
+    download_file "$_vs_sig_url" "$_vs_sig" >/dev/null 2>&1
+    if [ ! -s "$_vs_sig" ]; then
+        rm -f "$_vs_sig"
+        warn "未获取到清单签名（${_vs_sig_url}），跳过签名校验（仅哈希比对）。如需强制签名，请用带签名的官方 Release。"
+        return 0
+    fi
+    # openssl + python3 都可用时才做本地验签；否则跳过（保持最小系统可安装）。
+    if has_cmd openssl && has_cmd python3; then
+        _vs_pubpem="$(mktemp)"
+        _vs_rawsig="$(mktemp)"
+        # 从 minisign 信封提取裸签名（第二行 base64，去掉 2 字节算法前缀），
+        # 并把公钥拼成 SPKI PEM，交给 openssl pkeyutl 验签。
+        EYVESCLOUD_PUB_B64="$_vs_pub" EYVESCLOUD_PUB_PEM="$_vs_pubpem" \
+        EYVESCLOUD_SIG_FILE="$_vs_sig" EYVESCLOUD_SIG_RAW="$_vs_rawsig" python3 - <<'PY' || { rm -f "$_vs_sig" "$_vs_pubpem" "$_vs_rawsig"; return 1; }
+import base64, os
+pub = base64.b64decode(os.environ["EYVESCLOUD_PUB_B64"].strip())
+if len(pub) == 34:  # minisign 公钥带 2 字节算法前缀
+    pub = pub[2:]
+if len(pub) != 32:
+    raise SystemExit(1)
+lines = open(os.environ["EYVESCLOUD_SIG_FILE"]).read().strip().split("\n")
+sig = base64.b64decode(lines[1].strip())
+if len(sig) == 66:  # 2 字节算法前缀 + 64 字节签名
+    sig = sig[2:]
+if len(sig) != 64:
+    raise SystemExit(1)
+der = bytes.fromhex("302a300506032b6570032100") + pub
+pem = "-----BEGIN PUBLIC KEY-----\n" + base64.encodebytes(der).decode() + "-----END PUBLIC KEY-----\n"
+open(os.environ["EYVESCLOUD_PUB_PEM"], "w").write(pem)
+open(os.environ["EYVESCLOUD_SIG_RAW"], "wb").write(sig)
+PY
+        _vs_ok=0
+        openssl pkeyutl -verify -rawin -pubin -inkey "$_vs_pubpem" -sigfile "$_vs_rawsig" -in "$_vs_sums" >/dev/null 2>&1 && _vs_ok=1
+        rm -f "$_vs_sig" "$_vs_pubpem" "$_vs_rawsig"
+        if [ "$_vs_ok" = "1" ]; then
+            log "校验清单签名验证通过（ed25519）"
+            return 0
+        fi
+        return 1
+    fi
+    rm -f "$_vs_sig"
+    warn "系统缺少 openssl/python3，跳过清单签名校验（仅哈希比对）。"
+    return 0
+}
+
 verify_release_asset() {
     _vfile="$1"
     _vasset="$2"
@@ -2348,8 +2408,7 @@ verify_release_asset() {
     _tried=""
     # 依次尝试：汇总清单 SHA256SUMS → 单文件校验值 <asset>.sha256。
     # 每一级都先解析地址、再真正下载；全部失败不会中止安装（见下方策略说明）。
-    for _candidate in "SHA256SUMS" "${_vasset}.sha256"; do
-        _url="$(release_asset_url "$_candidate")"
+    for _candidate in "SHA256SUMS" "${_vasset}.sha256"; do        _url="$(release_asset_url "$_candidate")"
         [ -n "$_url" ] || continue
         _tried="$_tried $_url"
         download_file "$_url" "$_sums_tmp" >/dev/null 2>&1 || true
@@ -2386,6 +2445,9 @@ verify_release_asset() {
                 }' "$_sums_tmp")"
             if [ -n "$_expected" ]; then
                 log "校验清单：$_url"
+                # F-7：若有官方签名文件（SHA256SUMS.minisig）且安装脚本内置公钥，
+                # 对清单做 ed25519 验签。签名无效 = 中止（发布源被篡改信号）。
+                verify_release_signature_offline "$_url" "$_sums_tmp" && _expected_ok=1 || { rm -f "$_sums_tmp"; die "SHA256SUMS 签名校验失败（发布源可能被篡改），安装已中止"; }
                 break
             fi
         fi

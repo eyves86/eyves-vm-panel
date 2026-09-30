@@ -541,6 +541,8 @@ func ensureSchemaMigrations() error {
 		{"api_keys", "container_uuids", "TEXT"},
 		{"api_keys", "last_used_ip", "TEXT"},
 		{"api_keys", "key_fingerprint", "TEXT"},
+		// v2 PATCH cpu_percent 支持（此前字段被静默丢弃，契约 bug 修复）。
+		{"containers", "cpu_percent", "INTEGER NOT NULL DEFAULT 0"},
 		{"tasks", "ip", "TEXT"},
 		{"tasks", "user_agent", "TEXT"},
 		{"tasks", "cfg_network_down_mbps", "INTEGER NOT NULL DEFAULT 0"},
@@ -609,6 +611,7 @@ func ensureSchemaMigrations() error {
 		// 实例备注与锁定（企业面板通用属性：备注用于运维标注，锁定后禁止删除/重装等破坏性操作）。
 		{"containers", "remark", "TEXT"},
 		{"containers", "locked", "INTEGER NOT NULL DEFAULT 0"},
+		{"containers", "recycled_at", "TEXT"},
 	} {
 		wasAdded, err := ensureColumn(column.table, column.name, column.def)
 		if err != nil {
@@ -721,8 +724,10 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	}
 
 	cfg := &EyvescloudConfig{
-		AdminUser:            meta["admin_user"],
-		AdminPassHash:        meta["admin_pass_hash"],
+		AdminUser:     meta["admin_user"],
+		AdminPassHash: meta["admin_pass_hash"],
+		// AdminTokenVersion 从库恢复（F-01 修复）：保证改密/吊销在重启后仍生效。
+		AdminTokenVersion:    atoi(meta["admin_token_version"]),
 		AdminTOTPSecret:      meta["admin_totp_secret"],
 		AdminTOTPEnabled:     atob(meta["admin_totp_enabled"]),
 		JWTSecret:            meta["jwt_secret"],
@@ -741,24 +746,29 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		IPAntiSpoofEnabled:   atob(meta["ip_anti_spoof_enabled"]),
 		// 滥用检测默认开启：老库没有该键时按开启处理，保证升级后检测不中断；
 		// 管理员显式关闭后会写入 "0"，此后保持关闭。
-		AbuseDetectionEnabled: atobDefault(meta, "abuse_detection_enabled", true),
-		TaskConcurrency:      atoi(meta["task_concurrency"]),
-		Language:             meta["language"],
-		LoginFooterText:      meta["login_footer_text"],
-		LoginFooterHidden:    atob(meta["login_footer_hidden"]),
-		PanelDomain:          meta["panel_domain"],
-		TurnstileSiteKey:     meta["turnstile_site_key"],
-		TurnstileSecretKey:   meta["turnstile_secret_key"],
-		TurnstileAdminLogin:  atob(meta["turnstile_admin_login"]),
-		TurnstileUserLogin:   atob(meta["turnstile_user_login"]),
-		MetricRetentionDays:  atoi(meta["metric_retention_days"]),
-		AuditRetentionDays:   atoi(meta["audit_retention_days"]),
-		MemoryOvercommitEnabled: atob(meta["memory_overcommit_enabled"]),
-		MemoryOvercommitRatio:   atof(meta["memory_overcommit_ratio"]),
+		AbuseDetectionEnabled:     atobDefault(meta, "abuse_detection_enabled", true),
+		TaskConcurrency:           atoi(meta["task_concurrency"]),
+		Language:                  meta["language"],
+		LoginFooterText:           meta["login_footer_text"],
+		LoginFooterHidden:         atob(meta["login_footer_hidden"]),
+		BrandName:                 meta["brand_name"],
+		BrandLogo:                 meta["brand_logo"],
+		BrandFavicon:              meta["brand_favicon"],
+		BrandLoginTitle:           meta["brand_login_title"],
+		BrandPoweredHidden:        atob(meta["brand_powered_hidden"]),
+		PanelDomain:               meta["panel_domain"],
+		TurnstileSiteKey:          meta["turnstile_site_key"],
+		TurnstileSecretKey:        meta["turnstile_secret_key"],
+		TurnstileAdminLogin:       atob(meta["turnstile_admin_login"]),
+		TurnstileUserLogin:        atob(meta["turnstile_user_login"]),
+		MetricRetentionDays:       atoi(meta["metric_retention_days"]),
+		AuditRetentionDays:        atoi(meta["audit_retention_days"]),
+		MemoryOvercommitEnabled:   atob(meta["memory_overcommit_enabled"]),
+		MemoryOvercommitRatio:     atof(meta["memory_overcommit_ratio"]),
 		NATSubnetOversubscription: atob(meta["nat_subnet_oversubscription"]),
 		DiskOvercommitRatio:       atof(meta["disk_overcommit_ratio"]),
 		// 节点对接密钥（本面板作为被控）：密文落库，读取后下方统一解密。
-		AgentPairingKey:        meta["agent_pairing_key"],
+		AgentPairingKey:       meta["agent_pairing_key"],
 		AgentPairingKeyExpiry: meta["agent_pairing_key_expiry"],
 		// 更新源：platform/owner/repo/branch/asset_prefix 明文；token 单独加密字段。
 		UpdateSource: UpdateSource{
@@ -879,6 +889,29 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 			cfg.TurnstileUserLogin = false
 		} else {
 			cfg.TurnstileSecretKey = plainTS
+		}
+	}
+
+	// AdminTOTPSecret 解密（F-02）：存量明文原样通过（自动迁移），解密失败置空
+	// 并禁用 TOTP（密钥残缺时放行比误锁更可恢复，设置页重存即可）。
+	if raw := strings.TrimSpace(cfg.AdminTOTPSecret); raw != "" {
+		plainTOTP, err := DecryptNodeToken(raw)
+		if err != nil {
+			cfg.AdminTOTPSecret = ""
+			cfg.AdminTOTPEnabled = false
+		} else {
+			cfg.AdminTOTPSecret = plainTOTP
+		}
+	}
+
+	// JWTSecret 解密（F-02）：存量明文原样通过；解密失败置空 = 所有既有 JWT
+	// 立即失效（Fail-closed：签名密钥残缺时宁可全体登出，也不能拿密文当密钥用）。
+	if raw := strings.TrimSpace(cfg.JWTSecret); raw != "" {
+		plainJWT, err := DecryptNodeToken(raw)
+		if err != nil {
+			cfg.JWTSecret = ""
+		} else {
+			cfg.JWTSecret = plainJWT
 		}
 	}
 
@@ -1073,80 +1106,108 @@ func saveMeta(tx *sql.Tx) error {
 		}
 		usToken = encUT
 	}
+	// AdminTOTPSecret 与节点 Token 同级敏感（可生成管理员 2FA 通行码）：
+	// AES-GCM 密文落库，内存态保持明文；加密失败拒绝落库（同节点 token 口径）。
+	totpSecret := AppConfig.AdminTOTPSecret
+	if totpSecret != "" {
+		encTOTP, err := EncryptNodeToken(totpSecret)
+		if err != nil {
+			return fmt.Errorf("加密 admin_totp_secret 失败: %w", err)
+		}
+		totpSecret = encTOTP
+	}
+	// JWTSecret 是管理员 JWT 的签名密钥（渗透测试 F-02）：DB 泄漏 + 明文落库
+	// = 可离线伪造任意管理员令牌。与其它高敏凭据同级 AES-GCM 加密落库。
+	jwtSecret := AppConfig.JWTSecret
+	if jwtSecret != "" {
+		encJWT, err := EncryptNodeToken(jwtSecret)
+		if err != nil {
+			return fmt.Errorf("加密 jwt_secret 失败: %w", err)
+		}
+		jwtSecret = encJWT
+	}
 	values := map[string]string{
-		"admin_user":             AppConfig.AdminUser,
-		"admin_pass_hash":        AppConfig.AdminPassHash,
-		"admin_totp_secret":      AppConfig.AdminTOTPSecret,
-		"admin_totp_enabled":     btoa(AppConfig.AdminTOTPEnabled),
-		"admin_backup_codes":     string(nCIbackup),
-		"admins":                 string(adminsJSON),
-		"admin_path":             AppConfig.AdminPath,
-		"jwt_secret":             AppConfig.JWTSecret,
-		"port":                   strconv.Itoa(AppConfig.Port),
-		"data_dir":               AppConfig.DataDir,
-		"next_container_id":      strconv.Itoa(AppConfig.NextContainerID),
-		"next_vnc_port":          strconv.Itoa(AppConfig.NextVNCPort),
-		"next_ssh_port":          strconv.Itoa(AppConfig.NextSSHPort),
-		"nat_port_start":         strconv.Itoa(AppConfig.NATPortStart),
-		"nat_port_end":           strconv.Itoa(AppConfig.NATPortEnd),
-		"lxc_nat_subnet":         AppConfig.LXCNATSubnet,
-		"kvm_nat_subnet":         AppConfig.KVMNATSubnet,
-		"setup_complete":         btoa(AppConfig.SetupComplete),
-		"security_auto_shutdown": btoa(AppConfig.SecurityAutoShutdown),
-		"arp_protection_enabled": btoa(AppConfig.ARPProtectionEnabled),
-		"ip_anti_spoof_enabled":  btoa(AppConfig.IPAntiSpoofEnabled),
-		"abuse_detection_enabled": btoa(AppConfig.AbuseDetectionEnabled),
-		"task_concurrency":       strconv.Itoa(AppConfig.TaskConcurrency),
-		"language":               NormalizeLanguage(AppConfig.Language),
-		"login_footer_text":      AppConfig.LoginFooterText,
-		"login_footer_hidden":    btoa(AppConfig.LoginFooterHidden),
-		"panel_domain":           AppConfig.PanelDomain,
-		"turnstile_site_key":     AppConfig.TurnstileSiteKey,
-		"turnstile_secret_key":   turnstileSecret,
-		"turnstile_admin_login":  btoa(AppConfig.TurnstileAdminLogin),
-		"turnstile_user_login":   btoa(AppConfig.TurnstileUserLogin),
-		"agent_pairing_key":      agentPairingKey,
+		"admin_user":      AppConfig.AdminUser,
+		"admin_pass_hash": AppConfig.AdminPassHash,
+		// AdminTokenVersion 必须落库（渗透测试 F-01）：不落库时改密/重置后重启
+		// 面板会把版本重置为 0，导致**已吊销的旧管理员 JWT 复活**。
+		"admin_token_version":      strconv.Itoa(AppConfig.AdminTokenVersion),
+		"admin_totp_secret":        totpSecret, // F-02：AES-GCM 密文落库（明文仅内存态）
+		"admin_totp_enabled":       btoa(AppConfig.AdminTOTPEnabled),
+		"admin_backup_codes":       string(nCIbackup),
+		"admins":                   string(adminsJSON),
+		"admin_path":               AppConfig.AdminPath,
+		"jwt_secret":               jwtSecret, // F-02：AES-GCM 密文落库
+		"port":                     strconv.Itoa(AppConfig.Port),
+		"data_dir":                 AppConfig.DataDir,
+		"next_container_id":        strconv.Itoa(AppConfig.NextContainerID),
+		"next_vnc_port":            strconv.Itoa(AppConfig.NextVNCPort),
+		"next_ssh_port":            strconv.Itoa(AppConfig.NextSSHPort),
+		"nat_port_start":           strconv.Itoa(AppConfig.NATPortStart),
+		"nat_port_end":             strconv.Itoa(AppConfig.NATPortEnd),
+		"lxc_nat_subnet":           AppConfig.LXCNATSubnet,
+		"kvm_nat_subnet":           AppConfig.KVMNATSubnet,
+		"setup_complete":           btoa(AppConfig.SetupComplete),
+		"security_auto_shutdown":   btoa(AppConfig.SecurityAutoShutdown),
+		"arp_protection_enabled":   btoa(AppConfig.ARPProtectionEnabled),
+		"ip_anti_spoof_enabled":    btoa(AppConfig.IPAntiSpoofEnabled),
+		"abuse_detection_enabled":  btoa(AppConfig.AbuseDetectionEnabled),
+		"task_concurrency":         strconv.Itoa(AppConfig.TaskConcurrency),
+		"language":                 NormalizeLanguage(AppConfig.Language),
+		"login_footer_text":        AppConfig.LoginFooterText,
+		"login_footer_hidden":      btoa(AppConfig.LoginFooterHidden),
+		"brand_name":               AppConfig.BrandName,
+		"brand_logo":               AppConfig.BrandLogo,
+		"brand_favicon":            AppConfig.BrandFavicon,
+		"brand_login_title":        AppConfig.BrandLoginTitle,
+		"brand_powered_hidden":     btoa(AppConfig.BrandPoweredHidden),
+		"panel_domain":             AppConfig.PanelDomain,
+		"turnstile_site_key":       AppConfig.TurnstileSiteKey,
+		"turnstile_secret_key":     turnstileSecret,
+		"turnstile_admin_login":    btoa(AppConfig.TurnstileAdminLogin),
+		"turnstile_user_login":     btoa(AppConfig.TurnstileUserLogin),
+		"agent_pairing_key":        agentPairingKey,
 		"agent_pairing_key_expiry": AppConfig.AgentPairingKeyExpiry,
 		// 更新源：platform/owner/repo/branch/asset_prefix 明文；token 加密。
-		"update_source_platform":    us.Platform,
-		"update_source_owner":       us.Owner,
-		"update_source_repo":        us.Repo,
-		"update_source_branch":      us.Branch,
-		"update_source_asset_prefix": us.AssetPrefix,
-		"update_source_token":       usToken, // 已加密（空 token → 空）。
-		"ssl":                    string(sslJSON),
-		"ssl_certificates":       string(sslCertificatesJSON),
-		"public_ipv4_pool":       string(publicIPv4PoolJSON),
-		"public_ipv6_prefixes":   string(publicIPv6PrefixesJSON),
-		"webssh_allowed_origins": string(webSSHAllowedOriginsJSON),
-		"panel_access_policy":    string(panelAccessPolicyJSON),
-		"storage_pools":          string(storagePoolsJSON),
-		"custom_kvm_images":      string(customKVMImagesJSON),
-		"custom_lxc_images":      string(customLXCImagesJSON),
-		"policy_rules":           string(policyRulesJSON),
-		"policy_history":         string(policyHistoryJSON),
-		"nodes":                  string(nodesJSON),
-		"regions":                string(regionsJSON),
-		"ip_groups":              string(ipGroupsJSON),
-		"iso_files":              string(isoFilesJSON),
-		"metric_retention_days":  strconv.Itoa(AppConfig.MetricRetentionDays),
-		"audit_retention_days":   strconv.Itoa(AppConfig.AuditRetentionDays),
-		"backup_settings":        string(backupSettingsJSON),
-		"instance_backup_settings": string(instanceBackupSettingsJSON),
-		"remote_backup_settings":   string(remoteBackupSettingsJSON),
-		"smtp_settings":           string(smtpSettingsJSON),
-		"backups":                string(backupsJSON),
-		"instance_backups":       string(instanceBackupsJSON),
-		"backup_plans":           string(backupPlansJSON),
-		"api_rate_limit":          string(rateLimitJSON),
-		"tenants":                 string(tenantsJSON),
-		"memory_overcommit_enabled": btoa(AppConfig.MemoryOvercommitEnabled),
-		"memory_overcommit_ratio":   strconv.FormatFloat(AppConfig.MemoryOvercommitRatio, 'f', -1, 64),
+		"update_source_platform":      us.Platform,
+		"update_source_owner":         us.Owner,
+		"update_source_repo":          us.Repo,
+		"update_source_branch":        us.Branch,
+		"update_source_asset_prefix":  us.AssetPrefix,
+		"update_source_token":         usToken, // 已加密（空 token → 空）。
+		"ssl":                         string(sslJSON),
+		"ssl_certificates":            string(sslCertificatesJSON),
+		"public_ipv4_pool":            string(publicIPv4PoolJSON),
+		"public_ipv6_prefixes":        string(publicIPv6PrefixesJSON),
+		"webssh_allowed_origins":      string(webSSHAllowedOriginsJSON),
+		"panel_access_policy":         string(panelAccessPolicyJSON),
+		"storage_pools":               string(storagePoolsJSON),
+		"custom_kvm_images":           string(customKVMImagesJSON),
+		"custom_lxc_images":           string(customLXCImagesJSON),
+		"policy_rules":                string(policyRulesJSON),
+		"policy_history":              string(policyHistoryJSON),
+		"nodes":                       string(nodesJSON),
+		"regions":                     string(regionsJSON),
+		"ip_groups":                   string(ipGroupsJSON),
+		"iso_files":                   string(isoFilesJSON),
+		"metric_retention_days":       strconv.Itoa(AppConfig.MetricRetentionDays),
+		"audit_retention_days":        strconv.Itoa(AppConfig.AuditRetentionDays),
+		"backup_settings":             string(backupSettingsJSON),
+		"instance_backup_settings":    string(instanceBackupSettingsJSON),
+		"remote_backup_settings":      string(remoteBackupSettingsJSON),
+		"smtp_settings":               string(smtpSettingsJSON),
+		"backups":                     string(backupsJSON),
+		"instance_backups":            string(instanceBackupsJSON),
+		"backup_plans":                string(backupPlansJSON),
+		"api_rate_limit":              string(rateLimitJSON),
+		"tenants":                     string(tenantsJSON),
+		"memory_overcommit_enabled":   btoa(AppConfig.MemoryOvercommitEnabled),
+		"memory_overcommit_ratio":     strconv.FormatFloat(AppConfig.MemoryOvercommitRatio, 'f', -1, 64),
 		"nat_subnet_oversubscription": btoa(AppConfig.NATSubnetOversubscription),
 		"disk_overcommit_ratio":       strconv.FormatFloat(AppConfig.DiskOvercommitRatio, 'f', -1, 64),
-		"ksm_tuning":               string(ksmTuningJSON),
-		"schema_version":          "1",
-		"updated_at":             time.Now().Format("2006-01-02 15:04:05"),
+		"ksm_tuning":                  string(ksmTuningJSON),
+		"schema_version":              "1",
+		"updated_at":                  time.Now().Format("2006-01-02 15:04:05"),
 	}
 	for k, v := range values {
 		if _, err := tx.Exec("INSERT INTO app_meta(key, value) VALUES (?, ?)", k, v); err != nil {
@@ -1162,7 +1223,7 @@ func saveContainers(tx *sql.Tx) error {
 		allowedImageIDs := encodeStringSlice(c.AllowedImageIDs)
 		if _, err := tx.Exec(`INSERT INTO containers (
 			id, uuid, name, virtualization, lxc_name, kvm_name, disk_image, storage_pool_id, storage_path, mac_address, template,
-			vcpu, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
+			vcpu, cpu_percent, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
 			monthly_traffic_gb, traffic_mode, traffic_in_gb,
 			traffic_out_gb, traffic_used_rx, traffic_used_tx, traffic_reset_date,
 			io_speed_mbps, io_read_mbps, io_write_mbps,
@@ -1175,10 +1236,10 @@ func saveContainers(tx *sql.Tx) error {
 			firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 			tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
 			rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
-			suspended, suspended_at, suspended_reason, remark, locked
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
+			suspended, suspended_at, suspended_reason, remark, locked, recycled_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
 			c.ID, c.UUID, c.Name, c.Virtualization, c.LXCName, c.KVMName, c.DiskImage, c.StoragePoolID, c.StoragePath, c.MACAddress, c.Template,
-			c.VCPU, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
+			c.VCPU, c.CPUPercent, c.RAMMB, c.DiskGB, c.NetworkBWMbps, c.NetworkDownMbps, c.NetworkUpMbps,
 			c.MonthlyTrafficGB, c.TrafficMode, c.TrafficInGB,
 			c.TrafficOutGB, c.TrafficUsedRX, c.TrafficUsedTX, c.TrafficResetDate,
 			c.IOSpeedMBps, c.IOReadMBps, c.IOWriteMBps,
@@ -1193,7 +1254,7 @@ func saveContainers(tx *sql.Tx) error {
 			boolInt(c.RescueEnabled), c.RescueISOID, c.RescueISOPath,
 			c.OptionalISOID, c.OptionalISOPath,
 			c.RootVolumeID, encodeStringSlice(c.DataVolumeIDs),
-			boolInt(c.Suspended), c.SuspendedAt, c.SuspendedReason, c.Remark, boolInt(c.Locked),
+			boolInt(c.Suspended), c.SuspendedAt, c.SuspendedReason, c.Remark, boolInt(c.Locked), c.RecycledAt,
 		); err != nil {
 			return err
 		}
@@ -1222,8 +1283,18 @@ func saveContainers(tx *sql.Tx) error {
 func saveSubUsers(tx *sql.Tx) error {
 	for _, su := range AppConfig.SubUsers {
 		allowedImageIDs := encodeStringSlice(su.AllowedImageIDs)
+		// access_code 加密落库（渗透测试 F-02）：访问码=免密登录凭据，明文落库
+		// 让 DB 泄漏直接等于账号泄漏。加密失败拒绝落库（与节点 token 同口径）。
+		accessCodeEnc := su.AccessCode
+		if accessCodeEnc != "" {
+			enc, err := EncryptNodeToken(su.AccessCode)
+			if err != nil {
+				return fmt.Errorf("加密子用户 %s access_code 失败: %w", su.Username, err)
+			}
+			accessCodeEnc = enc
+		}
 		if _, err := tx.Exec(`INSERT INTO sub_users(id, username, password, pass_hash, access_code, created_at, token_version, allowed_image_ids, image_limit_configured, role, tenant)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, su.ID, su.Username, "", su.PassHash, su.AccessCode, su.CreatedAt, su.TokenVersion, allowedImageIDs, boolInt(su.ImageLimitConfigured), subUserRoleForStorage(su.Role), su.Tenant); err != nil {
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, su.ID, su.Username, "", su.PassHash, accessCodeEnc, su.CreatedAt, su.TokenVersion, allowedImageIDs, boolInt(su.ImageLimitConfigured), subUserRoleForStorage(su.Role), su.Tenant); err != nil {
 			return err
 		}
 		for i, name := range su.ContainerNames {
@@ -1550,7 +1621,7 @@ func saveSnapshots(tx *sql.Tx) error {
 func loadContainers() ([]Container, error) {
 	rows, err := db.Query(`SELECT
 		id, uuid, name, virtualization, lxc_name, kvm_name, disk_image, storage_pool_id, storage_path, mac_address, template,
-		vcpu, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
+		vcpu, cpu_percent, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
 		monthly_traffic_gb, traffic_mode, traffic_in_gb,
 		traffic_out_gb, traffic_used_rx, traffic_used_tx, traffic_reset_date,
 		io_speed_mbps, io_read_mbps, io_write_mbps,
@@ -1563,7 +1634,7 @@ func loadContainers() ([]Container, error) {
 		firewall_enabled, firewall_default_action, firewall_rules, allowed_image_ids, image_limit_configured,
 		tenant, cloud_init_user_data, data_disk_gb, data_disk_mount_path,
 		rescue_enabled, rescue_iso_id, rescue_iso_path, optional_iso_id, optional_iso_path, root_volume_id, data_volume_ids,
-		suspended, suspended_at, suspended_reason, remark, locked
+		suspended, suspended_at, suspended_reason, remark, locked, recycled_at
 		FROM containers ORDER BY id`)
 	if err != nil {
 		return nil, err
@@ -1591,11 +1662,12 @@ func loadContainers() ([]Container, error) {
 		var suspendedAt, suspendedReason sql.NullString
 		var remarkCol sql.NullString
 		var lockedCol int
+		var recycledCol sql.NullString
 		// ssh_password 以 enc:v1: 密文落库（审计 H-5）：先扫进临时变量再解密。
 		var sshPasswordCol sql.NullString
 		if err := rows.Scan(
 			&c.ID, &c.UUID, &c.Name, &c.Virtualization, &c.LXCName, &c.KVMName, &c.DiskImage, &storagePoolID, &storagePath, &c.MACAddress, &c.Template,
-			&c.VCPU, &c.RAMMB, &c.DiskGB, &c.NetworkBWMbps, &c.NetworkDownMbps, &c.NetworkUpMbps,
+			&c.VCPU, &c.CPUPercent, &c.RAMMB, &c.DiskGB, &c.NetworkBWMbps, &c.NetworkDownMbps, &c.NetworkUpMbps,
 			&c.MonthlyTrafficGB, &c.TrafficMode, &c.TrafficInGB,
 			&c.TrafficOutGB, &c.TrafficUsedRX, &c.TrafficUsedTX, &c.TrafficResetDate,
 			&c.IOSpeedMBps, &c.IOReadMBps, &c.IOWriteMBps,
@@ -1610,7 +1682,7 @@ func loadContainers() ([]Container, error) {
 			&rescueEnabled, &rescueISOID, &rescueISOPath,
 			&optionalISOID, &optionalISOPath,
 			&rootVolumeID, &dataVolumeIDs,
-			&suspended, &suspendedAt, &suspendedReason, &remarkCol, &lockedCol,
+			&suspended, &suspendedAt, &suspendedReason, &remarkCol, &lockedCol, &recycledCol,
 		); err != nil {
 			return nil, err
 		}
@@ -1631,6 +1703,7 @@ func loadContainers() ([]Container, error) {
 		c.SuspendedReason = suspendedReason.String
 		c.Remark = remarkCol.String
 		c.Locked = lockedCol != 0
+		c.RecycledAt = recycledCol.String
 		c.Tenant = tenant.String
 		c.StoragePoolID = storagePoolID.String
 		c.StoragePath = storagePath.String
@@ -1768,6 +1841,15 @@ func loadSubUsers() ([]SubUser, error) {
 		// 明文口令不以持久化凭据为准：既有库中可能残留的历史明文一律清空，
 		// 仅保留 bcrypt pass_hash 用于登录校验，降低 DB 泄露面。
 		su.Password = ""
+		// access_code 解密（F-02）：存量明文（无 enc: 前缀）原样通过（自动迁移）；
+		// 解密失败置空——访问码失效可由管理员重新生成，比误用密文安全。
+		if su.AccessCode != "" {
+			if plain, err := DecryptNodeToken(su.AccessCode); err == nil {
+				su.AccessCode = plain
+			} else if strings.HasPrefix(su.AccessCode, "enc:") {
+				su.AccessCode = ""
+			}
+		}
 		result = append(result, su)
 	}
 	if err := rows.Err(); err != nil {

@@ -53,7 +53,9 @@ func v2AuthLogin(w http.ResponseWriter, r *http.Request) {
 func v2LoginAdmin(w http.ResponseWriter, r *http.Request, req v2LoginRequest) {
 	ip := clientIP(r)
 	ua := r.UserAgent()
-	rateKey := ip + "|v2-admin:" + req.Username
+	// 限流桶键只用 IP：用户名是攻击者可控输入，含进键名（ip|v2-admin:username）
+	// 允许攻击者轮换用户名绕过阈值（渗透测试经验：限流键不要含攻击者可控串）。
+	rateKey := ip + "|v2-admin"
 	if loginRateLimited(w, rateKey) {
 		v2Error(w, r, http.StatusTooManyRequests, v2CodeRateLimited, "登录尝试过于频繁，请稍后再试", nil)
 		return
@@ -124,7 +126,8 @@ func v2LoginAdmin(w http.ResponseWriter, r *http.Request, req v2LoginRequest) {
 func v2LoginClient(w http.ResponseWriter, r *http.Request, req v2LoginRequest) {
 	ip := clientIP(r)
 	ua := r.UserAgent()
-	rateKey := ip + "|v2-client:" + req.Username
+	// 同上：桶键只用 IP，防止轮换用户名绕过限流。
+	rateKey := ip + "|v2-client"
 	if loginRateLimited(w, rateKey) {
 		v2Error(w, r, http.StatusTooManyRequests, v2CodeRateLimited, "登录尝试过于频繁，请稍后再试", nil)
 		return

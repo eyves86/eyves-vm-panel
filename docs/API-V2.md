@@ -102,9 +102,13 @@ X-API-Key: <api_key>                    # 长期密钥，带 scope、可绑定�
 | GET | `/api/v2/instances` | 列表：`status` `runtime` `node_id` `owner` `tenant` `template_id` `locked` `min_memory_mb` `max_memory_mb` `q` |
 | POST | `/api/v2/instances` | 创建（见 5.2.1） |
 | GET | `/api/v2/instances/{id}` | 详情（含快照/备份/防火墙规则） |
-| PATCH | `/api/v2/instances/{id}` | 部分更新：`vcpu` `memory_mb` `disk_gb` `data_disk_gb` `down_mbps` `up_mbps` `traffic_quota_gb` `snapshot_limit` `remark` `expires_at` `tenant` `firewall_enabled` |
-| DELETE | `/api/v2/instances/{id}` | 删除（异步任务，返回 `task_ids`） |
-| POST | `/api/v2/instances/{id}/power` | `{"action": "start\|stop\|shutdown\|restart\|hard-stop\|hard-restart"}` |
+| PATCH | `/api/v2/instances/{id}` | 部分更新：`vcpu` `cpu_percent`(1-100) `memory_mb` `disk_gb` `data_disk_gb` `down_mbps` `up_mbps` `traffic_quota_gb` `snapshot_limit` `remark` `expires_at` `tenant` `firewall_enabled` |
+| DELETE | `/api/v2/instances/{id}` | **软删除（进回收站）**；`?purge=true` 才真销毁（计费终止/资源释放） |
+| GET | `/api/v2/recycle-bin` | 回收站列表（`?recycled=true` 同样适用于 instances 列表） |
+| POST | `/api/v2/instances/{id}/restore` | 从回收站恢复（同名活跃实例冲突 → 409） |
+| POST | `/api/v2/instances/{id}/purge` | 彻底删除（真销毁数据面；锁定实例 412） |
+| GET | `/api/v2/instances/export.csv` | 实例 CSV 导出（尊重调用方可见范围；UTF-8 BOM） |
+| POST | `/api/v2/instances/{id}/power` | `{"action": "start\|stop\|shutdown\|restart\|hard-stop\|hard-restart\|suspend\|unsuspend"}`。`hard-stop` = **强制断电（保留磁盘）**，绝不删除实例；`suspend` = 欠费停机（停机+标记，开机被拦）；`unsuspend` 解除 |
 | POST | `/api/v2/instances/{id}/reinstall` | `{"template_id", "password"?}` |
 | POST | `/api/v2/instances/{id}/reset-password` | `{"password"?}`（留空自动生成，仅返回一次） |
 | POST | `/api/v2/instances/{id}/console` | `{"type": "ssh\|vnc"}` → 一次性票据（60s）+ 连接地址 |
@@ -121,7 +125,9 @@ X-API-Key: <api_key>                    # 长期密钥，带 scope、可绑定�
 | POST/DELETE | `/api/v2/instances/{id}/rescue` | 进入（`{"iso_id"}`）/ 退出救援模式（KVM） |
 | POST/DELETE | `/api/v2/instances/{id}/lock` | 锁定 / 解锁（锁定后禁止删除、重装等破坏性操作） |
 | PUT | `/api/v2/instances/{id}/network` | `nat_ports[]` / `public_ipv4_count` / `ipv6_count` |
-| POST | `/api/v2/instances/batch` | `{"action": "power\|delete\|reinstall", "ids": [], "template_id"?}` |
+| POST | `/api/v2/instances/batch` | `{"action": "power\|delete\|reinstall\|reset-password\|remark\|expiry", "ids": [], "params"/"template_id"?}`。扩展动作：`reset-password`（params.password 省略=逐实例随机，响应逐实例返回新口令仅此一次）、`remark`（params.remark）、`expiry`（params.expires_at） |
+| POST | `/api/v2/ip-pools/attach` | 弹性 IP 绑定：`{"address", "instance_id"}`（地址必须在池中且未被其它实例占用） |
+| POST | `/api/v2/ip-pools/detach` | 弹性 IP 解绑：`{"address"}`（地址回到池中） |
 
 #### 5.2.1 创建实例请求体
 

@@ -7,6 +7,9 @@ interface DialogState {
   title: string
   message: string
   resolve?: (value: boolean) => void
+  // prompt 模式：需要输入 expectInput 文本才能确认；onResolveText 返回输入值
+  expectInput?: string
+  onResolveText?: (value: string | null) => void
 }
 
 type ToastTone = 'success' | 'error' | 'warning' | 'info'
@@ -21,6 +24,8 @@ interface ToastState {
 interface DialogContextType {
   confirm: (title: string, message: string) => Promise<boolean>
   alert: (title: string, message: string) => Promise<void>
+  // prompt：危险动作确认（输入指定文本才算确认）；返回 null=取消，字符串=输入值
+  prompt: (title: string, message: string, expect?: string) => Promise<string | null>
 }
 
 const DialogContext = createContext<DialogContextType | undefined>(undefined)
@@ -59,6 +64,12 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     toastTimers.current.delete(id)
   }, [])
 
+  const prompt = useCallback((title: string, message: string, expect?: string) => {
+    return new Promise<string | null>((resolve) => {
+      setDialog({ open: true, title, message, expectInput: expect || '', onResolveText: resolve })
+    })
+  }, [])
+
   const alert = useCallback((title: string, message: string) => {
     const id = ++toastID.current
     setToasts((current) => [...current, { id, title, message, tone: toastTone(title) }].slice(-4))
@@ -72,13 +83,19 @@ export function DialogProvider({ children }: { children: ReactNode }) {
     toastTimers.current.clear()
   }, [])
 
+  const [dialogInput, setDialogInput] = useState('')
+
   const close = (result: boolean) => {
+    if (dialog.onResolveText) {
+      dialog.onResolveText(result ? dialogInput.trim() : null)
+    }
     dialog.resolve?.(result)
     setDialog({ open: false, title: '', message: '' })
+    setDialogInput('')
   }
 
   return (
-    <DialogContext.Provider value={{ confirm, alert }}>
+    <DialogContext.Provider value={{ confirm, alert, prompt }}>
       {children}
       <div className="pointer-events-none fixed right-4 top-4 z-[120] flex w-[calc(100vw-2rem)] max-w-sm flex-col gap-2" aria-live="polite" aria-atomic="true">
         {toasts.map((toast) => {
@@ -113,6 +130,16 @@ export function DialogProvider({ children }: { children: ReactNode }) {
             </div>
             <div className="px-5 py-4">
               <p className="text-sm text-gray-600 dark:text-gray-300">{t(dialog.message)}</p>
+              {dialog.expectInput != null && dialog.expectInput !== '' && (
+                <input
+                  autoFocus
+                  value={dialogInput}
+                  onChange={(e) => setDialogInput(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter' && dialogInput.trim() === dialog.expectInput) close(true) }}
+                  placeholder={dialog.expectInput}
+                  className="mt-3 w-full rounded-md border border-gray-300 px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-800"
+                />
+              )}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
               <button
@@ -123,7 +150,8 @@ export function DialogProvider({ children }: { children: ReactNode }) {
               </button>
               <button
                 onClick={() => close(true)}
-                className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+                disabled={dialog.expectInput != null && dialog.expectInput !== '' && dialogInput.trim() !== dialog.expectInput}
+                className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white transition-colors hover:bg-brand-700 disabled:opacity-40 disabled:cursor-not-allowed dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {t('确认')}
               </button>

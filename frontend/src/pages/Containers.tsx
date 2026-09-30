@@ -40,6 +40,7 @@ import {
   getNodes,
 } from '../services/api'
 import { actionLabel, taskStatusClass, taskStatusLabel } from '../utils/labels'
+import { v2ListRecycleBin, v2RestoreInstance, v2PurgeInstance, v2RecycleItemToContainer } from '../services/apiV2'
 
 export default function Containers() {
   const navigate = useNavigate()
@@ -75,6 +76,8 @@ export default function Containers() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [subUsers, setSubUsers] = useState<SubUser[]>([])
   const [ownerMenuId, setOwnerMenuId] = useState<number | null>(null)
+  // 回收站视图（NetJett 同款）：开启后列表显示软删除实例，可恢复/彻底删除。
+  const [showRecycle, setShowRecycle] = useState(false)
   const [changingOwner, setChangingOwner] = useState(false)
   const [ownerFilter, setOwnerFilter] = useState('all')
 
@@ -164,16 +167,23 @@ export default function Containers() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await getContainers()
-      const nextContainers = res.data.data || []
+      // 回收站视图走 v2 /recycle-bin；普通视图走 v1（后端已排除回收站实例）。
+      let nextContainers: Container[]
+      if (showRecycle) {
+        const bin = await v2ListRecycleBin({ all: true })
+        // v2 字段 → v1 表格渲染字段映射（template_id→template 等）。
+        nextContainers = (bin.items ?? []).map(v2RecycleItemToContainer) as unknown as Container[]
+      } else {
+        nextContainers = (await getContainers()).data.data || []
+      }
       setContainers(nextContainers)
-      await refreshUsage(nextContainers)
+      if (!showRecycle) await refreshUsage(nextContainers)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [refreshUsage])
+  }, [refreshUsage, showRecycle])
 
   useEffect(() => {
     fetchData()
@@ -390,6 +400,14 @@ export default function Containers() {
           >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             刷新
+          </button>
+          <button
+            onClick={() => { setShowRecycle(v => !v); setSelected(new Set()) }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 border rounded-md transition-colors text-xs font-medium whitespace-nowrap ${showRecycle ? 'border-amber-400 bg-amber-50 text-amber-700' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+            title={showRecycle ? '返回实例列表' : '查看回收站（软删除实例可恢复）'}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {showRecycle ? '退出回收站' : '回收站'}
           </button>
           <button
             onClick={() => setShowTasks(true)}
@@ -779,7 +797,35 @@ export default function Containers() {
                       </td>
                       <td className="px-2.5 py-2 align-top">
                         <div className="flex justify-end">
-                          {task?.status === 'failed' ? (
+                          {showRecycle ? (
+                            <>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await v2RestoreInstance(container.id)
+                                    await fetchData()
+                                  } catch (e) { alert((e as Error).message || '恢复失败') }
+                                }}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-emerald-200 text-[11px] text-emerald-700 hover:bg-emerald-50 transition-colors whitespace-nowrap"
+                              >
+                                <RotateCcw className="w-3 h-3" />
+                                恢复
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (!window.confirm(`彻底删除 ${container.name}？数据将被销毁且不可恢复。`)) return
+                                  try {
+                                    await v2PurgeInstance(container.id)
+                                    await fetchData()
+                                  } catch (e) { alert((e as Error).message || '彻底删除失败') }
+                                }}
+                                className="ml-1 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-200 text-[11px] text-red-600 hover:bg-red-50 transition-colors whitespace-nowrap"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                彻底删除
+                              </button>
+                            </>
+                          ) : task?.status === 'failed' ? (
                             <button
                               onClick={async () => {
                                 try {

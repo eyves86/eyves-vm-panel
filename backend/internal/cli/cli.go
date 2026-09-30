@@ -1352,12 +1352,11 @@ func findReleaseAsset(release *githubRelease, name string) string {
 // ---- 升级包完整性校验（审计 H-2 修复）----
 //
 // 发行版流程会为每个架构产物生成 SHA256SUMS 并作为 release asset 发布。
-// 升级路径策略（2026-09-28 修订，避免把加固做成可用性故障）：
-//   - 能取到校验清单：比对 SHA-256，**不匹配即中止**（唯一真正需要拦截的情形：
-//     下载被篡改/损坏/串包）；
-//   - 完全取不到校验清单（发布未附、API 抖动、镜像未同步等）：默认**警告后继续**，
-//     因为校验清单与产物同源，本就不构成对"发布源被攻陷"的防御，HTTPS 已提供
-//     传输层保护；需要严格模式时设置 EYVESCLOUD_REQUIRE_VERIFY=1（取不到即中止）。
+// 升级路径策略（2026-09-30 修订，F-7：默认严格）：
+//   - 能取到校验清单：比对 SHA-256，不匹配即中止；且若构建内嵌了签发公钥，
+//     还会对清单做 ed25519 验签（签名缺失/无效均中止）。
+//   - 完全取不到校验清单：默认**中止**（生产面板的自升级不允许无校验的替换）；
+//     自签仓库/测试可用 EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED=1 显式放行。
 const (
 	updateAllowUnverifiedEnv = "EYVESCLOUD_UPDATE_ALLOW_UNVERIFIED"
 	updateRequireVerifyEnv   = "EYVESCLOUD_REQUIRE_VERIFY"
@@ -1395,32 +1394,31 @@ func updateAllowUnverified() bool {
 	return false
 }
 
-// verifyReleaseArchive 校验升级包 SHA-256；checksumsURL 为空表示该 Release
-// 未发布校验清单（默认警告后继续，严格模式见 updateRequireVerifyEnv）。
+// verifyReleaseArchive 校验升级包 SHA-256 + 清单签名；checksumsURL 为空表示该
+// Release 未发布校验清单 —— 默认中止（严格模式），ALLOW_UNVERIFIED=1 显式放行。
 func verifyReleaseArchive(archivePath, assetName, checksumsURL string) error {
 	if strings.TrimSpace(checksumsURL) == "" {
 		if updateAllowUnverified() {
-			cliPrintf("警告：该 Release 未提供 %s 校验清单，已按 %s=1 跳过完整性校验（不推荐）。\n",
+			cliPrintf("警告：该 Release 未提供 %s 校验清单，已按 %s=1 放行（不推荐；仅限自签仓库/测试）。\n",
 				checksumAssetNames[0], updateAllowUnverifiedEnv)
 			return nil
 		}
-		if updateRequireVerify() {
-			return fmt.Errorf("目标 Release 未提供校验清单（%s），且已启用严格模式 %s=1，升级已中止",
-				checksumAssetNames[0], updateRequireVerifyEnv)
-		}
-		cliPrintf("警告：该 Release 未提供 %s 校验清单，跳过完整性校验并继续升级；如需强制校验请设置 %s=1。\n",
-			checksumAssetNames[0], updateRequireVerifyEnv)
-		return nil
+		return fmt.Errorf("目标 Release 未提供 %s 校验清单，升级已中止（生产升级不允许无校验替换；自签仓库/测试请设置 %s=1）",
+			checksumAssetNames[0], updateAllowUnverifiedEnv)
 	}
-	expected, err := fetchExpectedChecksum(checksumsURL, assetName)
+	sums, err := fetchExpectedChecksumWithBody(checksumsURL, assetName)
 	if err != nil {
-		// 清单地址解析到了但下载/解析失败：按"取不到清单"处理，同样不阻断升级。
-		if updateRequireVerify() {
-			return fmt.Errorf("获取校验清单失败（严格模式 %s=1）：%w", updateRequireVerifyEnv, err)
+		if updateAllowUnverified() {
+			cliPrintf("警告：获取校验清单失败（%v），已按 %s=1 放行（不推荐）。\n", err, updateAllowUnverifiedEnv)
+			return nil
 		}
-		cliPrintf("警告：获取校验清单失败（%v），跳过完整性校验并继续升级。\n", err)
-		return nil
+		return fmt.Errorf("获取校验清单失败，升级已中止：%w（自签仓库/测试可设置 %s=1）", err, updateAllowUnverifiedEnv)
 	}
+	// F-7：构建内嵌签发公钥时，对清单做 ed25519 验签（签名缺失/无效均中止）。
+	if err := verifyReleaseSignature(checksumsURL, sums.raw); err != nil {
+		return err
+	}
+	expected := sums.checksum
 	actual, err := fileSHA256(archivePath)
 	if err != nil {
 		return fmt.Errorf("计算升级包校验值失败: %w", err)
@@ -1441,26 +1439,32 @@ func updateRequireVerify() bool {
 	return false
 }
 
-// fetchExpectedChecksum 下载校验清单并取出 assetName 的期望 SHA-256。
-func fetchExpectedChecksum(checksumsURL, assetName string) (string, error) {
+// releaseChecksums 是校验清单的解析结果：期望哈希 + 清单原始字节（用于验签）。
+type releaseChecksums struct {
+	checksum string
+	raw      []byte
+}
+
+// fetchExpectedChecksumWithBody 下载校验清单，返回 assetName 的期望 SHA-256 与清单原文。
+func fetchExpectedChecksumWithBody(checksumsURL, assetName string) (releaseChecksums, error) {
 	req, err := http.NewRequest(http.MethodGet, checksumsURL, nil)
 	if err != nil {
-		return "", err
+		return releaseChecksums{}, err
 	}
 	req.Header.Set("User-Agent", "eyvescloud-updater/"+version.Current())
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("下载校验清单失败: %w", err)
+		return releaseChecksums{}, fmt.Errorf("下载校验清单失败: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("下载校验清单失败：HTTP %s", resp.Status)
+		return releaseChecksums{}, fmt.Errorf("下载校验清单失败：HTTP %s", resp.Status)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", fmt.Errorf("读取校验清单失败: %w", err)
+		return releaseChecksums{}, fmt.Errorf("读取校验清单失败: %w", err)
 	}
 	want := strings.TrimSpace(filepath.Base(assetName))
 	for _, line := range strings.Split(strings.ReplaceAll(string(body), "\r\n", "\n"), "\n") {
@@ -1473,16 +1477,16 @@ func fetchExpectedChecksum(checksumsURL, assetName string) (string, error) {
 		case len(fields) >= 2 && isHexSHA256(fields[0]):
 			// 标准格式：<hash>  <filename>（filename 可能带路径，按 basename 比较）
 			if strings.TrimSpace(filepath.Base(fields[len(fields)-1])) == want {
-				return strings.ToLower(fields[0]), nil
+				return releaseChecksums{checksum: strings.ToLower(fields[0]), raw: body}, nil
 			}
 		case len(fields) == 4 && strings.EqualFold(fields[1], "("+want+")") && strings.HasSuffix(fields[2], "="):
 			// BSD 格式：SHA256 (filename) = <hash>
 			if isHexSHA256(fields[3]) {
-				return strings.ToLower(fields[3]), nil
+				return releaseChecksums{checksum: strings.ToLower(fields[3]), raw: body}, nil
 			}
 		}
 	}
-	return "", fmt.Errorf("校验清单中未找到 %s 的 SHA-256 记录，已中止升级", want)
+	return releaseChecksums{}, fmt.Errorf("校验清单中未找到 %s 的 SHA-256 记录，已中止升级", want)
 }
 
 func isHexSHA256(value string) bool {

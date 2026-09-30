@@ -2438,7 +2438,9 @@ function eyvescloud_container_action($params, $action, $successMsg, $timeout = 6
 function eyvescloud_container_delete($params)
 {
     $name = eyvescloud_container_url_id($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/delete', [], 'DELETE', 60);
+    // 计费终止=释放资源语义：?purge=true 走真删除（回收站软删除会导致
+    // 已取消服务的实例仍占着宿主机资源）。
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/delete?purge=true', [], 'DELETE', 60);
     return eyvescloud_success($res)
         ? ['status' => 'success', 'msg' => eyvescloud_message($res, '删除任务已提交'), 'data' => []]
         : ['status' => 'error', 'msg' => eyvescloud_message($res, '删除失败')];

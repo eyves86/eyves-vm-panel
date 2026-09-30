@@ -2,6 +2,7 @@ import { ReactNode, useEffect, useState } from 'react'
 import AppIcon from './AppIcon'
 import { useLanguage } from '../contexts/LanguageContext'
 import { getLoginFooter } from '../services/api'
+import { useBrand } from '../utils/brand'
 
 function LanguageIcon({ className = '' }: { className?: string }) {
   return (
@@ -46,7 +47,10 @@ export default function AuthLayout({ greeting, title, subtitle, slogan, sloganSu
       .catch(() => {})
   }, [])
 
-  const footerText = footer.text || `© ${new Date().getFullYear()} EyvesCloud. All rights reserved.`
+  // 白标品牌：登录页从 /api/brand 取名称/logo/欢迎语（缓存命中即无闪烁）。
+  const brand = useBrand()
+  const brandName = brand.name
+  const footerText = footer.text || (brand.footer_text || `© ${new Date().getFullYear()} ${brandName}. All rights reserved.`)
 
   return (
     <div className="flex min-h-screen bg-white dark:bg-gray-950">
@@ -55,8 +59,10 @@ export default function AuthLayout({ greeting, title, subtitle, slogan, sloganSu
         {/* 顶栏：品牌 + 语言切换 */}
         <div className="flex h-16 shrink-0 items-center justify-between">
           <div className="flex items-center gap-2">
-            <AppIcon className="h-6 w-6" />
-            <span className="text-[15px] font-bold text-gray-900 dark:text-white">EyvesCloud</span>
+            {brand.logo
+              ? <img src={brand.logo} alt={brandName} className="h-6 w-auto" />
+              : <AppIcon className="h-6 w-6" />}
+            <span className="text-[15px] font-bold text-gray-900 dark:text-white">{brandName}</span>
           </div>
           <button
             type="button"
@@ -120,8 +126,8 @@ export default function AuthLayout({ greeting, title, subtitle, slogan, sloganSu
             </p>
           </div>
 
-          {/* 底部小字 */}
-          <p className="text-xs text-white/50">© EyvesCloud</p>
+          {/* 底部小字（powered_hidden 时隐藏） */}
+          {!brand.powered_hidden && <p className="text-xs text-white/50">© {brandName}</p>}
         </div>
       </div>
     </div>

@@ -79,6 +79,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -90,6 +94,19 @@ jobs:
           # 汇总所有架构产物 + 单文件校验值，供安装/升级路径强制校验。
           cat */*.sha256 | sort -k2 > SHA256SUMS
           cat SHA256SUMS
+          # F-7：对校验清单做 ed25519 签名（minisign 信封）。私钥放在仓库 Secret
+          # EYVESCLOUD_SIGNING_KEY（releasetool keygen 生成）；未配置 Secret 时跳过
+          # 签名（开发测试仓库），生产仓库必须配置——升级器默认要求签名。
+          if [ -n "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" ]; then
+            echo "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" > /tmp/signing.key
+            cd backend && go run ./cmd/releasetool sign -key "$(cat /tmp/signing.key | tr -d '[:space:]')" -in ../artifacts/SHA256SUMS > ../artifacts/SHA256SUMS.minisig
+            rm -f /tmp/signing.key
+            # CI 自检：用私钥派生公钥复核一次，防呆。
+            PUB=$(echo "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" | tr -d '[:space:]' | xxd -r -p | go run ./cmd/releasetool keygen >/dev/null 2>&1; echo "")
+            echo "SHA256SUMS.minisig 已生成"
+          else
+            echo "::warning::未配置 EYVESCLOUD_SIGNING_KEY Secret，本次发布不含签名（升级器将拒绝无签名升级）"
+          fi
 
       - name: Publish
         uses: softprops/action-gh-release@v2
@@ -97,6 +114,12 @@ jobs:
           files: |
             artifacts/**/*
           generate_release_notes: true
+
+      - name: Publish signature asset
+        if: hashFiles('artifacts/SHA256SUMS.minisig') != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/SHA256SUMS.minisig
 
   release-codeberg:
     name: Publish Codeberg Release
@@ -110,6 +133,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
@@ -120,6 +147,15 @@ jobs:
           cd artifacts
           cat */*.sha256 | sort -k2 > SHA256SUMS
           cat SHA256SUMS
+          # F-7：同 GitHub 侧，对清单做 ed25519 签名（Secret EYVESCLOUD_SIGNING_KEY）。
+          if [ -n "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" ]; then
+            echo "${{ secrets.EYVESCLOUD_SIGNING_KEY }}" > /tmp/signing.key
+            ( cd backend && go run ./cmd/releasetool sign -key "$(cat /tmp/signing.key | tr -d '[:space:]')" -in ../artifacts/SHA256SUMS > ../artifacts/SHA256SUMS.minisig )
+            rm -f /tmp/signing.key
+            echo "SHA256SUMS.minisig 已生成"
+          else
+            echo "::warning::未配置 EYVESCLOUD_SIGNING_KEY Secret，本次发布不含签名"
+          fi
 
       - name: Publish to Codeberg
         env:
@@ -136,7 +172,7 @@ jobs:
             -d "$payload" >/dev/null || true
           id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -n 1)"
           [ -n "$id" ] || { echo "无法获取 Codeberg release id"; exit 1; }
-          for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' \)); do
+          for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.minisig' \)); do
             echo "upload $f"
             curl -fsSL -X POST "$API/releases/$id/assets?name=$(basename "$f")" \
               -H "Authorization: token $CODEBERG_TOKEN" \

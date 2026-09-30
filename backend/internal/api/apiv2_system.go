@@ -687,7 +687,9 @@ func v2SystemInfoHandler(w http.ResponseWriter, r *http.Request) {
 	if !v2RequireScope(w, r, "dashboard:read") {
 		return
 	}
-	v2OK(w, r, v2SystemInfo())
+	// admin_path/data_dir 仅管理员可见（动态审计 F-2 修复：防隐藏管理路径泄漏）。
+	ctx, _ := authContextFromRequest(r)
+	v2OK(w, r, v2SystemInfo(ctx.Type == authTypeAdmin))
 }
 
 func v2SystemHealth(w http.ResponseWriter, r *http.Request) {

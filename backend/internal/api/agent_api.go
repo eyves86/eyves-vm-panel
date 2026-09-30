@@ -55,7 +55,8 @@ func HandleAgentContainers(w http.ResponseWriter, r *http.Request) {
 	}
 	containers, err := listByRuntime()
 	if err != nil {
-		containers = config.AppConfig.Containers
+		// 与 listByRuntime 同口径拷贝，避免下游过滤共享全局底层数组。
+		containers = append([]config.Container(nil), config.AppConfig.Containers...)
 	}
 	if containers == nil {
 		containers = []config.Container{}
@@ -115,6 +116,47 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		runErr = startByRuntime(id)
 	case "stop":
 		runErr = stopByRuntime(id)
+	case "force-stop":
+		// 强制停止（不删除）：LXC 用 lxc-stop -k（SIGKILL），KVM 跳过优雅关机
+		// 直接 virsh destroy（仅断电，磁盘与定义保留）。与 destroy 的本质区别：
+		// destroy 彻底删除实例与磁盘，force-stop 只断电。
+		c := config.FindContainer(id)
+		if c != nil && c.IsKVM() {
+			runErr = kvmManager.PoweroffContainer(id)
+		} else {
+			lxcName := ""
+			if c != nil {
+				lxcName = c.LxcName()
+			}
+			_ = lxc.NewManager().CleanPortMappings(id)
+			lxc.CleanFirewallRules(id)
+			if lxcName != "" {
+				stopCmd, cancel := execWithTimeoutCustom(15, "lxc-stop", "-n", lxcName, "-k")
+				defer cancel()
+				_ = stopCmd.Run()
+			}
+			config.UpdateContainerStatusAndRestore(id, "stopped", false)
+			runErr = nil
+		}
+	case "force-restart":
+		// 强制重启：先强制断电再启动（磁盘与实例保留）。
+		if fc := config.FindContainer(id); fc != nil && fc.IsKVM() {
+			if err := kvmManager.PoweroffContainer(id); err != nil {
+				runErr = err
+				break
+			}
+		} else {
+			if fc := config.FindContainer(id); fc != nil {
+				_ = lxc.NewManager().CleanPortMappings(id)
+				lxc.CleanFirewallRules(id)
+				stopCmd, cancel := execWithTimeoutCustom(15, "lxc-stop", "-n", fc.LxcName(), "-k")
+				defer cancel()
+				_ = stopCmd.Run()
+			}
+			config.UpdateContainerStatusAndRestore(id, "stopped", false)
+		}
+		time.Sleep(1 * time.Second)
+		runErr = startByRuntime(id)
 	case "restart":
 		runErr = restartByRuntime(id)
 	case "destroy":
@@ -537,7 +579,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 	switch action {
 	case "start", "restart":
 		config.UpdateContainerStatus(id, "running")
-	case "stop":
+	case "stop", "force-stop":
 		config.UpdateContainerStatus(id, "stopped")
 	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "OK"})

@@ -314,3 +314,80 @@ export const v2NodeImageDownload = (nodeId: string, templateId: string) =>
   call<{ node_id: string; node_name: string; template_id: string; status: string }>(
     client.post(`/nodes/${encodeURIComponent(nodeId)}/images/download`, { template_id: templateId })
   )
+
+// （NetJett 差距收口：回收站、批量改密/备注/到期、实例 CSV 导出、弹性IP attach/detach）
+
+export interface V2RecycleItem extends V2Instance {
+  recycled_at: string
+}
+
+export const v2ListRecycleBin = (query: Record<string, unknown> = {}) =>
+  call<V2List<V2RecycleItem>>(client.get('/recycle-bin', { params: query }))
+
+export const v2RestoreInstance = (id: number | string) =>
+  call<Record<string, unknown>>(client.post(`/instances/${id}/restore`))
+
+export const v2PurgeInstance = (id: number | string) =>
+  call<Record<string, unknown>>(client.post(`/instances/${id}/purge`))
+
+// DELETE ?purge=true（真删除）—— v2DeleteInstance 保留软删除默认。
+export const v2DeleteInstanceHard = (id: number | string) =>
+  call<Record<string, unknown>>(client.delete(`/instances/${id}`, { params: { purge: 'true' } }))
+
+export const v2BatchResetPassword = (ids: number[], password = '') =>
+  call<Record<string, unknown>>(client.post('/instances/batch', { action: 'reset-password', ids, params: { password } }))
+
+export const v2BatchRemark = (ids: number[], remark: string) =>
+  call<Record<string, unknown>>(client.post('/instances/batch', { action: 'remark', ids, params: { remark } }))
+
+export const v2BatchExpiry = (ids: number[], expiresAt: string) =>
+  call<Record<string, unknown>>(client.post('/instances/batch', { action: 'expiry', ids, params: { expires_at: expiresAt } }))
+
+// CSV 导出：走 axios blob 下载。
+export const v2ExportInstancesCSV = async () => {
+  const resp = await client.get('/instances/export.csv', { responseType: 'blob' })
+  const url = URL.createObjectURL(resp.data as Blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'instances.csv'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+export const v2AttachIP = (address: string, instanceId: number) =>
+  call<Record<string, unknown>>(client.post('/ip-pools/attach', { address, instance_id: instanceId }))
+
+export const v2DetachIP = (address: string) =>
+  call<Record<string, unknown>>(client.post('/ip-pools/detach', { address }))
+
+// ---- v2 → v1 视图映射（回收站列表复用容器表格渲染）----
+// v2 契约字段名与 v1 面板内部字段不同（template_id vs template、memory_mb vs
+// ram_mb、primary_ip vs ip）。回收站视图复用 v1 表格渲染，这里做字段映射，
+// 缺失字段给安全默认值，避免 undefined 进入渲染路径（曾致 SPA 崩溃）。
+export function v2RecycleItemToContainer(item: V2RecycleItem): Record<string, unknown> {
+  return {
+    id: item.id ?? 0,
+    uuid: item.uuid ?? '',
+    name: item.name ?? '',
+    status: item.status ?? 'stopped',
+    virtualization: item.runtime ?? 'lxc',
+    template: (item as unknown as Record<string, unknown>).template_id ?? '',
+    vcpu: item.vcpu ?? 0,
+    ram_mb: (item as unknown as Record<string, unknown>).memory_mb ?? 0,
+    disk_gb: item.disk_gb ?? 0,
+    ip: (item as unknown as Record<string, unknown>).primary_ip ?? '',
+    ipv6: '',
+    node_id: item.node_id ?? '',
+    owner_sub_user_id: '',
+    tenant: (item as unknown as Record<string, unknown>).tenant ?? '',
+    remark: item.remark ?? '',
+    ssh_port: (item as unknown as Record<string, unknown>).ssh_port ?? 0,
+    created_at: item.created_at ?? '',
+    expires_at: item.expires_at ?? '',
+    recycled_at: item.recycled_at ?? '',
+    suspended: false,
+    locked: item.locked ?? false,
+  }
+}

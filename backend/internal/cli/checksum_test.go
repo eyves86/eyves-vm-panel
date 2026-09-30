@@ -33,11 +33,11 @@ func TestVerifyReleaseArchiveEnforced(t *testing.T) {
 		}))
 	}
 
-	t.Run("missing checksums continues with warning by default", func(t *testing.T) {
+	t.Run("missing checksums aborts by default (F-7 strict)", func(t *testing.T) {
 		t.Setenv(updateAllowUnverifiedEnv, "")
 		t.Setenv(updateRequireVerifyEnv, "")
-		if err := verifyReleaseArchive(archive, assetName, ""); err != nil {
-			t.Fatalf("missing manifest must not block the upgrade by default: %v", err)
+		if err := verifyReleaseArchive(archive, assetName, ""); err == nil {
+			t.Fatal("missing manifest must abort the upgrade by default (F-7)")
 		}
 	})
 
@@ -79,23 +79,24 @@ func TestVerifyReleaseArchiveEnforced(t *testing.T) {
 		}
 	})
 
-	t.Run("asset missing from checksum file continues by default, aborts in strict mode", func(t *testing.T) {
+	t.Run("asset missing from checksum file aborts by default, allowed with opt-out (F-7)", func(t *testing.T) {
 		srv := serve(strings.Repeat("c", 64) + "  unrelated.tar.gz\n")
 		defer srv.Close()
 		t.Setenv(updateRequireVerifyEnv, "")
-		if err := verifyReleaseArchive(archive, assetName, srv.URL); err != nil {
-			t.Fatalf("manifest without our asset must not block the upgrade by default: %v", err)
-		}
-		t.Setenv(updateRequireVerifyEnv, "1")
 		if err := verifyReleaseArchive(archive, assetName, srv.URL); err == nil {
-			t.Fatal("expected strict mode to abort when the manifest lacks our asset")
+			t.Fatal("manifest without our asset must abort the upgrade by default (F-7)")
+		}
+		t.Setenv(updateAllowUnverifiedEnv, "1")
+		if err := verifyReleaseArchive(archive, assetName, srv.URL); err != nil {
+			t.Fatalf("opt-out should allow the upgrade: %v", err)
 		}
 	})
 
-	t.Run("unreachable checksum manifest continues by default", func(t *testing.T) {
+	t.Run("unreachable checksum manifest aborts by default (F-7)", func(t *testing.T) {
 		t.Setenv(updateRequireVerifyEnv, "")
-		if err := verifyReleaseArchive(archive, assetName, "http://127.0.0.1:1/SHA256SUMS"); err != nil {
-			t.Fatalf("unreachable manifest must not block the upgrade by default: %v", err)
+		t.Setenv(updateAllowUnverifiedEnv, "")
+		if err := verifyReleaseArchive(archive, assetName, "http://127.0.0.1:1/SHA256SUMS"); err == nil {
+			t.Fatal("unreachable manifest must abort the upgrade by default (F-7)")
 		}
 	})
 

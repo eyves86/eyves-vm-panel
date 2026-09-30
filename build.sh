@@ -51,8 +51,9 @@ echo ""
 echo "[2/3] Building Go backend..."
 cd "$BACKEND_DIR"
 
-go mod tidy
-go mod download
+# 不跑 go mod tidy：测试期依赖（modernc.org/cc 等）会污染 go.mod 并要求联网；
+# 构建只需 go.sum 里已有的依赖（离线可构建）。
+go mod download >/dev/null 2>&1 || true
 
 BUILD_VERSION="${EYVESCLOUD_VERSION:-dev}"
 TARGET_GOOS="${EYVESCLOUD_GOOS:-linux}"
@@ -69,7 +70,15 @@ esac
 
 for arch in $TARGET_GOARCH_LIST; do
     echo "Target: ${TARGET_GOOS}/${arch}"
-    GOOS="$TARGET_GOOS" GOARCH="$arch" CGO_ENABLED=0 go build -ldflags="-s -w -X eyvescloud/internal/version.Version=${BUILD_VERSION}" -o "$BUILD_DIR/eyvescloud-linux-${arch}" .
+    # EYVESCLOUD_RELEASE_PUBKEY（发布公钥，minisign 信封第二行的 base64）编译期内嵌，
+    # 供升级器对 SHA256SUMS 做 ed25519 验签（F-7）。未设置 = 跳过验签（开发构建）。
+    PUBKEY_LDFLAG=""
+    if [ -n "${EYVESCLOUD_RELEASE_PUBKEY:-}" ]; then
+        PUBKEY_LDFLAG="-X eyvescloud/internal/cli.releasePubKeyHex=${EYVESCLOUD_RELEASE_PUBKEY}"
+    fi
+    GOOS="$TARGET_GOOS" GOARCH="$arch" CGO_ENABLED=0 \
+        go build -trimpath -ldflags="-s -w -X eyvescloud/internal/version.Version=${BUILD_VERSION} ${PUBKEY_LDFLAG}" \
+        -o "$BUILD_DIR/eyvescloud-linux-${arch}" .
 done
 
 first_arch="${TARGET_GOARCH_LIST%% *}"

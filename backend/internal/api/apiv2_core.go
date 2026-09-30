@@ -362,25 +362,32 @@ func v2Time(raw string) string {
 }
 
 // v2SystemInfo 系统信息（/system/info 与 /system/health 共用）。
-func v2SystemInfo() map[string]interface{} {
+// adminPath 泄漏防护：隐藏管理路径是本产品的安全设计（防护尘/防扫描），
+// 仅管理员身份可见；子用户与集成 API Key（即使只有 dashboard:read）一律不返回
+// admin_path / data_dir（data_dir 属服务器文件系统布局，集成方无需要知）。
+func v2SystemInfo(adminOK bool) map[string]interface{} {
 	config.AppConfigMu.RLock()
 	port := config.AppConfig.Port
 	dataDir := config.AppConfig.DataDir
-	adminPath := config.CurrentAdminPath()
 	language := config.NormalizeLanguage(config.AppConfig.Language)
 	config.AppConfigMu.RUnlock()
-	return map[string]interface{}{
-		"product":      "EyvesCloud",
-		"api_version":  "v2",
-		"version":      version.Current(),
-		"port":         port,
-		"data_dir":     dataDir,
-		"admin_path":   adminPath,
-		"language":     language,
-		"lxc_enabled":  commandExists("lxc-create"),
-		"kvm_enabled":  hostKVMAvailable(),
-		"arch":         runtime.GOARCH,
+	info := map[string]interface{}{
+		"product":     "EyvesCloud",
+		"api_version": "v2",
+		"version":     version.Current(),
+		"port":        port,
+		"data_dir":    "",
+		"admin_path":  "",
+		"language":    language,
+		"lxc_enabled": commandExists("lxc-create"),
+		"kvm_enabled": hostKVMAvailable(),
+		"arch":        runtime.GOARCH,
 	}
+	if adminOK {
+		info["data_dir"] = dataDir
+		info["admin_path"] = config.CurrentAdminPath()
+	}
+	return info
 }
 
 // round2 保留两位小数（容量/百分比展示统一口径）。

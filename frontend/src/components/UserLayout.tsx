@@ -1,6 +1,7 @@
 import { Link, NavLink, Outlet } from 'react-router'
 import { HardDrive, LogOut, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
+import { useBrand } from '../utils/brand'
 import { useLanguage } from '../contexts/LanguageContext'
 import AppIcon from './AppIcon'
 
@@ -24,7 +25,7 @@ export default function UserLayout() {
           <div className="flex min-w-0 items-center gap-4">
             <Link to="/user" className="flex shrink-0 items-center gap-2">
               <AppIcon className="h-6 w-6" />
-              <span className="text-base font-semibold text-brand-600">EyvesCloud</span>
+              <span className="text-base font-semibold text-brand-600">{useBrand().name}</span>
               <span className="ml-1 rounded bg-gray-100 px-1.5 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                 {t('用户中心')}
               </span>
@@ -60,7 +61,7 @@ export default function UserLayout() {
 
       <footer className="mx-auto max-w-6xl px-4 pb-8 pt-2 text-center text-xs text-gray-400">
         {/* 不在此处暴露管理入口链接：管理员路径是自定义的，且不应被枚举。 */}
-        <span>EyvesCloud</span>
+        <span>{useBrand().name}</span>
       </footer>
     </div>
   )

@@ -1,4 +1,5 @@
 import { Dispatch, SetStateAction, useCallback, useEffect, useState } from 'react'
+import BrandSettings from '../components/BrandSettings'
 import { Bell, Bot, Clock, Copy, Database, Download, Gauge, Globe, KeyRound, ListTodo, Lock, LogIn, Minus, Monitor, Plus, RefreshCw, Save, Shield, ShieldCheck, Smartphone, Terminal, Trash2, TrendingUp, Upload, UserCog } from 'lucide-react'
 import {
   BackupRecord,
@@ -955,7 +956,9 @@ export default function Settings() {
           )}
 
           {activeSection === 'account' && (
-            <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
+            <div className="space-y-4">
+              <BrandSettings />
+              <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
               <h2 className="mb-4 flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
                 <UserCog className="h-4 w-4" />账号设置
               </h2>
@@ -979,6 +982,7 @@ export default function Settings() {
               </div>
               <div className="mt-4 flex justify-end">
                 <button onClick={handleSaveAccount} className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">保存修改</button>
+              </div>
               </div>
             </div>
           )}

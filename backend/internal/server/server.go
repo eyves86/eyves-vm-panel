@@ -85,6 +85,8 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/language", corsMiddleware(api.HandleLanguage))
 	// 登录页底部版权栏（自定义文字/隐藏）：GET 公开（登录页未认证需读取），PUT 仅管理员。
 	mux.HandleFunc("/api/login-footer", corsMiddleware(api.HandleLoginFooter))
+	// 白标品牌：GET 公开（登录页/前端壳启动拉取）；POST 管理员更新。
+	mux.HandleFunc("/api/brand", corsMiddleware(api.HandleBrand))
 	mux.HandleFunc("/api/check-auth", corsMiddleware(api.AuthMiddleware(api.HandleCheckAuth)))
 	// 登出：清除服务端下发的 HttpOnly 会话 Cookie（审计 H-6）。
 	mux.HandleFunc("/api/logout", corsMiddleware(api.HandleLogout))
@@ -281,6 +283,9 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/isos/", corsMiddleware(api.AdminMiddleware(api.HandleISOItem)))
 	mux.HandleFunc("/api/isos/attach", corsMiddleware(api.AdminMiddleware(api.HandleContainerISOAction)))
 	mux.HandleFunc("/api/containers/rescue", corsMiddleware(api.AdminMiddleware(api.HandleContainerRescue)))
+	// 回收站（v2 为主契约；v1 别名供旧集成使用）。
+	mux.HandleFunc("/api/v1/recycle-bin", corsMiddleware(api.AuthMiddleware(api.HandleRecycleBin)))
+	mux.HandleFunc("/api/recycle-bin", corsMiddleware(api.AuthMiddleware(api.HandleRecycleBin)))
 
 	// 被控（Agent）专用 API：仅主控通过节点 token 调用
 	mux.HandleFunc("/api/agent/containers", corsMiddleware(api.AgentTokenMiddleware(api.HandleAgentContainers)))
@@ -719,6 +724,8 @@ func Run() error {
 	api.StartUptimeTracking()
 	// 容器级定时启停任务（对齐 Virtualizor act=self_shutdown）。
 	api.StartScheduledActionsWorker()
+	// 回收站自动清理（NetJett 对齐）：每小时扫描超期软删除实例并入真删除任务。
+	api.StartRecyclePurgeWorker()
 	// 事件订阅引擎：容器状态变更 → Webhook 回调（幂等注册）。
 	api.StartWebhookEngine()
 

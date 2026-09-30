@@ -561,9 +561,22 @@ function eyvescloud_AdminServicesTabFields(array $params)
     $res = eyvescloud_find_container($params);
     $container = (eyvescloud_success($res) && !empty($res['data']) && is_array($res['data'])) ? $res['data'] : [];
 
+    $bindInput = '<input type="text" name="eyvescloud_bind_instance_id" value="" '
+        . 'placeholder="面板实例 ID（数字 ID / UUID / 实例名）" '
+        . 'style="width:260px" autocomplete="off" />';
+    $bindHint = '填好后点上方「绑定已有实例」按钮（不重装、不改动实例本身）';
+    if (!empty($container['id'])) {
+        $bindInput = '<input type="text" name="eyvescloud_bind_instance_id" value="'
+            . htmlspecialchars((string)($container['id'] ?? ''), ENT_QUOTES, 'UTF-8')
+            . '" style="width:260px" autocomplete="off" />';
+        $bindHint = '当前已绑定 #' . htmlspecialchars((string)($container['id'] ?? ''), ENT_QUOTES, 'UTF-8')
+            . ' · 改绑请先点「解绑实例」';
+    }
+
     if (empty($container)) {
         return [
             '实例状态' => '<span style="color:#b91c1c">无法获取实例信息：' . htmlspecialchars(eyvescloud_message($res, '面板未响应'), ENT_QUOTES, 'UTF-8') . '</span>',
+            '实例绑定 ID' => $bindInput . '<br/><span style="color:#6b7280">' . htmlspecialchars($bindHint, ENT_QUOTES, 'UTF-8') . '</span>',
         ];
     }
 
@@ -612,6 +625,9 @@ function eyvescloud_AdminServicesTabFields(array $params)
         $rows['VNC 端口'] = $vncPort > 0 ? (string)$vncPort : '<span style="color:#6b7280">-</span>';
     }
 
+    // 已绑定时把绑定输入框放最后一行，管理员可见当前绑定并可改绑。
+    $rows['实例绑定 ID'] = $bindInput . '<br/><span style="color:#6b7280">' . htmlspecialchars($bindHint, ENT_QUOTES, 'UTF-8') . '</span>';
+
     return $rows;
 }
 
@@ -623,6 +639,8 @@ function eyvescloud_AdminServicesTabFields(array $params)
 function eyvescloud_AdminCustomButtonArray()
 {
     return [
+        '绑定已有实例' => 'BindExisting',
+        '解绑实例'     => 'UnbindInstance',
         '同步状态'     => 'Sync',
         '重置流量'     => 'TrafficReset',
         '硬关机(强制)' => 'HardOff',
@@ -632,6 +650,93 @@ function eyvescloud_AdminCustomButtonArray()
         'ISO 卸载'     => 'ISODetach',
         'VNC 控制台'   => 'VNC',
     ];
+}
+
+/**
+ * 绑定已有实例（对齐魔方云「指定主机开通」）。
+ *
+ * 场景：存量机器迁移上 WHMCS——先在面板里建好/已有实例，管理员在 WHMCS 服务页
+ * 「实例绑定 ID」输入框填面板实例 ID（数字 ID / UUID / 实例名均可），点本按钮完成
+ * 服务 ↔ 实例绑定。绑定**不重装、不改动实例本身**，只做：
+ *   1. 把实例 ID 写入产品自定义字段 Container ID（P2-15 机制，后续操作按 ID 定位）；
+ *   2. 把服务 hostname(domain) 对齐为面板实例名（保持双通道定位一致）；
+ *   3. 写回 WHMCS 主机表（IP / 用户 / 密码 / 状态），并同步到期时间。
+ *
+ * 输入来源：AdminServicesTabFields 渲染的表单输入（按钮提交时随表单带回 $_POST）。
+ *
+ * @param array $params
+ * @return string "success" 或错误消息
+ */
+function eyvescloud_BindExistingInstance(array $params)
+{
+    $identifier = trim((string)($_POST['eyvescloud_bind_instance_id'] ?? $_GET['eyvescloud_bind_instance_id'] ?? ''));
+    if ($identifier === '') {
+        return '请在「实例绑定 ID」输入框填写面板实例 ID（数字 ID / UUID / 实例名），再点本按钮';
+    }
+
+    // 防呆：服务当前已绑定另一台实例时，要求先解绑，避免覆盖错绑。
+    $current = eyvescloud_find_container($params);
+    if (eyvescloud_success($current) && !empty($current['data']['id'])) {
+        $boundId = (int)($current['data']['id'] ?? 0);
+        $same = is_numeric($identifier)
+            ? $boundId === (int)$identifier
+            : strcasecmp((string)($current['data']['name'] ?? ''), $identifier) === 0;
+        if (!$same) {
+            return '该服务已绑定实例 #' . $boundId . '（' . ($current['data']['name'] ?? '?') . '）。如需改绑请先点「解绑实例」';
+        }
+    }
+
+    // 校验目标实例存在（GET 兼容数字 ID / UUID / 名称三种写法）。
+    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($identifier), [], 'GET', 60);
+    if (!eyvescloud_success($res) || empty($res['data']) || !is_array($res['data'])) {
+        return '面板中未找到实例：' . htmlspecialchars($identifier, ENT_QUOTES, 'UTF-8') . '（' . eyvescloud_message($res, '查询失败') . '）';
+    }
+    $container = $res['data'];
+    $containerId = (int)($container['id'] ?? 0);
+    $containerName = (string)($container['name'] ?? '');
+    if ($containerId <= 0 || $containerName === '') {
+        return '面板返回的实例数据不完整';
+    }
+
+    // 1) 持久化实例 ID（自定义字段 Container ID）。
+    eyvescloud_persist_container_id($params, $containerId);
+
+    // 2) 对齐服务 hostname 为面板实例名（name 定位通道与 ID 通道保持一致）。
+    $hostId = eyvescloud_host_id($params);
+    if ($hostId > 0 && class_exists('\WHMCS\Database\Capsule')) {
+        try {
+            \WHMCS\Database\Capsule::table('tblhosting')->where('id', $hostId)->update(['domain' => $containerName]);
+        } catch (\Throwable $e) {
+            return '绑定实例 #' . $containerId . ' 成功，但对齐主机名失败: ' . $e->getMessage();
+        }
+    }
+
+    // 3) 写回主机表（IP / 用户 / 密码 / 状态）并同步到期时间。
+    eyvescloud_update_host_from_container($params, $container);
+    eyvescloud_set_expiry($params);
+
+    return 'success';
+}
+
+/**
+ * 解绑实例：清空持久化的 Container ID 并把服务状态置为 Pending（不触碰面板实例）。
+ * 用于改绑前的安全解除；实例本身在面板中不受影响。
+ *
+ * @param array $params
+ * @return string
+ */
+function eyvescloud_UnbindInstance(array $params)
+{
+    eyvescloud_clear_container_id($params);
+    $hostId = eyvescloud_host_id($params);
+    if ($hostId > 0 && class_exists('\WHMCS\Database\Capsule')) {
+        try {
+            \WHMCS\Database\Capsule::table('tblhosting')->where('id', $hostId)->update(['domainstatus' => 'Pending']);
+        } catch (\Throwable $e) {
+            return '解绑完成，但更新服务状态失败: ' . $e->getMessage();
+        }
+    }
+    return 'success';
 }
 
 /**

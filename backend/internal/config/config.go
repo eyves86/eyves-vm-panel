@@ -120,92 +120,98 @@ type VMReadinessCheck struct {
 
 // Container represents an LXC container configuration
 type Container struct {
-	ID                            int                    `json:"id"`
-	UUID                          string                 `json:"uuid"`
-	Name                          string                 `json:"name"`
-	NodeID                        string                 `json:"node_id,omitempty"`     // 所在节点 ID；空 = 主控本机（向后兼容）
-	Virtualization                string                 `json:"virtualization,omitempty"`
-	LXCName                       string                 `json:"lxc_name,omitempty"`
-	KVMName                       string                 `json:"kvm_name,omitempty"`
-	DiskImage                     string                 `json:"disk_image,omitempty"`
-	StoragePoolID                 string                 `json:"storage_pool_id,omitempty"`
-	StoragePath                   string                 `json:"storage_path,omitempty"`
-	MACAddress                    string                 `json:"mac_address,omitempty"`
-	Template                      string                 `json:"template"`
-	VCPU                          float64                `json:"vcpu"`
-	RAMMB                         int                    `json:"ram_mb"`
-	DiskGB                        float64                `json:"disk_gb"`
-	DataDiskGB                    float64                `json:"data_disk_gb,omitempty"`
-	DataDiskMountPath             string                 `json:"data_disk_mount_path,omitempty"`
-	NetworkBWMbps                 int                    `json:"network_bw_mbps"`
-	NetworkDownMbps               int                    `json:"network_down_mbps"`
-	NetworkUpMbps                 int                    `json:"network_up_mbps"`
-	MonthlyTrafficGB              int                    `json:"monthly_traffic_gb"`
-	TrafficMode                   string                 `json:"traffic_mode"`   // "total" or "in_out"
-	TrafficInGB                   int                    `json:"traffic_in_gb"`  // 0 = unlimited
-	TrafficOutGB                  int                    `json:"traffic_out_gb"` // 0 = unlimited
-	TrafficUsedRX                 int64                  `json:"traffic_used_rx"`
-	TrafficUsedTX                 int64                  `json:"traffic_used_tx"`
-	TrafficResetDate              string                 `json:"traffic_reset_date"`
-	IOSpeedMBps                   int                    `json:"io_speed_mbps"`
-	IOReadMBps                    int                    `json:"io_read_mbps"`
-	IOWriteMBps                   int                    `json:"io_write_mbps"`
-	Status                        string                 `json:"status"`
+	ID             int     `json:"id"`
+	UUID           string  `json:"uuid"`
+	Name           string  `json:"name"`
+	NodeID         string  `json:"node_id,omitempty"` // 所在节点 ID；空 = 主控本机（向后兼容）
+	Virtualization string  `json:"virtualization,omitempty"`
+	LXCName        string  `json:"lxc_name,omitempty"`
+	KVMName        string  `json:"kvm_name,omitempty"`
+	DiskImage      string  `json:"disk_image,omitempty"`
+	StoragePoolID  string  `json:"storage_pool_id,omitempty"`
+	StoragePath    string  `json:"storage_path,omitempty"`
+	MACAddress     string  `json:"mac_address,omitempty"`
+	Template       string  `json:"template"`
+	VCPU           float64 `json:"vcpu"`
+	// CPUPercent 是 CPU 使用率上限（1-100，0=不额外限制；cgroup cpu.max 口径）。
+	// v2 PATCH 与创建接口均暴露 cpu_percent（修复"字段被 if false{} 静默丢弃"的契约 bug）。
+	CPUPercent        int     `json:"cpu_percent,omitempty"`
+	RAMMB             int     `json:"ram_mb"`
+	DiskGB            float64 `json:"disk_gb"`
+	DataDiskGB        float64 `json:"data_disk_gb,omitempty"`
+	DataDiskMountPath string  `json:"data_disk_mount_path,omitempty"`
+	NetworkBWMbps     int     `json:"network_bw_mbps"`
+	NetworkDownMbps   int     `json:"network_down_mbps"`
+	NetworkUpMbps     int     `json:"network_up_mbps"`
+	MonthlyTrafficGB  int     `json:"monthly_traffic_gb"`
+	TrafficMode       string  `json:"traffic_mode"`   // "total" or "in_out"
+	TrafficInGB       int     `json:"traffic_in_gb"`  // 0 = unlimited
+	TrafficOutGB      int     `json:"traffic_out_gb"` // 0 = unlimited
+	TrafficUsedRX     int64   `json:"traffic_used_rx"`
+	TrafficUsedTX     int64   `json:"traffic_used_tx"`
+	TrafficResetDate  string  `json:"traffic_reset_date"`
+	IOSpeedMBps       int     `json:"io_speed_mbps"`
+	IOReadMBps        int     `json:"io_read_mbps"`
+	IOWriteMBps       int     `json:"io_write_mbps"`
+	Status            string  `json:"status"`
 	// Suspended 表示容器被财务/管理员挂起（欠费停机语义）：
 	// 运行中的容器会被强制停机，且 start/restart/reinstall 与
 	// WebSSH/WebVNC 访问全部被拒绝，直到 unsuspend。
-	Suspended      bool   `json:"suspended,omitempty"`
-	SuspendedAt    string `json:"suspended_at,omitempty"`
-	SuspendedReason string `json:"suspended_reason,omitempty"`
-	RestoreOnHostBoot             bool                   `json:"restore_on_host_boot,omitempty"`
-	IP                            string                 `json:"ip"`
-	LANIPv4Mode                   string                 `json:"lan_ipv4_mode,omitempty"`
-	LANInterface                  string                 `json:"lan_interface,omitempty"`
-	LANIPv4Address                string                 `json:"lan_ipv4_address,omitempty"`
-	LANIPv4PrefixLen              int                    `json:"lan_ipv4_prefix_len,omitempty"`
-	LANIPv4Gateway                string                 `json:"lan_ipv4_gateway,omitempty"`
-	PublicIPv4s                   []PublicIPv4Assignment `json:"public_ipv4s,omitempty"`
-	IPv6                          string                 `json:"ipv6"`
-	IPv6PrefixLen                 int                    `json:"ipv6_prefix_len"`
-	IPv6Interface                 string                 `json:"ipv6_interface"`
-	IPv6Addresses                 []IPv6Assignment       `json:"ipv6_addresses,omitempty"`
-	VNCPort                       int                    `json:"vnc_port"`
-	VNCPassword                   string                 `json:"vnc_password,omitempty"`
-	SSHPort                       int                    `json:"ssh_port"`
-	SSHPassword                   string                 `json:"ssh_password"`
-	SSHHostKey                    string                 `json:"ssh_host_key,omitempty"`
+	Suspended         bool                   `json:"suspended,omitempty"`
+	SuspendedAt       string                 `json:"suspended_at,omitempty"`
+	SuspendedReason   string                 `json:"suspended_reason,omitempty"`
+	RestoreOnHostBoot bool                   `json:"restore_on_host_boot,omitempty"`
+	IP                string                 `json:"ip"`
+	LANIPv4Mode       string                 `json:"lan_ipv4_mode,omitempty"`
+	LANInterface      string                 `json:"lan_interface,omitempty"`
+	LANIPv4Address    string                 `json:"lan_ipv4_address,omitempty"`
+	LANIPv4PrefixLen  int                    `json:"lan_ipv4_prefix_len,omitempty"`
+	LANIPv4Gateway    string                 `json:"lan_ipv4_gateway,omitempty"`
+	PublicIPv4s       []PublicIPv4Assignment `json:"public_ipv4s,omitempty"`
+	IPv6              string                 `json:"ipv6"`
+	IPv6PrefixLen     int                    `json:"ipv6_prefix_len"`
+	IPv6Interface     string                 `json:"ipv6_interface"`
+	IPv6Addresses     []IPv6Assignment       `json:"ipv6_addresses,omitempty"`
+	VNCPort           int                    `json:"vnc_port"`
+	VNCPassword       string                 `json:"vnc_password,omitempty"`
+	SSHPort           int                    `json:"ssh_port"`
+	SSHPassword       string                 `json:"ssh_password"`
+	SSHHostKey        string                 `json:"ssh_host_key,omitempty"`
 	// HVM 设置（KVM 容器）：启动盘顺序 / 网卡驱动 / VNC 键位 / 硬件加速 / TUN PPP
-	HVMBootOrder                  string                 `json:"hvm_boot_order,omitempty"`
-	HVMNicDriver                  string                 `json:"hvm_nic_driver,omitempty"`
-	HVMVNCKeyMap                  string                 `json:"hvm_vnc_keymap,omitempty"`
-	HVMAcceleration               string                 `json:"hvm_acceleration,omitempty"`
-	HVMEnableTuntap               bool                   `json:"hvm_enable_tuntap,omitempty"`
-	HVMEnablePPP                  bool                   `json:"hvm_enable_ppp,omitempty"`
-	PortMappings                  []PortMapping          `json:"port_mappings"`
-	PortMappingLimit              int                    `json:"port_mapping_limit"`
-	FirewallEnabled               bool                   `json:"firewall_enabled"`
-	FirewallDefaultAction         string                 `json:"firewall_default_action"`
-	FirewallRules                 []FirewallRule         `json:"firewall_rules"`
-	AllowedImageIDs               []string               `json:"allowed_image_ids,omitempty"`
-	ImageLimitConfigured          bool                   `json:"image_limit_configured,omitempty"`
-	Tenant                        string                 `json:"tenant,omitempty"`
-	SnapshotLimit                 int                    `json:"snapshot_limit"`
-	CreatedAt                     string                 `json:"created_at"`
-	ExpiresAt                     string                 `json:"expires_at"`
-	SnapshotScheduleEnabled       bool                   `json:"snapshot_schedule_enabled"`
-	SnapshotScheduleIntervalHours int                    `json:"snapshot_schedule_interval_hours"`
-	SnapshotScheduleTime          string                 `json:"snapshot_schedule_time"`
-	SnapshotScheduleLastRun       string                 `json:"snapshot_schedule_last_run"`
-	SnapshotScheduleNextRun       string                 `json:"snapshot_schedule_next_run"`
-	SnapshotScheduleCreatedBy     string                 `json:"snapshot_schedule_created_by"`
-	PolicyBlocked                 bool                   `json:"policy_blocked"`
-	PolicyBlockedReason           string                 `json:"policy_blocked_reason,omitempty"`
-	PolicyBlockedAt               string                 `json:"policy_blocked_at,omitempty"`
-	OwnerSubUserID                string                 `json:"owner_sub_user_id,omitempty"`
-	CloudInitUserData             string                 `json:"cloud_init_user_data,omitempty"`
-	RescueEnabled                 bool                   `json:"rescue_enabled,omitempty"`  // 是否处于救援模式（KVM 从救援 ISO 引导）
-	RescueISOID                   string                 `json:"rescue_iso_id,omitempty"`   // 当前使用的救援 ISO 目录条目 ID
-	RescueISOPath                 string                 `json:"rescue_iso_path,omitempty"` // 救援 ISO 的本地绝对路径
+	HVMBootOrder                  string         `json:"hvm_boot_order,omitempty"`
+	HVMNicDriver                  string         `json:"hvm_nic_driver,omitempty"`
+	HVMVNCKeyMap                  string         `json:"hvm_vnc_keymap,omitempty"`
+	HVMAcceleration               string         `json:"hvm_acceleration,omitempty"`
+	HVMEnableTuntap               bool           `json:"hvm_enable_tuntap,omitempty"`
+	HVMEnablePPP                  bool           `json:"hvm_enable_ppp,omitempty"`
+	PortMappings                  []PortMapping  `json:"port_mappings"`
+	PortMappingLimit              int            `json:"port_mapping_limit"`
+	FirewallEnabled               bool           `json:"firewall_enabled"`
+	FirewallDefaultAction         string         `json:"firewall_default_action"`
+	FirewallRules                 []FirewallRule `json:"firewall_rules"`
+	AllowedImageIDs               []string       `json:"allowed_image_ids,omitempty"`
+	ImageLimitConfigured          bool           `json:"image_limit_configured,omitempty"`
+	Tenant                        string         `json:"tenant,omitempty"`
+	SnapshotLimit                 int            `json:"snapshot_limit"`
+	CreatedAt                     string         `json:"created_at"`
+	ExpiresAt                     string         `json:"expires_at"`
+	SnapshotScheduleEnabled       bool           `json:"snapshot_schedule_enabled"`
+	SnapshotScheduleIntervalHours int            `json:"snapshot_schedule_interval_hours"`
+	SnapshotScheduleTime          string         `json:"snapshot_schedule_time"`
+	SnapshotScheduleLastRun       string         `json:"snapshot_schedule_last_run"`
+	SnapshotScheduleNextRun       string         `json:"snapshot_schedule_next_run"`
+	SnapshotScheduleCreatedBy     string         `json:"snapshot_schedule_created_by"`
+	PolicyBlocked                 bool           `json:"policy_blocked"`
+	PolicyBlockedReason           string         `json:"policy_blocked_reason,omitempty"`
+	PolicyBlockedAt               string         `json:"policy_blocked_at,omitempty"`
+	OwnerSubUserID                string         `json:"owner_sub_user_id,omitempty"`
+	// RecycledAt 非空 = 实例在回收站（软删除，NetJett/魔方云同款能力）：
+	// 列表/统计默认排除，数据面不动；恢复=清标记，彻底删除（purge）才真销毁。
+	RecycledAt        string `json:"recycled_at,omitempty"`
+	CloudInitUserData string `json:"cloud_init_user_data,omitempty"`
+	RescueEnabled     bool   `json:"rescue_enabled,omitempty"`  // 是否处于救援模式（KVM 从救援 ISO 引导）
+	RescueISOID       string `json:"rescue_iso_id,omitempty"`   // 当前使用的救援 ISO 目录条目 ID
+	RescueISOPath     string `json:"rescue_iso_path,omitempty"` // 救援 ISO 的本地绝对路径
 	// OptionalISOID/OptionalISOPath: 通过单独 AttachISO 挂到 KVM CD-ROM (sdb) 的 ISO。
 	// 与 Rescue 模式两条独立路径——Rescue 会 redefine + reboot，而 AttachISO 只是
 	// 加 CD-ROM 设备，不改变启动盘顺序（Windows 安装/LiveCD 工具）。
@@ -233,12 +239,12 @@ type Container struct {
 // SSHKey 是平台托管的 SSH 公钥账户（类比 GitHub SSH Key）。
 // 用户创建公钥后可在创建容器时绑定，容器开机后公钥自动注入 /root/.ssh/authorized_keys。
 type SSHKey struct {
-	ID          string `json:"id"`            // "sk-" 前缀
-	Name        string `json:"name"`          // 用户可识别的标签（如 "my-laptop"）
-	PublicKey   string `json:"public_key"`    // 完整 OpenSSH 公钥行
-	Fingerprint string `json:"fingerprint"`   // SHA256 指纹（服务端计算，防篡改）
-	Type        string `json:"type"`          // "admin" 或 subuser username
-	OwnerID     string `json:"owner_id"`      // subuser ID（admin 时为空）
+	ID          string `json:"id"`          // "sk-" 前缀
+	Name        string `json:"name"`        // 用户可识别的标签（如 "my-laptop"）
+	PublicKey   string `json:"public_key"`  // 完整 OpenSSH 公钥行
+	Fingerprint string `json:"fingerprint"` // SHA256 指纹（服务端计算，防篡改）
+	Type        string `json:"type"`        // "admin" 或 subuser username
+	OwnerID     string `json:"owner_id"`    // subuser ID（admin 时为空）
 	CreatedAt   string `json:"created_at"`
 	LastUsedAt  string `json:"last_used_at,omitempty"`
 }
@@ -247,13 +253,13 @@ type SSHKey struct {
 // Admin 创建的 recipe 可以标记 scope="shared"，所有 subuser 可见。
 // Subuser 创建的 recipe 默认 scope="private"，仅自己可见。
 type Recipe struct {
-	ID          string `json:"id"`            // "recipe-" 前缀
-	Name        string `json:"name"`          // 用户可识别的名称
-	Description string `json:"description"`   // 可选说明
-	Script      string `json:"script"`        // bash 脚本正文
-	OwnerID     string `json:"owner_id"`      // subuser ID 或 "admin"
-	OwnerType   string `json:"owner_type"`    // "admin" 或 "subuser"
-	Scope       string `json:"scope"`         // "private" 或 "shared"
+	ID          string `json:"id"`          // "recipe-" 前缀
+	Name        string `json:"name"`        // 用户可识别的名称
+	Description string `json:"description"` // 可选说明
+	Script      string `json:"script"`      // bash 脚本正文
+	OwnerID     string `json:"owner_id"`    // subuser ID 或 "admin"
+	OwnerType   string `json:"owner_type"`  // "admin" 或 "subuser"
+	Scope       string `json:"scope"`       // "private" 或 "shared"
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -1092,13 +1098,13 @@ const (
 )
 
 type StoragePool struct {
-	ID              string            `json:"id"`
-	Name            string            `json:"name"`
-	Path            string            `json:"path"`
-	MountPoint      string            `json:"mount_point,omitempty"`
-	ContentTypes    []string          `json:"content_types"`
-	DefaultContents []string          `json:"default_contents,omitempty"`
-	Enabled         bool              `json:"enabled"`
+	ID              string   `json:"id"`
+	Name            string   `json:"name"`
+	Path            string   `json:"path"`
+	MountPoint      string   `json:"mount_point,omitempty"`
+	ContentTypes    []string `json:"content_types"`
+	DefaultContents []string `json:"default_contents,omitempty"`
+	Enabled         bool     `json:"enabled"`
 	// Backend 存储后端类型：dir|zfs|lvm|rbd|cephfs|nfs（P0-1 仅实现 dir；
 	// 旧数据该字段为空字符串，加载时自动补 dir）。
 	Backend string `json:"backend,omitempty"`
@@ -1306,28 +1312,28 @@ type NotificationConfig struct {
 // The controller generates InstallKey (used once by the agent install script)
 // and Token (used for heartbeat and controller->agent API calls).
 type Node struct {
-	ID             string  `json:"id"`
-	Name           string  `json:"name"`
-	Address        string  `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
-	Token          string  `json:"token,omitempty"`
-	InstallKey     string  `json:"install_key,omitempty"`
-	InstallKeyCreatedAt string `json:"install_key_created_at,omitempty"`
-	InstallKeyIP        string `json:"install_key_ip,omitempty"`
-	Status         string  `json:"status"` // online / offline / pending
-	LastSeen       string  `json:"last_seen,omitempty"`
-	Version        string  `json:"version,omitempty"`
-	OSName         string  `json:"os_name,omitempty"`
-	CPUCount       int     `json:"cpu_count,omitempty"`
-	RAMTotalMB     int64   `json:"ram_total_mb,omitempty"`
-	RAMUsedMB      int64   `json:"ram_used_mb,omitempty"`
-	DiskTotalGB    float64 `json:"disk_total_gb,omitempty"`
-	DiskUsedGB     float64 `json:"disk_used_gb,omitempty"`
-	ContainerCount int     `json:"container_count,omitempty"`
-	RegionID       string  `json:"region_id,omitempty"`       // 所属区域，见 Regions
-	NodeGroupID    string  `json:"node_group_id,omitempty"`   // 所属节点分组，见 NodeGroups（迁移池/策略池）
-	ClusterID      string  `json:"cluster_id,omitempty"`      // 所属集群，见 Clusters（跨分组 HA/迁移域）
-	VirtTypes      []string `json:"virt_types,omitempty"`      // 节点支持的虚拟化类型: "lxc"/"kvm"/["lxc","kvm"]
-	CreatedAt      string  `json:"created_at,omitempty"`
+	ID                  string   `json:"id"`
+	Name                string   `json:"name"`
+	Address             string   `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
+	Token               string   `json:"token,omitempty"`
+	InstallKey          string   `json:"install_key,omitempty"`
+	InstallKeyCreatedAt string   `json:"install_key_created_at,omitempty"`
+	InstallKeyIP        string   `json:"install_key_ip,omitempty"`
+	Status              string   `json:"status"` // online / offline / pending
+	LastSeen            string   `json:"last_seen,omitempty"`
+	Version             string   `json:"version,omitempty"`
+	OSName              string   `json:"os_name,omitempty"`
+	CPUCount            int      `json:"cpu_count,omitempty"`
+	RAMTotalMB          int64    `json:"ram_total_mb,omitempty"`
+	RAMUsedMB           int64    `json:"ram_used_mb,omitempty"`
+	DiskTotalGB         float64  `json:"disk_total_gb,omitempty"`
+	DiskUsedGB          float64  `json:"disk_used_gb,omitempty"`
+	ContainerCount      int      `json:"container_count,omitempty"`
+	RegionID            string   `json:"region_id,omitempty"`     // 所属区域，见 Regions
+	NodeGroupID         string   `json:"node_group_id,omitempty"` // 所属节点分组，见 NodeGroups（迁移池/策略池）
+	ClusterID           string   `json:"cluster_id,omitempty"`    // 所属集群，见 Clusters（跨分组 HA/迁移域）
+	VirtTypes           []string `json:"virt_types,omitempty"`    // 节点支持的虚拟化类型: "lxc"/"kvm"/["lxc","kvm"]
+	CreatedAt           string   `json:"created_at,omitempty"`
 	// MaintenanceMode 维护模式：调度器不再把新容器放到该节点（升级/维修前开启）。
 	// 已有容器不受影响，配合 drain 列表手动迁移。
 	MaintenanceMode  bool   `json:"maintenance_mode,omitempty"`
@@ -1449,6 +1455,7 @@ type ISOFile struct {
 //   - branch: 可选，当 latest release 未找到时回退到此分支最新 tag；默认 main
 //   - token: 可选，私有仓库需要
 //   - asset_prefix: 可选，release 产物前缀；默认 eyvescloud
+//
 // 留空时 initConfig 会写入官方仓库（Codeberg）默认值。
 type UpdateSource struct {
 	Platform    string `json:"platform"`
@@ -1509,12 +1516,12 @@ func NormalizeUpdateSource(u UpdateSource) UpdateSource {
 }
 
 type EyvescloudConfig struct {
-	AdminUser            string                 `json:"admin_user"`
-	AdminPassHash        string                 `json:"admin_pass_hash"`
-	AdminTokenVersion    int                    `json:"admin_token_version"`
-	AdminTOTPSecret      string                 `json:"admin_totp_secret,omitempty"`
-	AdminTOTPEnabled     bool                   `json:"admin_totp_enabled"`
-	AdminBackupCodes     []string               `json:"admin_backup_codes,omitempty"`
+	AdminUser         string   `json:"admin_user"`
+	AdminPassHash     string   `json:"admin_pass_hash"`
+	AdminTokenVersion int      `json:"admin_token_version"`
+	AdminTOTPSecret   string   `json:"admin_totp_secret,omitempty"`
+	AdminTOTPEnabled  bool     `json:"admin_totp_enabled"`
+	AdminBackupCodes  []string `json:"admin_backup_codes,omitempty"`
 	// AdminPath 是管理员入口路径（可自定义，默认 "/"）。用户门户固定为 /user。
 	AdminPath string `json:"admin_path,omitempty"`
 	// PanelDomain 是面板对外绑定的域名（如 https://panel.example.com）。
@@ -1527,8 +1534,8 @@ type EyvescloudConfig struct {
 	TurnstileSecretKey string `json:"turnstile_secret_key,omitempty"`
 	// TurnstileAdminLogin / TurnstileUserLogin 分别控制管理员登录页与用户登录页
 	// 是否强制 Turnstile 人机验证（密钥均配置后才生效）。
-	TurnstileAdminLogin bool `json:"turnstile_admin_login,omitempty"`
-	TurnstileUserLogin  bool `json:"turnstile_user_login,omitempty"`
+	TurnstileAdminLogin  bool                   `json:"turnstile_admin_login,omitempty"`
+	TurnstileUserLogin   bool                   `json:"turnstile_user_login,omitempty"`
 	JWTSecret            string                 `json:"jwt_secret"`
 	Port                 int                    `json:"port"`
 	DataDir              string                 `json:"data_dir"`
@@ -1563,51 +1570,51 @@ type EyvescloudConfig struct {
 	// AbuseDetectionEnabled 控制是否启用滥用行为检测（挖矿、BT/PT、VPN/代理/Tor、
 	// 25 端口垃圾邮件、DDoS/CC、爆破、端口扫描、后门/远控监听、内网横向移动、
 	// 疑似被入侵等）。仅产生告警，不直接处置容器；默认开启。
-	AbuseDetectionEnabled bool               `json:"abuse_detection_enabled"`
-	Notifications        NotificationConfig     `json:"notifications"`
-	TaskConcurrency      int                    `json:"task_concurrency"`
-	Language             string                 `json:"language"`
-	SSL                  SSLConfig              `json:"ssl"`
-	SSLCertificates      map[string]SSLConfig   `json:"ssl_certificates"`
-	StoragePools         []StoragePool          `json:"storage_pools"`
-	SSHKeys             []SSHKey               `json:"ssh_keys"`
-	PolicyRules          []PolicyRule           `json:"policy_rules"`
-	PolicyHistory        []PolicyTriggerRecord  `json:"policy_history"`
-	Nodes                []Node                 `json:"nodes,omitempty"`
+	AbuseDetectionEnabled bool                  `json:"abuse_detection_enabled"`
+	Notifications         NotificationConfig    `json:"notifications"`
+	TaskConcurrency       int                   `json:"task_concurrency"`
+	Language              string                `json:"language"`
+	SSL                   SSLConfig             `json:"ssl"`
+	SSLCertificates       map[string]SSLConfig  `json:"ssl_certificates"`
+	StoragePools          []StoragePool         `json:"storage_pools"`
+	SSHKeys               []SSHKey              `json:"ssh_keys"`
+	PolicyRules           []PolicyRule          `json:"policy_rules"`
+	PolicyHistory         []PolicyTriggerRecord `json:"policy_history"`
+	Nodes                 []Node                `json:"nodes,omitempty"`
 	// AgentPairingKey 是本面板作为被控时的「对接密钥」：一次性、24h 有效，
 	// 由管理员在「节点管理 → 节点接入」生成，填到目标主控的「对接已有面板」
 	// 表单中，主控凭它调用本面板完成注册对接（方向与 install key 相反）。
-	AgentPairingKey        string `json:"agent_pairing_key,omitempty"`
+	AgentPairingKey       string `json:"agent_pairing_key,omitempty"`
 	AgentPairingKeyExpiry string `json:"agent_pairing_key_expiry,omitempty"`
 	// UpdateSource 面板自动更新源。
 	// 支持 GitHub / Codeberg / Gitee / GitLab 四大平台，填入 owner/repo + 可选 token
 	// 即可从各平台的 Releases 拉取最新版本，统一产物命名：
 	//   eyvescloud-linux-amd64.tar.gz / eyvescloud-linux-arm64.tar.gz
 	// 留空时默认从官方仓库（codeberg.org/fenhaolost/eyves-vm-panel）检查。
-	UpdateSource UpdateSource `json:"update_source"`
-	Regions      []Region     `json:"regions,omitempty"`
-	NodeGroups           []NodeGroup            `json:"node_groups,omitempty"`
-	Clusters             []Cluster              `json:"clusters,omitempty"`
-	IPGroups             []IPGroup              `json:"ip_groups,omitempty"`
-	ISOFiles             []ISOFile              `json:"iso_files,omitempty"`
-	SecGroups            []secgroup.Group       `json:"sec_groups,omitempty"`
-	SecGroupRules        []secgroup.Rule        `json:"sec_group_rules,omitempty"`
-	MetricRetentionDays  int                    `json:"metric_retention_days"`
-	AuditRetentionDays   int                    `json:"audit_retention_days"`
-	BackupSettings       BackupSettings         `json:"backup_settings"`
+	UpdateSource           UpdateSource           `json:"update_source"`
+	Regions                []Region               `json:"regions,omitempty"`
+	NodeGroups             []NodeGroup            `json:"node_groups,omitempty"`
+	Clusters               []Cluster              `json:"clusters,omitempty"`
+	IPGroups               []IPGroup              `json:"ip_groups,omitempty"`
+	ISOFiles               []ISOFile              `json:"iso_files,omitempty"`
+	SecGroups              []secgroup.Group       `json:"sec_groups,omitempty"`
+	SecGroupRules          []secgroup.Rule        `json:"sec_group_rules,omitempty"`
+	MetricRetentionDays    int                    `json:"metric_retention_days"`
+	AuditRetentionDays     int                    `json:"audit_retention_days"`
+	BackupSettings         BackupSettings         `json:"backup_settings"`
 	InstanceBackupSettings InstanceBackupSettings `json:"instance_backup_settings"`
 	// RemoteBackupSettings 异地（远程）备份目标，见 RemoteBackupSettings。
 	RemoteBackupSettings RemoteBackupSettings `json:"remote_backup_settings"`
-	Backups              []BackupRecord         `json:"backups,omitempty"`
-	InstanceBackups      []InstanceBackup       `json:"instance_backups,omitempty"`
+	Backups              []BackupRecord       `json:"backups,omitempty"`
+	InstanceBackups      []InstanceBackup     `json:"instance_backups,omitempty"`
 	// BackupPlans 定时备份计划（每计划独立 cron / 目标 / 保留份数）。
-	BackupPlans []BackupPlan `json:"backup_plans,omitempty"`
-	APIRateLimit         APIRateLimitConfig     `json:"api_rate_limit"`
-	SMTPSettings         SMTPSettings           `json:"smtp_settings"`
-	Tenants              []Tenant               `json:"tenants,omitempty"`
-	MemoryOvercommitRatio float64                `json:"memory_overcommit_ratio"` // 内存超售比：可分配内存 = 物理内存 × 该值（1.0=不变，2.0=2倍）
-	MemoryOvercommitEnabled bool                `json:"memory_overcommit_enabled"` // 是否启用内存超售（默认关闭，保守）
-	KSMTuning            KSMTuningConfig        `json:"ksm_tuning"`
+	BackupPlans             []BackupPlan       `json:"backup_plans,omitempty"`
+	APIRateLimit            APIRateLimitConfig `json:"api_rate_limit"`
+	SMTPSettings            SMTPSettings       `json:"smtp_settings"`
+	Tenants                 []Tenant           `json:"tenants,omitempty"`
+	MemoryOvercommitRatio   float64            `json:"memory_overcommit_ratio"`   // 内存超售比：可分配内存 = 物理内存 × 该值（1.0=不变，2.0=2倍）
+	MemoryOvercommitEnabled bool               `json:"memory_overcommit_enabled"` // 是否启用内存超售（默认关闭，保守）
+	KSMTuning               KSMTuningConfig    `json:"ksm_tuning"`
 	// NATSubnetOversubscription 允许容器数量超过 NAT 子网 DHCP 地址池容量。
 	// 企业超售几千台时需配合更大的 NAT 网段（如 /22 ~ /16）；开启后不再硬性拦截
 	// 地址耗尽，新容器可能拿不到正常内网 IP，故默认关闭（保守，不易出问题）。
@@ -1632,6 +1639,15 @@ type EyvescloudConfig struct {
 	LoginFooterText string `json:"login_footer_text,omitempty"`
 	// LoginFooterHidden 为 true 时登录页底部版权栏完全不渲染。
 	LoginFooterHidden bool `json:"login_footer_hidden,omitempty"`
+	// 白标品牌（面向"授权给其它公司运营"场景）：全部留空 = EyvesCloud 默认。
+	// BrandName 出现在登录页/侧边栏/document.title/邮件抬头/页脚；
+	// BrandLogo 为 data URL（PNG/SVG 的 base64），空 = 默认图标。
+	// BrandPoweredHidden = true 时页脚不再显示 "Powered by EyvesCloud"（付费授权）。
+	BrandName          string `json:"brand_name,omitempty"`
+	BrandLogo          string `json:"brand_logo,omitempty"`
+	BrandFavicon       string `json:"brand_favicon,omitempty"`
+	BrandLoginTitle    string `json:"brand_login_title,omitempty"`
+	BrandPoweredHidden bool   `json:"brand_powered_hidden,omitempty"`
 }
 
 // ScheduledAction 容器级定时任务（与 Virtualizor act=self_shutdown 对齐）。
@@ -1659,14 +1675,14 @@ type ScheduledAction struct {
 //   - 连续失败 10 次自动停用（AutoDisabledReason 记录原因），防止雪崩重试；
 //   - 重试：3 次指数退避（1s/5s/25s），全部失败计入 ConsecutiveFailures。
 type WebhookSubscription struct {
-	ID                  string   `json:"id"`                    // wh-xxx
+	ID                  string   `json:"id"` // wh-xxx
 	Name                string   `json:"name"`
 	URL                 string   `json:"url"`                   // 回调端点（http/https）
 	Secret              string   `json:"secret,omitempty"`      // HMAC 签名密钥（创建时生成，仅回显一次）
 	EventTypes          []string `json:"event_types,omitempty"` // 订阅的事件类型；空 = 全部
 	Enabled             bool     `json:"enabled"`
 	ConsecutiveFailures int      `json:"consecutive_failures,omitempty"`
-	LastDeliveryAt      string   `json:"last_delivery_at,omitempty"`  // RFC3339
+	LastDeliveryAt      string   `json:"last_delivery_at,omitempty"`     // RFC3339
 	LastDeliveryStatus  string   `json:"last_delivery_status,omitempty"` // ok / error: xxx
 	AutoDisabledReason  string   `json:"auto_disabled_reason,omitempty"`
 	CreatedAt           string   `json:"created_at"`
@@ -1681,10 +1697,10 @@ type WebhookSubscription struct {
 // KSMTuningConfig 控制 Linux KSM（Kernel Samepage Merging）调优，用于在内存超售
 // 场景下合并重复内存页、降低实际占用。写入 /sys/kernel/mm/ksm/*。
 type KSMTuningConfig struct {
-	Enabled         bool   `json:"enabled"`
-	PagesToScan     int    `json:"pages_to_scan"`      // ksm/pages_to_scan
-	SleepMillisecs  int    `json:"sleep_millisecs"`    // ksm/sleep_millisecs
-	UseTuneKSM      bool   `json:"use_tune_ksm"`       // 若系统有 tuneksm 则优先使用
+	Enabled        bool `json:"enabled"`
+	PagesToScan    int  `json:"pages_to_scan"`   // ksm/pages_to_scan
+	SleepMillisecs int  `json:"sleep_millisecs"` // ksm/sleep_millisecs
+	UseTuneKSM     bool `json:"use_tune_ksm"`    // 若系统有 tuneksm 则优先使用
 }
 
 const (
@@ -1960,10 +1976,10 @@ func InitConfig() (*EyvescloudConfig, error) {
 			AllowedSources: []string{},
 			TrustedProxies: []string{},
 		},
-		TaskConcurrency: DefaultTaskConcurrency,
-		StoragePools:         []StoragePool{defaultPrimaryStoragePool()},
-		MetricRetentionDays:  MetricRetentionDefault,
-		AuditRetentionDays:   AuditRetentionDefault,
+		TaskConcurrency:     DefaultTaskConcurrency,
+		StoragePools:        []StoragePool{defaultPrimaryStoragePool()},
+		MetricRetentionDays: MetricRetentionDefault,
+		AuditRetentionDays:  AuditRetentionDefault,
 		BackupSettings: BackupSettings{
 			Enabled:       false,
 			IntervalHours: 24,
@@ -1974,9 +1990,9 @@ func InitConfig() (*EyvescloudConfig, error) {
 			Enabled:   false,
 			PerMinute: 120,
 		},
-		Tenants: []Tenant{},
+		Tenants:                 []Tenant{},
 		MemoryOvercommitEnabled: false,
-		MemoryOvercommitRatio:  1.0,
+		MemoryOvercommitRatio:   1.0,
 		KSMTuning: KSMTuningConfig{
 			Enabled:        false,
 			PagesToScan:    100,
@@ -1985,9 +2001,9 @@ func InitConfig() (*EyvescloudConfig, error) {
 		},
 		NATSubnetOversubscription: false,
 		DiskOvercommitRatio:       1.0,
-		AgentPairingKey:        pairingKey,
-		AgentPairingKeyExpiry: pairingKeyExpiry,
-		UpdateSource:           NormalizeUpdateSource(UpdateSource{}),
+		AgentPairingKey:           pairingKey,
+		AgentPairingKeyExpiry:     pairingKeyExpiry,
+		UpdateSource:              NormalizeUpdateSource(UpdateSource{}),
 	}
 
 	if err := SaveConfig(); err != nil {
@@ -3702,6 +3718,85 @@ func FindContainerByIdentifier(identifier string) *Container {
 		}
 	}
 	return nil
+}
+
+// RecycleRetentionDays 默认回收站保留天数（超过后自动彻底删除）。
+// 可用 app_meta 键 recycle_retention_days 覆盖；0/负值按默认处理。
+const RecycleRetentionDays = 7
+
+// RecycleContainer 把实例移入回收站（软删除）：打标记并停机（运行中时）。
+// 返回 (实例名, 是否在运行)。数据面不动，恢复=清标记。
+func RecycleContainer(id int, reason string) (string, bool, error) {
+	c := FindContainer(id)
+	if c == nil {
+		return "", false, fmt.Errorf("container not found: %d", id)
+	}
+	if c.RecycledAt != "" {
+		return c.Name, false, nil // 已在回收站，幂等
+	}
+	wasRunning := c.Status == "running"
+	ok, _ := MutateContainerByID(id, func(target *Container) {
+		target.RecycledAt = time.Now().Format("2006-01-02 15:04:05")
+	})
+	if !ok {
+		return "", false, fmt.Errorf("recycle container %d failed", id)
+	}
+	return c.Name, wasRunning, nil
+}
+
+// RestoreContainer 从回收站恢复实例（清标记）。
+// 同名活跃实例已存在时拒绝（避免命名冲突），要求先处理冲突。
+func RestoreContainer(id int) error {
+	c := FindContainer(id)
+	if c == nil {
+		return fmt.Errorf("container not found: %d", id)
+	}
+	if c.RecycledAt == "" {
+		return nil // 不在回收站，幂等
+	}
+	if dup := findContainerByNameUnlocked(c.Name); dup != nil && dup.ID != c.ID && dup.RecycledAt == "" {
+		return fmt.Errorf("存在同名活跃实例 %s（ID %d），无法恢复；请先重命名其中之一", c.Name, dup.ID)
+	}
+	ok, _ := MutateContainerByID(id, func(target *Container) {
+		target.RecycledAt = ""
+	})
+	if !ok {
+		return fmt.Errorf("restore container %d failed", id)
+	}
+	return nil
+}
+
+// RecycledContainers 返回回收站中的实例快照。
+func RecycledContainers() []Container {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	out := []Container{}
+	for _, c := range AppConfig.Containers {
+		if c.RecycledAt != "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// RecyclePurgeDue 返回超过保留期、应被彻底删除的回收站实例 ID 列表。
+func RecyclePurgeDue(retentionDays int) []int {
+	if retentionDays <= 0 {
+		retentionDays = RecycleRetentionDays
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	out := []int{}
+	cutoff := time.Now().AddDate(0, 0, -retentionDays)
+	for _, c := range AppConfig.Containers {
+		if c.RecycledAt == "" {
+			continue
+		}
+		if t, err := time.ParseInLocation("2006-01-02 15:04:05", c.RecycledAt, time.Local); err == nil && t.Before(cutoff) {
+			out = append(out, c.ID)
+		}
+	}
+	return out
 }
 
 // ContainerStatusHook 是容器状态变更回调（Webhook 事件订阅用）。

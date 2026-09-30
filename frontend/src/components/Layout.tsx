@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react'
 import Sidebar from './Sidebar'
 import AutoTranslate from './AutoTranslate'
 import BrowserDialogTranslator from './BrowserDialogTranslator'
+import { useBrand } from '../utils/brand'
 
 export default function Layout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -66,7 +67,7 @@ export default function Layout() {
           >
             <Menu className="h-5 w-5" />
           </button>
-          <span className="text-sm font-bold text-black dark:text-white">EyvesCloud</span>
+          <span className="text-sm font-bold text-black dark:text-white">{useBrand().name}</span>
         </div>
         <div className="p-4 md:p-6">
           <Outlet />
