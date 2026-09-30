@@ -849,7 +849,7 @@ func v2InstanceUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 // v2InstanceDelete DELETE /api/v2/instances/{id}
-// 回收站语义（F 系列 NetJett 对齐）：默认软删除（进回收站，可恢复）；
+// 回收站语义（F 系列 同类商业面板 对齐）：默认软删除（进回收站，可恢复）；
 // ?purge=true 才真正销毁（计费终止释放资源）。
 func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 	if !v2RequireScope(w, r, "container:create") {
@@ -1733,7 +1733,7 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
 		return
 	}
-	// 批量扩展动作（NetJett 对齐）：按动作粒度校验 scope（改密≠电源权限），
+	// 批量扩展动作（同类商业面板 对齐）：按动作粒度校验 scope（改密≠电源权限），
 	// 同步逐实例执行，结果逐实例返回；与 power/delete/reinstall（任务队列语义）分流。
 	switch strings.ToLower(strings.TrimSpace(req.Action)) {
 	case "reset-password", "remark", "expiry":

@@ -8,8 +8,8 @@ export default {
   theme: {
     extend: {
       colors: {
-        // 设计系统：Cal.com（DESIGN.md）—— 白色画布 + 黑色主按钮 + 中性灰 + 蓝色仅作强调。
-        // 浅色模式：600 为主按钮（#111111）；暗色模式：500 为主按钮（Cal 蓝 #3b82f6）。
+        // 设计系统：.com（DESIGN.md）—— 白色画布 + 黑色主按钮 + 中性灰 + 蓝色仅作强调。
+        // 浅色模式：600 为主按钮（#111111）；暗色模式：500 为主按钮（ 蓝 #3b82f6）。
         brand: {
           DEFAULT: '#111111',
           50: '#f8f9fa',
@@ -24,7 +24,7 @@ export default {
           900: '#111111',
           950: '#0a0a0a',
         },
-        // Cal 语义令牌（与 DESIGN.md 一一对应）
+        //  语义令牌（与 DESIGN.md 一一对应）
         canvas: '#ffffff',
         'surface-soft': '#f8f9fa',
         'surface-card': '#f5f5f5',
@@ -43,7 +43,7 @@ export default {
           warning: '#f59e0b',
           error: '#ef4444',
         },
-        // 近黑：全局正文色（Cal ink）
+        // 近黑：全局正文色（ ink）
         black: '#111111',
       },
       fontFamily: {
@@ -55,7 +55,7 @@ export default {
         title: '-0.02em',
       },
       boxShadow: {
-        // Cal：克制的中性阴影（无彩色荧光）；x 系列为多层叠加，更自然
+        // 克制的中性阴影（无彩色荧光）；x 系列为多层叠加，更自然
         brand: '0 1px 2px rgba(17, 17, 17, 0.08)',
         'brand-hover': '0 3px 10px rgba(17, 17, 17, 0.14)',
         card: '0 1px 2px rgba(16, 17, 19, 0.05)',

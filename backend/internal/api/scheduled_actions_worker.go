@@ -9,7 +9,7 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// scheduledActionsWorker 容器级定时启停任务调度器（对齐 Virtualizor act=self_shutdown）。
+// scheduledActionsWorker 容器级定时启停任务调度器（对齐主流面板语义）。
 //
 // 设计目标：
 //   - 每分钟扫描一次 ScheduleActions，命中 ExecuteAt 且 Enabled=true 的任务。
@@ -163,7 +163,7 @@ func executeScheduledAction(a config.ScheduledAction) {
 	log.Printf("scheduled-action %s: 容器 %d %s 成功", a.ID, c.ID, a.Type)
 }
 
-// poweroffByRuntime 容器硬关机（断电等价），对齐 Virtualizor act=poweroff。
+// poweroffByRuntime 容器硬关机（断电等价），对齐主流面板语义。
 // 不复用 stopByRuntime：stop 是优雅关机（acpid），poweroff 是立即切断电源（仅 KVM）。
 // LXC 容器没有真正的"硬断电"语义，复用 stop。
 func poweroffByRuntime(id int) error {

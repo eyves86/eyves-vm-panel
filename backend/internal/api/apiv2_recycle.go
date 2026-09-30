@@ -1,8 +1,8 @@
 package api
 
-// apiv2_recycle.go —— API v2：回收站（软删除）与批量操作扩展（NetJett 差距收口）。
+// apiv2_recycle.go —— API v2：回收站（软删除）与批量操作扩展（同类商业面板 差距收口）。
 //
-// 回收站（对齐 NetJett/魔方云）：
+// 回收站（对齐 同类商业面板/同类商业面板）：
 //	DELETE /api/v2/instances/{id}          默认软删除（进回收站）；
 //	                                       ?purge=true 才真销毁（计费终止/资源释放语义）
 //	GET    /api/v2/recycle-bin             回收站列表
@@ -31,9 +31,9 @@ func init() {
 	registerV2("GET /api/v2/recycle-bin", v2Auth(v2RecycleBinList))
 	registerV2("POST /api/v2/instances/{id}/restore", v2Auth(v2InstanceRestore))
 	registerV2("POST /api/v2/instances/{id}/purge", v2Auth(v2InstancePurge))
-	// CSV 导出（NetJett export_csv 对齐）：/api/v2/instances/export.csv
+	// CSV 导出（同类商业面板 export_csv 对齐）：/api/v2/instances/export.csv
 	registerV2("GET /api/v2/instances/export.csv", v2Auth(v2InstancesExportCSV))
-	// 弹性 IP 独立绑定（NetJett elastic_ip attach/detach 对齐）：
+	// 弹性 IP 独立绑定（同类商业面板 elastic_ip attach/detach 对齐）：
 	// 在 IP 池资源上直接绑定/解绑实例，不必经过“实例 public_ipv4_count”间接语义。
 	registerV2("POST /api/v2/ip-pools/attach", v2Auth(v2IPPoolAttach))
 	registerV2("POST /api/v2/ip-pools/detach", v2Auth(v2IPPoolDetach))
@@ -206,7 +206,7 @@ func v2InstancesBatchExtended(w http.ResponseWriter, r *http.Request, action str
 }
 
 // ---------------------------------------------------------------------------
-// CSV 导出（NetJett clouds/export_csv 对齐）
+// CSV 导出（同类商业面板 clouds/export_csv 对齐）
 // ---------------------------------------------------------------------------
 
 // v2InstancesExportCSV GET /api/v2/instances/export.csv
@@ -265,7 +265,7 @@ func listContainersFilterRecycledV2(containers []config.Container, r *http.Reque
 }
 
 // ---------------------------------------------------------------------------
-// 弹性 IP 独立绑定（NetJett elastic_ip attach/detach 对齐）
+// 弹性 IP 独立绑定（同类商业面板 elastic_ip attach/detach 对齐）
 // ---------------------------------------------------------------------------
 
 // v2IPPoolAttach POST /api/v2/ip-pools/attach {address, instance_id}

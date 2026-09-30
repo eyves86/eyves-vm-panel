@@ -208,7 +208,7 @@ type Container struct {
 	PolicyBlockedReason           string         `json:"policy_blocked_reason,omitempty"`
 	PolicyBlockedAt               string         `json:"policy_blocked_at,omitempty"`
 	OwnerSubUserID                string         `json:"owner_sub_user_id,omitempty"`
-	// RecycledAt 非空 = 实例在回收站（软删除，NetJett/魔方云同款能力）：
+	// RecycledAt 非空 = 实例在回收站（软删除，同类商业面板/同类商业面板同款能力）：
 	// 列表/统计默认排除，数据面不动；恢复=清标记，彻底删除（purge）才真销毁。
 	RecycledAt        string `json:"recycled_at,omitempty"`
 	CloudInitUserData string `json:"cloud_init_user_data,omitempty"`
@@ -222,7 +222,7 @@ type Container struct {
 	OptionalISOID   string `json:"optional_iso_id,omitempty"`
 	OptionalISOPath string `json:"optional_iso_path,omitempty"`
 	// Remark 是实例备注（运维标注，供列表检索）；Locked 锁定后禁止删除/重装等
-	// 破坏性操作（企业面板通用属性，Virtualizor/SolusVM 均提供）。
+	// 破坏性操作（企业面板通用属性，主流面板/同类面板 均提供）。
 	Remark string `json:"remark,omitempty"`
 	Locked bool   `json:"locked,omitempty"`
 	// RootVolumeID 根卷 ID（P0-1 存储抽象层）：新容器在 dir 后端池上创建的根目录卷。
@@ -252,7 +252,7 @@ type SSHKey struct {
 	LastUsedAt  string `json:"last_used_at,omitempty"`
 }
 
-// Recipe 是用户预定义的 bash 脚本模板（类比 Virtualizor Recipes）。
+// Recipe 是用户预定义的 bash 脚本模板（类比 主流面板 Recipes）。
 // Admin 创建的 recipe 可以标记 scope="shared"，所有 subuser 可见。
 // Subuser 创建的 recipe 默认 scope="private"，仅自己可见。
 type Recipe struct {
@@ -1349,8 +1349,8 @@ type Node struct {
 	AllowPrivateAddr bool `json:"allow_private_addr,omitempty"`
 }
 
-// NodeGroup 是一个逻辑节点分组（迁移池 / 策略池）：Virtualizor 叫 Server Group，
-// SolusVM 叫 Node Group。调度器可按 NodeGroup 过滤；同一 NodeGroup 内的节点
+// NodeGroup 是一个逻辑节点分组（迁移池 / 策略池）：主流面板 叫 Server Group，
+// 同类面板 叫 Node Group。调度器可按 NodeGroup 过滤；同一 NodeGroup 内的节点
 // 共享迁移目标范围与资源策略。
 type NodeGroup struct {
 	ID          string `json:"id"`
@@ -1360,7 +1360,7 @@ type NodeGroup struct {
 	CreatedAt   string `json:"created_at,omitempty"`
 }
 
-// Cluster 是一个跨 NodeGroup 的高可用 / 迁移域：Virtualizor 叫 Cluster。
+// Cluster 是一个跨 NodeGroup 的高可用 / 迁移域：主流面板 叫 Cluster。
 // Cluster 内可包含多个 NodeGroup，调度器在 Cluster 范围内挑选目标节点；
 // 容器显式迁移时，默认只允许在同一 Cluster 内跨 NodeGroup 移动。
 type Cluster struct {
@@ -1625,14 +1625,14 @@ type EyvescloudConfig struct {
 	// DiskOvercommitRatio 磁盘超售比：磁盘累计配额上限 = 宿主磁盘总量 × 该值（1.0=不超售）。
 	// 用于企业大批量开通时放宽磁盘配额校验，默认 1.0 不超售。
 	DiskOvercommitRatio float64 `json:"disk_overcommit_ratio"`
-	// Recipes 用户自定义 bash 脚本模板（类比 Virtualizor Recipes）。
+	// Recipes 用户自定义 bash 脚本模板（类比 主流面板 Recipes）。
 	// 支持 admin 和 subuser 创建；subuser 仅能看到自己的 + admin 共享的。
 	Recipes []Recipe `json:"recipes,omitempty"`
 	// Webhooks 事件订阅端点（企业集成：容器状态变更回调，类比 AWS EventBridge / GitHub Webhooks）。
 	// 每次容器状态变化（running/stopped）会向订阅 URL POST 签名 JSON 载荷。
 	Webhooks []WebhookSubscription `json:"webhooks,omitempty"`
 
-	// ScheduledActions 容器级定时启停任务（对齐 Virtualizor act=self_shutdown）。
+	// ScheduledActions 容器级定时启停任务（对齐主流面板语义）。
 	// 由主控定时巡检：ExecuteAt 到达且 Enabled=true 时调用容器启/停/重启/硬关机。
 	// 每容器最多 10 条，由创建者在请求接口按 container:power scope 写入。
 	ScheduledActions []ScheduledAction `json:"scheduled_actions,omitempty"`
@@ -1653,7 +1653,7 @@ type EyvescloudConfig struct {
 	BrandPoweredHidden bool   `json:"brand_powered_hidden,omitempty"`
 }
 
-// ScheduledAction 容器级定时任务（与 Virtualizor act=self_shutdown 对齐）。
+// ScheduledAction 容器级定时任务（与 主流面板 act=self_shutdown 对齐）。
 type ScheduledAction struct {
 	ID            string `json:"id"`
 	ContainerID   int    `json:"container_id"`

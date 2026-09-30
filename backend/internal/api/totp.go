@@ -127,7 +127,7 @@ func TOTPNow() uint64 {
 	return uint64(time.Now().Unix() / totpPeriod)
 }
 
-// totpSetupURI 生成用于录入 Authenticator（Google Authenticator 兼容）的 otpauth:// URI。
+// totpSetupURI 生成用于录入 TOTP 验证器的 otpauth:// URI（标准协议，兼容任意验证器 App）。
 func totpSetupURI(secret, account string) string {
 	label := url.PathEscape(totpIssuer + ":" + account)
 	q := url.Values{}
@@ -140,7 +140,7 @@ func totpSetupURI(secret, account string) string {
 }
 
 // totpQRDataURL 将 otpauth:// URI 渲染为 PNG 二维码，返回 data:image/png;base64 数据 URL，
-// 供用户用 Google Authenticator 等 App 扫码录入。出错时返回空字符串（前端回退为手动输入）。
+// 供用户用任意 TOTP 验证器 App 扫码录入。出错时返回空字符串（前端回退为手动输入）。
 func totpQRDataURL(otpauthURI string) string {
 	if otpauthURI == "" {
 		return ""

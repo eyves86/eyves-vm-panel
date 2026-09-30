@@ -254,7 +254,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if !requireScope(w, r, "container:delete") {
 			return
 		}
-		// 回收站语义（NetJett/魔方云同款）：DELETE 默认软删除（进回收站，可恢复），
+		// 回收站语义（同类商业面板/同类商业面板同款）：DELETE 默认软删除（进回收站，可恢复），
 		// ?purge=true 才真正销毁。计费系统 Terminate 用 purge（释放资源语义）。
 		if strings.EqualFold(r.URL.Query().Get("purge"), "true") {
 			if routeToAgent("destroy", nil) {
@@ -660,33 +660,33 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updateReverseDNS(w, r, id)
-	// === Virtualizor 风格客户端容器自服务端点（v1.9.x） ===
+	// === 主流面板风格客户端容器自服务端点（v1.9.x） ===
 	case action == "stats" && r.Method == http.MethodGet:
-		// 一站式监控：CPU/RAM/Disk/Inodes/Uptime（Virtualizor act=monitor）。
+		// 一站式监控：CPU/RAM/Disk/Inodes/Uptime（主流面板 act=monitor）。
 		handleContainerStats(w, r, c)
 	case action == "bandwidth" && r.Method == http.MethodGet:
-		// 流量明细（Virtualizor act=bandwidth）。
+		// 流量明细（主流面板 act=bandwidth）。
 		handleContainerBandwidth(w, r, c)
 	case action == "processes" && r.Method == http.MethodGet:
-		// 进程列表（Virtualizor act=processes）。
+		// 进程列表（主流面板 act=processes）。
 		handleContainerProcesses(w, r, c)
 	case action == "processes/kill" && r.Method == http.MethodPost:
-		// 批量终止进程（Virtualizor act=processes + sel_proc[]）。
+		// 批量终止进程（主流面板 act=processes + sel_proc[]）。
 		handleContainerProcessKill(w, r, c)
 	case action == "services" && r.Method == http.MethodGet:
-		// 服务列表（Virtualizor act=services）。
+		// 服务列表（主流面板 act=services）。
 		handleContainerServices(w, r, c)
 	case action == "services" && r.Method == http.MethodPost:
-		// 服务启停重启（Virtualizor act=services + start_x/stop_x）。
+		// 服务启停重启（主流面板 act=services + start_x/stop_x）。
 		handleContainerServiceAction(w, r, c)
 	case action == "hvm-settings" && r.Method == http.MethodGet:
-		// KVM HVM 设置读取（Virtualizor act=hvmsettings）。
+		// KVM HVM 设置读取（主流面板 act=hvmsettings）。
 		handleContainerHVMSettingsGet(w, r, c)
 	case action == "hvm-settings" && r.Method == http.MethodPut:
 		// KVM HVM 设置写入。
 		handleContainerHVMSettingsPut(w, r, c)
 	case action == "scheduled-actions" && r.Method == http.MethodGet:
-		// 定时任务列表（Virtualizor act=self_shutdown）。
+		// 定时任务列表（主流面板 act=self_shutdown）。
 		handleScheduledActionsList(w, r, c)
 	case action == "scheduled-actions" && r.Method == http.MethodPost:
 		// 创建定时任务。
@@ -695,21 +695,21 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		// 取消定时任务。scheduled-actions/ 子路径在 action 中以 `scheduled-actions/{id}` 形式传入。
 		handleScheduledActionDelete(w, r, c, strings.TrimPrefix(action, "scheduled-actions/"))
 	case action == "rescue" && r.Method == http.MethodPost:
-		// KVM 救援模式进入/退出（Virtualizor Rescue Mode）。
+		// KVM 救援模式进入/退出（主流面板 Rescue Mode）。
 		// 请求体：{"enabled": true/false, "iso_id": "..."}
 		if !requireScope(w, r, "container:power") {
 			return
 		}
 		handleContainerRescuePost(w, r, c)
 	case action == "iso" && r.Method == http.MethodPost:
-		// KVM ISO 挂载/卸载（Virtualizor Enduser ISO）。
+		// KVM ISO 挂载/卸载（主流面板 Enduser ISO）。
 		// 请求体：{"iso_id": "...", "attach": true/false}
 		if !requireScope(w, r, "container:power") {
 			return
 		}
 		handleContainerISOActionPost(w, r, c)
 	case action == "vnc-ticket" && r.Method == http.MethodPost:
-		// KVM VNC 控制台票据（Virtualizor VNC Console）。
+		// KVM VNC 控制台票据（主流面板 VNC Console）。
 		// 请求体：{}（不需要参数，票据绑定当前容器）
 		// 权限：terminal:vnc（和顶层 /api/vnc-ticket 一致）。
 		if !requireScope(w, r, "terminal:vnc") {
@@ -717,7 +717,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		}
 		handleContainerVNCTicketPost(w, r, c)
 	case action == "recipes/execute" && r.Method == http.MethodPost:
-		// 在当前容器上执行 Recipe（Virtualizor Startup Script）。
+		// 在当前容器上执行 Recipe（主流面板 Startup Script）。
 		// 请求体：{"recipe_id": "recipe-xxx", "timeout": 120}
 		// 权限：container:power（执行脚本会改容器内文件）。
 		if !requireScope(w, r, "container:power") {
@@ -1757,7 +1757,7 @@ func HandleVersion(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// changeContainerHostname 实时修改运行中容器的 hostname（类比 Virtualizor Change Hostname）。
+// changeContainerHostname 实时修改运行中容器的 hostname（类比 主流面板 Change Hostname）。
 // 运行中的 LXC 走 lxc-attach；运行中的 KVM 优先 virsh set-hostname，回退 SSH 进入。
 // 停止的容器报错提示（hostname 需要运行时才能实时生效）。
 func changeContainerHostname(w http.ResponseWriter, r *http.Request, id int, c *config.Container) {
@@ -1798,7 +1798,7 @@ func changeContainerHostname(w http.ResponseWriter, r *http.Request, id int, c *
 	})
 }
 
-// changeContainerVNCPassword 修改 KVM VM 的 VNC 密码（类比 Virtualizor Change VNC Password）。
+// changeContainerVNCPassword 修改 KVM VM 的 VNC 密码（类比 主流面板 Change VNC Password）。
 // 请求体：{ password: "xxx" } 或 { password: "" } 清空密码。
 // 同时持久化 VNCPassword 到 config。运行中 VM 尝试热更新。
 func changeContainerVNCPassword(w http.ResponseWriter, r *http.Request, id int, c *config.Container) {
@@ -1854,7 +1854,7 @@ func changeContainerVNCPassword(w http.ResponseWriter, r *http.Request, id int, 
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: msg})
 }
 
-// cloneContainer 克隆容器（类比 Virtualizor Clone VPS）。
+// cloneContainer 克隆容器（类比 主流面板 Clone VPS）。
 // 请求体：{ name (必填), mode: "full"|"linked", start_after_clone: bool }
 // 分配新 ID/UUID/MAC/VNCPort/SSHPort，拷贝源容器的配额/网络/快照/SSH Key 绑定等配置。
 func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
@@ -2139,7 +2139,7 @@ func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *co
 }
 
 // ---------------------------------------------------------------------------
-// 回收站（软删除，NetJett/魔方云同款能力）
+// 回收站（软删除，同类商业面板/同类商业面板同款能力）
 // ---------------------------------------------------------------------------
 
 // listContainers 增加回收站视图：?recycled=true 只返回回收站实例。

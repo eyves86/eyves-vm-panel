@@ -215,7 +215,7 @@ func HandleTaskCancel(w http.ResponseWriter, r *http.Request, id string) {
 	}})
 }
 
-// HandleTaskCompat 返回 Virtualizor 风格字段视图：GET /api[/v1]/tasks/compat。仅管理员可访问。
+// HandleTaskCompat 返回 主流面板风格字段视图：GET /api[/v1]/tasks/compat。仅管理员可访问。
 func HandleTaskCompat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -375,7 +375,7 @@ func parseHistoryInt(raw string, fallback int) int {
 	return n
 }
 
-// compatActionName 把内部任务类型映射为 Virtualizor 风格的 action 名。
+// compatActionName 把内部任务类型映射为 主流面板风格的 action 名。
 func compatActionName(taskType string) string {
 	switch strings.ToLower(strings.TrimSpace(taskType)) {
 	case "create":
@@ -395,7 +395,7 @@ func compatActionName(taskType string) string {
 	}
 }
 
-// compatStatusNumber 把任务状态映射为 Virtualizor 风格数字状态码。
+// compatStatusNumber 把任务状态映射为 主流面板风格数字状态码。
 func compatStatusNumber(status string) int {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "pending", "running":

@@ -104,7 +104,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/turnstile/config", corsMiddleware(api.HandleTurnstileConfig))
 	mux.HandleFunc("/api/turnstile/settings", corsMiddleware(api.AdminMiddleware(api.HandleTurnstileSettings)))
 	mux.HandleFunc("/api/turnstile/verify", corsMiddleware(api.AdminMiddleware(api.HandleTurnstileVerify)))
-	// 管理员两步验证（TOTP / Google Authenticator）
+	// 管理员两步验证（TOTP）
 	mux.HandleFunc("/api/2fa/status", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FAStatus)))
 	mux.HandleFunc("/api/2fa/setup", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FASetup)))
 	mux.HandleFunc("/api/2fa/enable", corsMiddleware(api.AdminSessionMiddleware(api.Handle2FAEnable)))
@@ -722,9 +722,9 @@ func Run() error {
 	api.StartInstanceBackupScheduler()
 	api.StartBackupPlanScheduler()
 	api.StartUptimeTracking()
-	// 容器级定时启停任务（对齐 Virtualizor act=self_shutdown）。
+	// 容器级定时启停任务（对齐主流面板语义）。
 	api.StartScheduledActionsWorker()
-	// 回收站自动清理（NetJett 对齐）：每小时扫描超期软删除实例并入真删除任务。
+	// 回收站自动清理（同类商业面板 对齐）：每小时扫描超期软删除实例并入真删除任务。
 	api.StartRecyclePurgeWorker()
 	// 事件订阅引擎：容器状态变更 → Webhook 回调（幂等注册）。
 	api.StartWebhookEngine()

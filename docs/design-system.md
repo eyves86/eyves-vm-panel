@@ -1,54 +1,90 @@
-# 设计系统（Design System）
+# EyvesCloud 设计系统
 
-> 来源：项目根 [`DESIGN.md`](../DESIGN.md)，取自 [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md)
-> 中 **cal** 的设计分析（`design-md/cal/DESIGN.md`，https://getdesign.md/cal/design-md ）。
-> 全量 74 套备选位于 `/var/minis/shared/awesome-design-md/design-md/`，如需切换仅需替换 `DESIGN.md`
-> 与下表的令牌映射。
+> 本文档是面板前端的唯一设计规范来源。所有页面、组件、新功能都必须遵循本规范，
+> 保证跨模块的视觉与交互一致性。
 
-## 1. 风格定位（Cal.com）
+## 1. 设计定位
 
-- **白画布 + 黑色主按钮**：主操作一律黑底白字（`#111111` / hover `#242424`），不用彩色 CTA
-- **中性灰层级**：`canvas #ffffff` → `surface-soft #f8f9fa` → `surface-card #f5f5f5` → `surface-strong #e5e7eb`
-- **发丝描边优先**：卡片/表格用 `hairline #e5e7eb` 分隔，不用重阴影
-- **蓝色仅作强调**：`#3b82f6` 用于聚焦环、链接、暗色模式主按钮；不铺面积
-- **软圆角 + 宽松留白**：卡片 ~12px 圆角，区块间距 24px
-- **字体**：Inter（body/title），标题 600 字重 + 轻微负字距（Cal Sans 用系统栈替代）
+**专业、克制、可长期使用的基础设施控制台。**
 
-## 2. 令牌映射（Cal → 本项目）
+- 色彩克制：中性灰阶 + 单一强调色，不用大面积彩色填充
+- 排版精确：固定的字阶与字距，数据用等宽数字（tabular-nums）
+- 留白有节奏：区块间距统一 24px，卡片内边距 16–24px
+- 动效有意义：150–300ms，只用于表达状态变化与方向，且支持系统级减弱动画
+- 微交互处处有反馈：悬停、按压、聚焦、加载、成功/失败
 
-| Cal 令牌 | 值 | 本项目 | 用途 |
+## 2. 设计令牌
+
+### 2.1 颜色
+
+| 令牌 | 亮色 | 暗色 | 用途 |
 | --- | --- | --- | --- |
-| `primary` / `primary-active` | `#111111` / `#242424` | `bg-brand-600` / `bg-brand-700` | 主按钮（浅色） |
-| `brand-accent` | `#3b82f6` | `bg-brand-500`（暗色主按钮）/ `cal-accent` | 强调、聚焦环 |
-| `ink` / `body` / `muted` | `#111111` / `#374151` / `#6b7280` | `text-ink` / `text-body` / `text-muted` | 文字层级 |
-| `canvas` / `surface-soft` / `surface-card` / `surface-strong` | `#ffffff` / `#f8f9fa` / `#f5f5f5` / `#e5e7eb` | `bg-canvas` 等 | 背景层级 |
-| `hairline` / `hairline-soft` | `#e5e7eb` / `#f3f4f6` | `border-hairline` | 描边/分隔 |
-| `surface-dark` / `surface-dark-elevated` | `#101010` / `#1a1a1a` | 暗色 `--surface` / `--soft` | 暗色背景 |
-| `on-dark` / `on-dark-soft` | `#ffffff` / `#a1a1aa` | 暗色文字 | 暗色文字层级 |
-| `success` / `warning` / `error` | `#10b981` / `#f59e0b` / `#ef4444` | `cal-success` 等 | 状态色 |
+| `canvas` | `#ffffff` | `#0a0a0a` | 页面/卡片底色 |
+| `surface-soft` | `#f8f9fa` | `#1a1a1a` | 分区底色、次级容器 |
+| `surface-card` | `#f5f5f5` | `#141414` | 卡片内嵌块 |
+| `hairline` | `#e5e7eb` | `#262626` | 发丝分隔线、描边 |
+| `primary` | `#111111` | `#ffffff`（文字反相） | 主操作按钮、主标题 |
+| `muted-fg` | `#6b7280` | `#a1a1aa` | 次级文字（对比度 ≥4.5:1） |
+| `accent` | `#3b82f6` | `#60a5fa` | 链接、聚焦环、暗色主按钮 |
+| 语义色 | `emerald/amber/red` | 同族加深 | 成功/警告/危险 |
 
-暗色模式遵循 Cal 的中性近黑（`#101010` 画布、`#1a1a1a` 卡片、`#262626` 描边），主按钮用 Cal 蓝。
+规则：
+- 主操作一律 `primary`（黑底白字 / 暗色反相），不使用彩色 CTA
+- 强调色只用于聚焦环、链接、少量徽标；不铺面积
+- 正文文字对比度必须 ≥ 4.5:1（大字 ≥ 3:1），新增颜色需实测
 
-## 3. 必须遵守的守则（摘自 DESIGN.md）
+### 2.2 字体
 
-- 主 CTA 用黑色（暗色下用 Cal 蓝），**不要新增彩色按钮**
-- 卡片 = 白底 + 1px 发丝描边 + 极轻阴影；禁止彩色荧光阴影
-- 层级靠底色深浅与描边，不靠投影大小
-- 数字/指标右对齐，等宽字体；表格行高紧凑（32–40px）
-- 间距节奏：区块 24px（`space-y-6`）、卡片内 16–20px
-- 徽章用语义色（绿=在线/成功、红=离线/错误、灰=中性标签）
-- 响应式：≥1024 三栏密度、768–1024 两栏、<768 单栏
+| 角色 | 字体 | 规格 |
+| --- | --- | --- |
+| 界面正文 | Inter Variable（本地托管） | 13px / 行高 20px |
+| 次级说明 | Inter Variable | 11–12px，`muted-fg` |
+| 标题 | Inter Variable 600 | 16px，字距 -0.02em |
+| 数据/代码 | JetBrains Mono（本地托管） | 12px，`tabular-nums` |
 
-## 4. 已落地的改动（v2.2.26）
+字阶收敛为 5 档：**11 / 12 / 13 / 14 / 16**（新增字号需在本文档登记）。
 
-- `DESIGN.md` 换为 Cal 版本；`frontend/tailwind.config.js` 令牌换为 Cal 语义集合
-- `index.css`：全局变量（accent/text/muted/surface/line）、主按钮（去荧光、黑色 + 克制阴影）、
-  次级按钮 hover 描边、输入框聚焦环（Cal 蓝）、暗色覆盖层（紫调 → 中性近黑）
-- 效果：主按钮黑底白字、页面底 `#f8f9fa`、卡片白底发丝描边、暗色中性化
+### 2.3 圆角与阴影
 
-## 5. 后续按此执行的清单
+| 令牌 | 值 | 用途 |
+| --- | --- | --- |
+| `rounded.md` | 8px | 输入框、按钮、分段控件段 |
+| `rounded.xl` | 12px | 卡片、面板 |
+| `rounded.2xl` | 16px | 弹窗、抽屉 |
+| `shadow.card` | 1px 2px 5% | 静态卡片 |
+| `shadow.card-hover` | 2 层叠加 | 卡片悬停抬升 |
+| `shadow.overlay` | 2 层叠加 + 大扩散 | 弹窗、抽屉 |
 
-- [x] DESIGN.md / Tailwind 令牌 / 全局样式对齐 Cal
-- [ ] 存量页面把硬编码色值逐步替换为语义令牌（不破坏观感）
-- [ ] 卡片圆角 8px → 12px 的渐进替换（Cal ~12px）
-- [ ] 新增页面直接使用 `ink/body/muted/hairline/surface-*` 令牌
+### 2.4 动效
+
+| 令牌 | 值 | 用途 |
+| --- | --- | --- |
+| `motion-fast` | 150ms | 颜色/边框/背景过渡 |
+| `motion-base` | 200ms | 悬停位移、遮罩淡入 |
+| `motion-slow` | 300ms | 弹窗缩放、步骤切换 |
+| 缓动 | `cubic-bezier(.22,1,.36,1)`（进入）/ `ease`（退出） | — |
+
+强制要求：所有动效必须包裹 `@media (prefers-reduced-motion: reduce)` 降级（已全局处理）。
+
+## 3. 组件规范
+
+- **按钮**：高度 36px（常规）/ 40px（表单主操作）；悬停加深 + 阴影、按压 `scale(.98)`；箭头图标在悬停时位移 2px
+- **输入框**：高度 40px，聚焦时 3px 柔和聚焦环（`primary` 20% 透明）
+- **卡片**：`rounded.xl` + `hairline` 描边；可点击卡片悬停抬升（`shadow.card-hover`）
+- **表格**：表头 11px 大写 + 字距 0.06em，行高 ≥44px，悬停行浅底，数值列 `tabular-nums`
+- **弹窗**：遮罩 `rgba(16,17,19,.45)` + 4px 虚化；卡片缩放入场（0.98→1）
+- **步骤条**：横向，编号圆点（当前：实心 + 4px 光环；完成：勾选 + 语义色），连接线随进度变色，已完成的步骤可回跳
+- **空状态**：图标 + 标题 + 说明 + 主操作按钮
+- **反馈**：Toast 滑入（4.2s 自动消失）、骨架屏使用 `shimmer` 动画
+
+## 4. 无障碍与响应式
+
+- 键盘可达：所有交互元素 `focus-visible` 有清晰聚焦环；步骤条使用 `aria-current`、分段控件使用 `aria-pressed`
+- 移动端：表单在 <640px 自动单列；弹窗贴底（`rounded-t-2xl`）；严禁横向溢出
+- 双主题：亮/暗色对比度均需达标，暗色不是简单反相（语义色需加深）
+
+## 5. 变更流程
+
+1. 新增令牌/字号/颜色 → 先更新本文档，再改 `index.css` 与 `tailwind.config.js`
+2. 页面开发 → 复用既有组件与工具类，禁止内联魔法值（颜色用令牌、间距用 4px 网格）
+3. 合入前自检 → 对比度、字阶、控件高度、响应式溢出、暗色模式、动效降级

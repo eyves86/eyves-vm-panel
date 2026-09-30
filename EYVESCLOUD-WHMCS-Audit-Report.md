@@ -43,7 +43,7 @@
 |---|------|------|---------|
 | G1 | WHMCS 版本、PHP 版本未提供 | AdminServicesTabFields / ClientAreaAllowedFunctions 需要 WHMCS 8+/9+ | 假设 WHMCS 8.0+（代码 APIVersion 1.1 佐证 eyvescloud.php:33） |
 | G2 | 生产环境反代是否记录 query string 未知 | 影响 F4（install_key 进 URL）的实际暴露面 | 按"会记录"保守评估 |
-| G3 | 魔方云 API 官方文档不可公开访问 | 竞品矩阵该列基于国内 IDCSystem 类系统通用能力 + 魂环/WHMCS 生态常见实现 | 标注"推断"，仅 Virtualizor/SolusVM 给官方文档来源 |
+| G3 | 同类商业面板 API 官方文档不可公开访问 | 竞品矩阵该列基于国内 IDCSystem 类系统通用能力 + 魂环/WHMCS 生态常见实现 | 标注"推断"，仅 主流面板/同类面板 给官方文档来源 |
 | G4 | agent 二进制分发渠道完整性未验证 | install.sh 下载 agent 二进制仅做可执行性自检 | ✅ 已修复（P1-7）：主控分发附带 X-Binary-SHA256 头，安装脚本强制 sha256sum 比对 |
 | G5 | 多租户 (tenant) 功能的线上使用规模未知 | F8（内存/CPU 无累计配额）严重度依赖租户数量 | 按多租户已启用评估 |
 | G6 | 面板部署拓扑（主控是否公网、agent 是否内网）未知 | F9（主控→agent 默认 http://）实际风险 | 按主控-agent 同内网保守评估为 Low |
@@ -297,7 +297,7 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 
 1. **短期（纯插件侧）**：handlers/api.php 加 domainstatus 检查 + CSRF token（F5）；ChangePackage 前置 disk 只增预检
 2. **中期（面板侧）**：F1/F1a 的 Suspended 统一拦截；F3 注册审计；F4 key 传输改造
-3. **长期**：快照/备份/防火墙管理挂到 WHMCS 客户区（面板 handlers/api.php 已具备对应端点，仅缺 UI 入口——对齐 Virtualizor 客户区能力）
+3. **长期**：快照/备份/防火墙管理挂到 WHMCS 客户区（面板 handlers/api.php 已具备对应端点，仅缺 UI 入口——对齐 主流面板 客户区能力）
 
 ---
 
@@ -337,11 +337,11 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 
 ## 八、竞品矩阵
 
-> 竞品标注：✅ 支持 / ⚠️ 部分 / ❌ 不支持 / 未知。Virtualizor 文档：virtualizor.com/docs；SolusVM 2：docs.solusvm.com；魔方云列基于国内 IDCSystem 类通用能力（**推断**，G3）。
+> 竞品标注：✅ 支持 / ⚠️ 部分 / ❌ 不支持 / 未知。主流面板 文档：（第三方文档）；同类面板 2：（第三方文档）；同类商业面板列基于国内 IDCSystem 类通用能力（**推断**，G3）。
 
 ### 8.1 API 能力矩阵
 
-| 能力 | EYVESCLOUD | 魔方云(推断) | Virtualizor | SolusVM 2 |
+| 能力 | EYVESCLOUD | 同类商业面板(推断) | 主流面板 | 同类面板 2 |
 |------|-----------|--------|-------------|-----------|
 | 虚拟化 | LXC + KVM | KVM | OpenVZ/KVM/LXC | KVM |
 | Resize（升降级） | ✅ **本轮已闭环**（resource-limit/traffic-limit/expiry） | ✅ | ✅ | ✅ |
@@ -358,7 +358,7 @@ SQLi ✅ 无 | XSS ✅ 无 | CSRF ⚠️ F5 | SSRF ✅（面板 URL 管理员可
 
 ### 8.2 WHMCS 模块能力矩阵
 
-| WHMCS 功能 | EYVESCLOUD | 魔方云(推断) | Virtualizor | SolusVM 2 |
+| WHMCS 功能 | EYVESCLOUD | 同类商业面板(推断) | 主流面板 | 同类面板 2 |
 |-----------|-----------|--------|-------------|-----------|
 | 全生命周期 8 函数 | ✅（本轮 ChangePackage 闭环） | ✅ | ✅ | ✅ |
 | UsageUpdate 流量同步 | ✅ | ✅ | ✅ | ✅ |
@@ -457,7 +457,7 @@ php -l（模块全部 PHP 文件）              → No syntax errors
 
 1. `store_sqlite.go`：`saveConfigToDB` 与卷记录函数在 `dbMu` **锁外**判 `db == nil`、锁内使用——与 `CloseConfigDB`（锁内置 nil）构成 check-then-act 竞态，后台任务队列 goroutine 命中时对 nil `*sql.DB` 调 `Begin()` panic。修复：nil 检查移入锁内（`openConfigDB` 的无锁写 `db = next` 同步加锁）。
 2. `config.go`：`FindContainer`/`SaveConfig`/`SaveTasks`/`AddAuditLog`/`AddAuditLogFull` 在测试 teardown 把 `AppConfig` 还原为 nil 后被后台 goroutine 调用时解引用 nil。修复：各入口加 nil 防护，后台任务优雅失败而非崩溃。
-3. `container_virtualizor_test.go`：cleanup 裸写 `config.AppConfig = previous` 与后台 goroutine 读构成数据竞争（`-race` 必报）。修复：改持 `AppConfigMu` 恢复。
+3. `container_endpoints_test.go`：cleanup 裸写 `config.AppConfig = previous` 与后台 goroutine 读构成数据竞争（`-race` 必报）。修复：改持 `AppConfigMu` 恢复。
 
 ### 10.5 P1 修复回归记录（2026-09-26）
 
@@ -544,7 +544,7 @@ G4（P1-7）实现要点：
 | store_password 降级 | whmcs/module/helpers.php:516-533 |
 | 磁盘累计配额（仅磁盘） | backend/internal/api/resource_validation.go:16-34 |
 | 租户配额四维 | backend/internal/api/enterprise.go:1094-1135 |
-| Virtualizor Rescue/ISO/Enduser 文档 | virtualizor.com/docs/enduser/rescue-mode、/end-user-iso |
-| SolusVM 2 文档 | docs.solusvm.com |
+| 主流面板 Rescue/ISO/Enduser 文档 | （第三方文档）、/end-user-iso |
+| 同类面板 2 文档 | （第三方文档） |
 
-> 事实/推断标注：F1/F1a 的绕过路径为"代码路径成立"的推断（未起双节点实测），建议按 TC-01 实测确认；其余发现均有直接代码证据（事实）。魔方云列为推断（G3）。
+> 事实/推断标注：F1/F1a 的绕过路径为"代码路径成立"的推断（未起双节点实测），建议按 TC-01 实测确认；其余发现均有直接代码证据（事实）。同类商业面板列为推断（G3）。

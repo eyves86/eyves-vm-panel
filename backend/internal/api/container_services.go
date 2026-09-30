@@ -10,7 +10,7 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// serviceInfo 单个服务条目，对齐 Virtualizor act=services 输出。
+// serviceInfo 单个服务条目，对齐主流面板语义 输出。
 type serviceInfo struct {
 	Name     string `json:"name"`
 	State    string `json:"state"`     // running / stopped / failed / unknown
@@ -29,7 +29,7 @@ type servicesResponse struct {
 }
 
 // handleContainerServices 列出容器内 systemd 服务（GET /api/containers/{id}/services）。
-// 对齐 Virtualizor act=services。
+// 对齐主流面板语义。
 //
 // 权限：container:read scope。
 //
@@ -122,7 +122,7 @@ type serviceActionRequest struct {
 }
 
 // handleContainerServiceAction 单服务操作（POST /api/containers/{id}/services）。
-// 对齐 Virtualizor act=services + start_x/stop_x/restart_x。
+// 对齐主流面板语义 + start_x/stop_x/restart_x。
 //
 // 权限：container:power scope（写）。
 //

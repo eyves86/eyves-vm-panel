@@ -1256,7 +1256,7 @@ func (m *Manager) ReinstallContainer(id int, templateID string, authConfig ...lx
 	return m.StartContainer(id)
 }
 
-// CloneContainer 克隆 KVM VM（类比 Virtualizor Clone VPS）。
+// CloneContainer 克隆 KVM VM（类比 主流面板 Clone VPS）。
 // 流程：
 //  1) 停源 VM（如有）
 //  2) qemu-img convert 磁盘（可选 COW linked 模式）

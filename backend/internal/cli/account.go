@@ -60,7 +60,7 @@ func accountShow() error {
 	fmt.Println("=====================================")
 	fmt.Println("  管理员账号：", cfg.AdminUser)
 	if cfg.AdminTOTPEnabled {
-		fmt.Println("  两步验证：  已启用（登录需 Google Authenticator 动态口令）")
+		fmt.Println("  两步验证：  已启用（登录需 TOTP 动态口令）")
 	} else if cfg.AdminTOTPSecret != "" {
 		fmt.Println("  两步验证：  已生成密钥但未启用")
 	} else {

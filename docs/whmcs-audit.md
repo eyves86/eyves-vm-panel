@@ -36,7 +36,7 @@
 | 上游 OpenAPI/Swagger | 无；通过 `openapi_paths.go` 间接可推断（[backend/internal/api/openapi_paths.go:20-66](file:///workspace/backend/internal/api/openapi_paths.go#L20-L66)） |
 | 计费插件仓库 | `/workspace/billing-module/eyvescloud.php`（适配计费系统，函数命名遵循 WHMCS Module 规范） |
 | 上游 RBAC 完整规则 | 见 [internal/rbac/rbac.go:142-196](file:///workspace/backend/internal/rbac/rbac.go#L142-L196)（admin/owner/operator/readonly 四级；本报告基于 API Key scope 模型评估，因后者更适配 WHMCS 后端代理） |
-| 国内主流方案 / Virtualizor / SolusVM 对接模块 API 能力 | 未知/无法在本环境验证（沙箱外网受限） |
+| 国内主流方案 / 主流面板 / 同类面板 对接模块 API 能力 | 未知/无法在本环境验证（沙箱外网受限） |
 
 **无法验证的项已标记"未知"**。国内主流方案竞品对比部分基于公开 WHMCS 模块产品页常见能力（创建/删除/暂停/恢复/改密/重装/快照/备份/迁移/救援/VNC），逐条标注"未知/需补充材料"。
 
@@ -342,7 +342,7 @@ CREATE TABLE `mod_eyvescloud` (
 
 > 数据来源：基于公开 WHMCS Module 产品页常见能力；未在本环境验证，标注"未知"。
 
-| 能力 | 国内主流方案 | Virtualizor | SolusVM | eyves-vm-panel |
+| 能力 | 国内主流方案 | 主流面板 | 同类面板 | eyves-vm-panel |
 |---|---|---|---|---|
 | 创建/删除/启停/重启 | 已知 ✅ | 已知 ✅ | 已知 ✅ | ✅ |
 | 重装/救援 | 已知 ✅ | 已知 ✅ | 已知 ✅ | ✅ LXC/KVM 均支持 |

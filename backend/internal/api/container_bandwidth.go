@@ -14,7 +14,7 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// bandwidthResponse 容器流量明细，对齐 Virtualizor act=bandwidth 字段。
+// bandwidthResponse 容器流量明细，对齐主流面板语义 字段。
 // period="2025-09" 时返回该月按日的明细；"hourly" 返回 24 小时逐时明细。
 type bandwidthResponse struct {
 	ContainerID   int              `json:"container_id"`
@@ -41,7 +41,7 @@ type bandwidthPoint struct {
 }
 
 // handleContainerBandwidth 容器流量明细（GET /api/containers/{id}/bandwidth）。
-// 对齐 Virtualizor `act=bandwidth` 的月度明细返回。
+// 对齐主流面板语义 的月度明细返回。
 //
 // 数据源：被控 agent 优先返回 RRD / vnstat 聚合；本地 fallback 读
 // /sys/class/net/<iface>/statistics/{rx,tx}_bytes 差分（依赖 cgroup + ifb 镜像）。
@@ -84,7 +84,7 @@ func handleContainerBandwidth(w http.ResponseWriter, r *http.Request, c *config.
 var (
 	// bandwidthIfaceExcludePrefixes 容器流量统计时排除的虚拟/隧道接口前缀。
 	// 这些接口的 rx/tx 字节属于宿主侧（VPN、K8s CNI、bonding、容器间桥接），不应计入
-	// 单个容器的"流量明细"。Virtualizor 也是在面板上声明"per-VM bandwidth"，
+	// 单个容器的"流量明细"。同类系统也是在面板上声明"per-VM bandwidth"，
 	// 对应的就是宿主物理 NIC 的差分聚合，虚拟接口必须剥除。
 	bandwidthIfaceExcludePrefixes = []string{
 		"lo", "docker", "veth", "br-", "ifb", "virbr",

@@ -128,7 +128,7 @@ export default function Settings() {
   const [panelDomainInput, setPanelDomainInput] = useState('')
   const [savingPanelDomain, setSavingPanelDomain] = useState(false)
   const [panelDomainMsg, setPanelDomainMsg] = useState('')
-  // Cloudflare Turnstile 人机验证
+  // 人机验证（第三方挑战服务）
   const [tsSiteKey, setTsSiteKey] = useState('')
   const [tsSecretInput, setTsSecretInput] = useState('')
   const [tsHasSecret, setTsHasSecret] = useState(false)
@@ -2014,7 +2014,7 @@ function TwoFactorCard(props: TwoFactorCardProps) {
       {props.twoFASetup && !enabled && (
         <div className="mt-4 space-y-4">
           <div className="rounded-md border border-green-200 bg-green-50 p-3 text-xs text-green-800 dark:border-green-800 dark:bg-green-900/20 dark:text-green-300">
-            用 <strong>Google Authenticator</strong>（或 Microsoft Authenticator、1Password 等兼容 App）扫描下方二维码，或手动输入密钥。
+            用任意 <strong>TOTP 验证器 App</strong> 扫描下方二维码，或手动输入密钥。
           </div>
           {props.twoFASetup.qr_data_url && (
             <div className="flex justify-center rounded-md border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-950">

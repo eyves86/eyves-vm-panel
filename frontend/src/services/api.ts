@@ -2098,7 +2098,7 @@ export interface MigrateBundle {
   container: MigrateContainer
 }
 
-// ---- Node Group（迁移池/策略池，对应 Virtualizor Server Group / SolusVM Node Group） ----
+// ---- Node Group（迁移池/策略池，对应 主流面板 Server Group / 同类面板 Node Group） ----
 export interface NodeGroup {
   id: string
   name: string
@@ -2120,7 +2120,7 @@ export const updateNodeGroup = (id: string, payload: Partial<NodeGroup> & { node
 export const deleteNodeGroup = (id: string) =>
   api.delete<APIResponse<null>>(`/node-groups/${id}`)
 
-// ---- Cluster（跨 NodeGroup 的高可用/迁移域，对应 Virtualizor Cluster） ----
+// ---- Cluster（跨 NodeGroup 的高可用/迁移域，对应 主流面板 Cluster） ----
 export interface Cluster {
   id: string
   name: string
@@ -2327,7 +2327,7 @@ export const verifyAuditChain = () =>
   api.get<APIResponse<{ valid: boolean; checked?: number; reason?: string }>>('/audit-logs/export', { params: { chain: 'verify' } })
 
 // ===================== 容器自服务扩展（进程 / 服务 / 定时任务 / 带宽 / HVM） =====================
-// 对应后端 Virtualizor 风格端点（backend/internal/api/container_*.go），v1.9.x 起可用。
+// 对应后端 主流面板风格端点（backend/internal/api/container_*.go），v1.9.x 起可用。
 
 export interface ContainerProcessInfo {
   pid: number

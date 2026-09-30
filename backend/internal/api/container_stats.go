@@ -16,7 +16,7 @@ import (
 
 var _ = exec.Command
 
-// statsResponse 容器一站式监控视图，对齐 Virtualizor act=monitor 的字段形态。
+// statsResponse 容器一站式监控视图，对齐主流面板语义 的字段形态。
 // cpu/disk/ram 都返回 used/limit/percent 三元组，前端可直接渲染进度条。
 type statsResponse struct {
 	CPU       cpuStats   `json:"cpu"`
@@ -54,7 +54,7 @@ type inodesStats struct {
 }
 
 // handleContainerStats 容器一站式监控（GET /api/containers/{id}/stats）。
-// 对齐 Virtualizor `act=monitor`，合并 cpu/ram/disk/inodes/uptime。
+// 对齐主流面板语义，合并 cpu/ram/disk/inodes/uptime。
 //
 // 实现策略：
 //   - 多节点：转发到 agent（被控节点返回完整数据，主控不重复实现）

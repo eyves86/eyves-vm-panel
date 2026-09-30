@@ -3,7 +3,7 @@
 @tailwind utilities;
 
 /* ============================================================
-   EyvesCloud 设计系统 v3 —— 精修级（Cal.com 基底 → Award 级细节）
+   EyvesCloud 设计系统 —— 专业级（中性基底 + 精修细节）
    原则：克制的颜色（中性 + 单一强调色）、精确的排版、呼吸感的留白、
         有意义的动效（150-300ms，可降级）、处处有反馈的微交互。
    ============================================================ */
@@ -121,7 +121,7 @@ pre {
   font-feature-settings: 'liga' 1, 'calt' 1;
 }
 
-/* 页面底色：Cal surface-soft（#f8f9fa） */
+/* 页面底色：柔和底面（#f8f9fa） */
 .bg-gray-50 {
   background-color: #f8f9fa;
 }
@@ -184,7 +184,7 @@ textarea:focus-visible {
   box-shadow: var(--shadow-focus);
 }
 
-/* 主按钮（bg-brand-600）：Cal primary + 极轻阴影，hover 微微上浮 1px */
+/* 主按钮（bg-brand-600）： primary + 极轻阴影，hover 微微上浮 1px */
 button.bg-brand-600,
 a.bg-brand-600,
 .bg-brand-600.bg-brand-600 {

@@ -76,7 +76,7 @@ export default function Containers() {
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [subUsers, setSubUsers] = useState<SubUser[]>([])
   const [ownerMenuId, setOwnerMenuId] = useState<number | null>(null)
-  // 回收站视图（NetJett 同款）：开启后列表显示软删除实例，可恢复/彻底删除。
+  // 回收站视图（同类商业面板 同款）：开启后列表显示软删除实例，可恢复/彻底删除。
   const [showRecycle, setShowRecycle] = useState(false)
   const [changingOwner, setChangingOwner] = useState(false)
   const [ownerFilter, setOwnerFilter] = useState('all')

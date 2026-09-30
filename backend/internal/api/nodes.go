@@ -956,7 +956,7 @@ func appendAgentMetricPoint(s heartbeatContainerSummary) {
 //  4. 本机源 IP（ip route get）—— 仅地址推导失败时
 //  5. 交互式提示
 //
-// 也支持网络脚本一行命令（类似 Virtualizor / SolusVM 风格）：
+// 也支持网络脚本一行命令（类似 主流面板 / 同类面板 风格）：
 //
 //	curl -fsSL -H "X-Install-Key: <key>" https://<主控>/api/nodes/<id>/install-script | sudo bash
 //

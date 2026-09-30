@@ -10,7 +10,7 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// processInfo 单个进程条目，对齐 Virtualizor act=processes 输出。
+// processInfo 单个进程条目，对齐主流面板语义 输出。
 type processInfo struct {
 	PID     int     `json:"pid"`
 	User    string  `json:"user"`
@@ -31,7 +31,7 @@ type processesResponse struct {
 }
 
 // handleContainerProcesses 容器进程列表（GET /api/containers/{id}/processes）。
-// 对齐 Virtualizor act=processes。仅 LXC 可在主控本地 lxc-attach ps；
+// 对齐主流面板语义。仅 LXC 可在主控本地 lxc-attach ps；
 // KVM 需要 qemu-guest-agent 才能拿到容器内进程。
 //
 // 权限：container:read scope（只读）。
@@ -130,7 +130,7 @@ type killProcessesRequest struct {
 }
 
 // handleContainerProcessKill 批量终止容器内进程（POST /api/containers/{id}/processes/kill）。
-// 对齐 Virtualizor act=processes + sel_proc[]。
+// 对齐主流面板语义 + sel_proc[]。
 //
 // 权限：container:power scope（写）。仅 LXC 支持；KVM 必须用 guest-agent。
 //

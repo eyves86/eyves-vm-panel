@@ -499,7 +499,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			},
 		})
 		return
-	// === Virtualizor 风格容器自服务端点（agent 本地实现）===
+	// === 主流面板风格容器自服务端点（agent 本地实现）===
 	case "stats":
 		handleContainerStats(w, r, c)
 		return

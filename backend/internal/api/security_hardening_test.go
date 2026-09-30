@@ -162,14 +162,14 @@ func TestSubUserCreateMergeRejectsUsernameMismatch(t *testing.T) {
 	}
 }
 
-// TestTOTPQRDataURL 保障设置两步验证时能生成可供 Google Authenticator 扫描的二维码数据 URL。
+// TestTOTPQRDataURL 保障设置两步验证时能生成可供 TOTP 验证器扫描的二维码数据 URL。
 func TestTOTPQRDataURL(t *testing.T) {
 	uri := totpSetupURI("JBSWY3DPEHPK3PXP", "admin")
 	if !strings.HasPrefix(uri, "otpauth://totp/") {
 		t.Fatalf("unexpected otpauth uri: %s", uri)
 	}
 	if !strings.Contains(uri, "issuer=EyvesCloud") || !strings.Contains(uri, "algorithm=SHA1") {
-		t.Fatalf("otpauth uri missing Google Authenticator params: %s", uri)
+		t.Fatalf("otpauth uri missing standard TOTP params: %s", uri)
 	}
 	qr := totpQRDataURL(uri)
 	if !strings.HasPrefix(qr, "data:image/png;base64,") || len(qr) < len("data:image/png;base64,")+100 {

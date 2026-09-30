@@ -1,6 +1,6 @@
 package api
 
-// apiv2_recycle_test.go —— 回收站 / 批量扩展 / EIP 绑定回归测试（NetJett 差距收口）。
+// apiv2_recycle_test.go —— 回收站 / 批量扩展 / EIP 绑定回归测试（同类商业面板 差距收口）。
 
 import (
 	"net/http"

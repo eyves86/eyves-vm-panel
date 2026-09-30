@@ -217,7 +217,7 @@ func setHostnameByRuntime(id int, hostname string) error {
 	return lxcSetHostname(c.LxcName(), hostname)
 }
 
-// setVNCPasswordByRuntime 修改 KVM VM 的 VNC 密码（类比 Virtualizor Change VNC Password）。
+// setVNCPasswordByRuntime 修改 KVM VM 的 VNC 密码（类比 主流面板 Change VNC Password）。
 // LXC 不支持 VNC（用 WebSSH 代替），返回错误。
 // 运行中 VM 尝试热更新（virsh update-device），停机 VM 下次启动生效。
 func setVNCPasswordByRuntime(id int, password string) error {

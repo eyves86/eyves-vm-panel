@@ -54,7 +54,7 @@ body:
     attributes:
       label: 宿主机系统与内核 / Host OS & Kernel
       description: 运行节点的 Linux 发行版与内核版本 / Linux distribution and kernel version
-      placeholder: "Debian 12 / Ubuntu 22.04 / Proxmox VE 8.2 (Linux 6.8.x)"
+      placeholder: "Debian 12 / Ubuntu 22.04 / Alpine 3.21 (Linux 6.6.x)"
     validations:
       required: true
 

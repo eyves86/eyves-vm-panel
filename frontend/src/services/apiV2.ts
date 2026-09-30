@@ -315,7 +315,7 @@ export const v2NodeImageDownload = (nodeId: string, templateId: string) =>
     client.post(`/nodes/${encodeURIComponent(nodeId)}/images/download`, { template_id: templateId })
   )
 
-// （NetJett 差距收口：回收站、批量改密/备注/到期、实例 CSV 导出、弹性IP attach/detach）
+// （同类商业面板 差距收口：回收站、批量改密/备注/到期、实例 CSV 导出、弹性IP attach/detach）
 
 export interface V2RecycleItem extends V2Instance {
   recycled_at: string

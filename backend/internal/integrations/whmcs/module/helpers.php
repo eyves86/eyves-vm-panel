@@ -3057,7 +3057,7 @@ function eyvescloud_dispatch($params, $action)
 
         case 'powerHardOff':
             // 硬关机（libvirt destroy / lxc-stop -k）。和 powerOff（软关机 stop）不同，
-            // 硬关机不 guest-agent / acpi，直接 kill。类比 Virtualizor 的 "Hard Reboot"。
+            // 硬关机不 guest-agent / acpi，直接 kill。类比 主流面板 的 "Hard Reboot"。
             return eyvescloud_normalize_result(eyvescloud_container_action($params, 'destroy', '硬关机任务已提交'));
 
         case 'rescueMode':

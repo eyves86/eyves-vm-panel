@@ -9,7 +9,7 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// hvmSettingsResponse KVM HVM 设置视图，对齐 Virtualizor act=hvmsettings。
+// hvmSettingsResponse KVM HVM 设置视图，对齐主流面板语义。
 //
 // 字段含义：
 //   - BootOrder：启动盘顺序，"cda"=从第一硬盘、"dca"=从光驱、"cd"=光盘优先
@@ -87,7 +87,7 @@ type hvmSettingsRequest struct {
 }
 
 // handleContainerHVMSettingsPut 更新 HVM 设置（PUT /api/containers/{id}/hvm-settings）。
-// 对齐 Virtualizor act=hvmsettings POST。
+// 对齐主流面板语义 POST。
 //
 // 权限：container:power scope。
 //

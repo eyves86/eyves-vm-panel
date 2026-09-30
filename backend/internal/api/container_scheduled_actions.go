@@ -23,7 +23,7 @@ type scheduledActionRequest struct {
 }
 
 // handleScheduledActionsList 列出定时任务（GET /api/containers/{id}/scheduled-actions）。
-// 对齐 Virtualizor act=self_shutdown。
+// 对齐主流面板语义。
 //
 // 权限：container:read scope。
 func handleScheduledActionsList(w http.ResponseWriter, r *http.Request, c *config.Container) {
@@ -45,7 +45,7 @@ func handleScheduledActionsList(w http.ResponseWriter, r *http.Request, c *confi
 }
 
 // handleScheduledActionCreate 创建定时任务（POST /api/containers/{id}/scheduled-actions）。
-// 对齐 Virtualizor act=self_shutdown + selfshutdown=1。
+// 对齐主流面板语义 + selfshutdown=1。
 //
 // 权限：container:power scope。
 //
