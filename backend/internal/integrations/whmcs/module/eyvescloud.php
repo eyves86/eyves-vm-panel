@@ -151,6 +151,23 @@ function eyvescloud_CreateAccount(array $params)
         return '容器已创建，但' . ($wait['msg'] ?? '异步任务失败');
     }
 
+    // 安全组绑定：面板的创建接口不接受安全组参数，改为创建成功后单独绑定。
+    // 绑定失败不回滚容器（实例本身已可用），但要如实报错，不能让用户以为已生效。
+    $createdId = (int)($wait['container']['id'] ?? 0);
+    $secGroup = trim((string)(eyvescloud_options($params)['security_group'] ?? ''));
+    if ($secGroup !== '' && $createdId > 0) {
+        $bindRes = eyvescloud_request(
+            $params,
+            '/api/v1/containers/' . $createdId . '/security-groups',
+            ['group_ids' => [$secGroup]],
+            'PUT',
+            30
+        );
+        if (!eyvescloud_success($bindRes)) {
+            return '容器已创建，但安全组绑定失败：' . eyvescloud_message($bindRes, '');
+        }
+    }
+
     // P2-17：产品配置了「弹性 IP」计费项时，开通后同步公网 IPv4 绑定数量。
     $ipv4 = eyvescloud_public_ipv4_sync($params);
     if (($ipv4['status'] ?? '') !== 'success') {
@@ -349,7 +366,7 @@ function eyvescloud_VNC(array $params)
  */
 function eyvescloud_ISOAttach(array $params)
 {
-    $res = eyvescloud_isoAttach($params);
+    $res = eyvescloud_isoAttachImpl($params);
     return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? 'ISO 挂载失败');
 }
 
@@ -358,7 +375,7 @@ function eyvescloud_ISOAttach(array $params)
  */
 function eyvescloud_ISODetach(array $params)
 {
-    $res = eyvescloud_isoDetach($params);
+    $res = eyvescloud_isoDetachImpl($params);
     return ($res['status'] ?? '') === 'success' ? 'success' : ($res['msg'] ?? 'ISO 卸载失败');
 }
 

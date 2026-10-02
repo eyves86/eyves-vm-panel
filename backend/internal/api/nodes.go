@@ -1668,6 +1668,21 @@ func splitNodeSubPath(path string) (nodeID, rest string, ok bool) {
 }
 
 func proxyNodeRequest(r *http.Request, node config.Node, method, path string, body io.Reader) ([]byte, int, error) {
+	return proxyNodeRequestWithTimeout(r, node, method, path, body, 15*time.Second)
+}
+
+// NodeCreateTimeout 是"在节点上创建实例"这类长耗时操作的转发超时。
+//
+// 为什么需要单独一个：proxyNodeRequest 默认 15 秒，而节点上创建一个容器要走
+// 完整的 lxc-create（下载/解包 rootfs、配网、装 SSH），实测 30 秒以上。
+// 用默认超时会导致"主控报 502 超时，但节点上其实创建成功了"——用户看到失败，
+// 实际资源已占用，是最难排查的一类不一致。
+const NodeCreateTimeout = 300 * time.Second
+
+// proxyNodeRequestWithTimeout 与 proxyNodeRequest 相同，但允许指定超时。
+// 长耗时操作（创建、重装、快照恢复）必须用显式超时，避免主控先超时、
+// 节点后完成造成状态分歧。
+func proxyNodeRequestWithTimeout(r *http.Request, node config.Node, method, path string, body io.Reader, timeout time.Duration) ([]byte, int, error) {
 	req, err := http.NewRequestWithContext(r.Context(), method, strings.TrimSuffix(node.Address, "/")+path, body)
 	if err != nil {
 		return nil, http.StatusBadGateway, err
@@ -1678,13 +1693,13 @@ func proxyNodeRequest(r *http.Request, node config.Node, method, path string, bo
 	// X-Original-Actor header，agent 端审计时优先使用，避免把操作记到 agent token 名下。
 	//
 	// 安全约束（审计 H-3）：该 header 属于服务端可信值，绝不能采信客户端传入的同名
-	// header——否则任意已认证调用方都能在被控节点上把操作伪造成他人（含 admin）名下，
+	// header——否则任意已认证调用方都能在被控节点上把操作伪造到他人（含 admin）名下，
 	// 破坏审计可信度。这里始终用 requestActor(r) 覆盖。
 	if r != nil {
 		req.Header.Set("X-Original-Actor", requestActor(r))
 	}
 
-	resp, err := nodeHTTPClient(node, 15*time.Second).Do(req)
+	resp, err := nodeHTTPClient(node, timeout).Do(req)
 	if err != nil {
 		return nil, http.StatusBadGateway, err
 	}

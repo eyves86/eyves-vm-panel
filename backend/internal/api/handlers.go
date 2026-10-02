@@ -983,6 +983,45 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 指定节点：把创建请求整体代理到目标节点，与本面板 v2 的 target_node_id 行为一致。
+	//
+	// 为什么在这里（而不是在 lxc.CreateContainer 里）：本机创建流程会先做 NAT 端口
+	// 预留、LXC 网络自愈等本机动作，这些对"建在别的节点上"的容器既不适用、
+	// 还会无谓占用本机资源。所以在进入本机创建路径前就分流出去。
+	//
+	// 兼容性：不传 target_node_id 时行为完全不变（本机创建）。
+	if raw, ok := fields["target_node_id"]; ok {
+		var targetNodeID string
+		_ = json.Unmarshal(raw, &targetNodeID)
+		targetNodeID = strings.TrimSpace(targetNodeID)
+		if targetNodeID != "" && !strings.EqualFold(targetNodeID, "local") {
+			node, found := config.FindNode(targetNodeID)
+			if !found {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "节点不存在: " + targetNodeID})
+				return
+			}
+			payload, err := json.Marshal(cfg)
+			if err != nil {
+				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "序列化创建参数失败"})
+				return
+			}
+			data, status, err := proxyNodeRequestWithTimeout(r, node, http.MethodPost, "/api/agent/containers/create", strings.NewReader(string(payload)), NodeCreateTimeout)
+			if err != nil {
+				jsonResponse(w, http.StatusBadGateway, APIResponse{Success: false, Message: "节点创建实例失败：" + err.Error()})
+				return
+			}
+			if status >= 300 {
+				jsonResponse(w, status, APIResponse{Success: false, Message: strings.TrimSpace(string(data))})
+				return
+			}
+			// 原样透传被控返回体（与 v2 的节点创建路径保持一致）。
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write(data)
+			return
+		}
+	}
+
 	if err := createByRuntime(cfg); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return

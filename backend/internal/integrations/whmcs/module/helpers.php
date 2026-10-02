@@ -53,9 +53,204 @@ function eyvescloud_debug_entry($message, $data = null)
  * 这里作为“唯一事实来源”：eyvescloud_ConfigOptions() 据此生成 WHMCS 键值格式，
  * eyvescloud_options() 据此把 $params 还原成内部键名，避免两处顺序不一致。
  */
+/* -------------------------------------------------------------------------
+ * 产品配置页的动态选项（区域 / 节点）
+ *
+ * 背景：WHMCS 产品配置页（ConfigOptions）此前只能手填 ID——管理员既选不了
+ * 区域，也选不了节点（尽管面板本身支持节点集群与区域调度）。
+ * 这里照 WHMCS 约定实时从面板拉列表，做成下拉框。
+ *
+ * 关键约束：ConfigOptions() 拿不到 $params，只有 $_POST['id']（产品 ID），
+ * 所以要走「产品 → 服务器组 → 服务器」这条链定位面板；任何一步失败都
+ * 静默退回文本输入，绝不能让配置页报错。
+ * ---------------------------------------------------------------------- */
+
+/**
+ * 在配置页定位该产品所属的服务器，构造最小 $params。
+ * 拿不到时返回空数组（调用方据此退回文本输入）。
+ */
+function eyvescloud_config_options_server_context()
+{
+    if (!class_exists('\WHMCS\Database\Capsule')) {
+        return [];
+    }
+    $productId = (int)($_POST['id'] ?? ($_REQUEST['id'] ?? 0));
+    if ($productId <= 0) {
+        return [];
+    }
+    try {
+        $product = \WHMCS\Database\Capsule::table('tblproducts')->where('id', $productId)->first();
+        if (!$product) {
+            return [];
+        }
+        $product = (array)$product;
+
+        $serverId = 0;
+        if (!empty($product['servergroup'])) {
+            $rel = \WHMCS\Database\Capsule::table('tblservergroupsrel')
+                ->where('groupid', $product['servergroup'])->first();
+            if ($rel) {
+                $serverId = (int)((array)$rel)['serverid'];
+            }
+        }
+        if ($serverId <= 0) {
+            return [];
+        }
+        $server = \WHMCS\Database\Capsule::table('tblservers')->where('id', $serverId)->first();
+        if (!$server) {
+            return [];
+        }
+        $server = (array)$server;
+
+        return [
+            'serverhostname'   => $server['hostname'] ?? '',
+            'serverip'         => $server['ipaddress'] ?? '',
+            'serverport'       => $server['port'] ?? '',
+            'serveraccesshash' => eyvescloud_decrypt($server['accesshash'] ?? ''),
+            'serverpassword'   => eyvescloud_decrypt($server['password'] ?? ''),
+        ];
+    } catch (\Throwable $e) {
+        return [];
+    }
+}
+
+/**
+ * 拉取一个列表端点，转成 WHMCS dropdown 需要的 ['值' => '显示名']。
+ * 失败返回空数组。
+ */
+function eyvescloud_config_options_fetch_list(array $context, $endpoint, $idKey = 'id', $nameKey = 'name')
+{
+    try {
+        $res = eyvescloud_request($context, $endpoint, [], 'GET', 15);
+    } catch (\Throwable $e) {
+        return [];
+    }
+    if (!eyvescloud_success($res)) {
+        return [];
+    }
+    $items = $res['data'] ?? [];
+    // 面板列表有的返回裸数组，有的包在 {items: [...]} 里。
+    if (isset($items['items']) && is_array($items['items'])) {
+        $items = $items['items'];
+    }
+    if (!is_array($items)) {
+        return [];
+    }
+    $out = [];
+    foreach ($items as $item) {
+        if (!is_array($item)) {
+            continue;
+        }
+        $id = (string)($item[$idKey] ?? '');
+        if ($id === '') {
+            continue;
+        }
+        $label = (string)($item[$nameKey] ?? $id);
+        $out[$id] = $label !== '' ? $label : $id;
+    }
+    return $out;
+}
+
+/**
+ * 配置页可用的动态选项集合（带进程内缓存，避免同一请求重复打面板）。
+ */
+function eyvescloud_config_options_dynamic()
+{
+    static $cache = null;
+    if ($cache !== null) {
+        return $cache;
+    }
+    $ctx = eyvescloud_config_options_server_context();
+    if (empty($ctx['serverhostname']) && empty($ctx['serverip'])) {
+        return $cache = [];
+    }
+    return $cache = [
+        'regions'   => eyvescloud_config_options_fetch_list($ctx, '/api/v1/regions'),
+        'nodes'     => eyvescloud_config_options_fetch_list($ctx, '/api/v1/nodes'),
+        'images'    => eyvescloud_config_options_fetch_list($ctx, '/api/v1/images'),
+        'ipgroups'  => eyvescloud_config_options_fetch_list($ctx, '/api/v1/ip-groups'),
+        'secgroups' => eyvescloud_config_options_fetch_list($ctx, '/api/v1/security-groups'),
+    ];
+}
+
 function eyvescloud_option_definitions()
 {
-    return [
+    // 动态选项：拉不到时退回文本输入（配置页尚未绑定服务器、或面板不可达）。
+    $dyn = eyvescloud_config_options_dynamic();
+    $dynamic = [];
+
+    // 只保留"节点"这一个调度维度。
+    //
+    // 不做"区域"下拉的原因：面板里区域的作用是配额与调度分组，节点本身就归属
+    // 某个区域。让管理员既选区域又选节点，很容易选出"节点不属于该区域"的矛盾
+    // 组合，反而制造困惑（魔方云有 area 是因为它的 area 是数据中心，决定网络与
+    // 存储，与这里的语义不同）。
+    if (!empty($dyn['nodes'])) {
+        $dynamic[] = [
+            'label'       => '指定节点',
+            'key'         => 'node',
+            'type'        => 'dropdown',
+            'default'     => '',
+            'description' => '留空 = 交由面板调度器自动选择',
+            'options'     => ['' => '自动调度'] + $dyn['nodes'],
+        ];
+    } else {
+        $dynamic[] = [
+            'label'       => '指定节点',
+            'key'         => 'node',
+            'type'        => 'text',
+            'size'        => 30,
+            'default'     => '',
+            'description' => '面板节点 ID（未加载到列表）',
+        ];
+    }
+
+    // 镜像/模板：优先下拉（来自面板已启用镜像）；拉不到时退回文本手填。
+    if (!empty($dyn['images'])) {
+        $dynamic[] = [
+            'label'       => '镜像/模板',
+            'key'         => 'template_id',
+            'type'        => 'dropdown',
+            'default'     => '',
+            'description' => '来自面板的可用镜像列表（含 LXC 模板与已启用的 KVM 镜像）',
+            'options'     => ['' => '请选择'] + $dyn['images'],
+        ];
+    } else {
+        $dynamic[] = [
+            'label'       => '镜像/模板 ID',
+            'key'         => 'template_id',
+            'type'        => 'text',
+            'size'        => 40,
+            'default'     => 'alpine-3.21',
+            'description' => 'EYVESCLOUD 模板 ID，例如 alpine-3.21、debian-bookworm、ubuntu-jammy 或已启用的 KVM 镜像 ID（未加载到列表）',
+        ];
+    }
+
+    // IP 组：多 IP 高可用/故障切换场景使用。
+    if (!empty($dyn['ipgroups'])) {
+        $dynamic[] = [
+            'label'       => 'IP 组',
+            'key'         => 'ip_group',
+            'type'        => 'dropdown',
+            'default'     => '',
+            'description' => '开通时从该 IP 组分配公网地址；不使用则留空',
+            'options'     => ['' => '不使用'] + $dyn['ipgroups'],
+        ];
+    }
+
+    // 安全组：绑定到新开通的实例。注意面板侧默认不强制执行，需在面板开启。
+    if (!empty($dyn['secgroups'])) {
+        $dynamic[] = [
+            'label'       => '安全组',
+            'key'         => 'security_group',
+            'type'        => 'dropdown',
+            'default'     => '',
+            'description' => '绑定到新开通的实例；面板需开启「安全组强制执行」后规则才会真正生效',
+            'options'     => ['' => '不绑定'] + $dyn['secgroups'],
+        ];
+    }
+
+    $defs = [
         [
             'label'       => '虚拟化类型',
             'key'         => 'virtualization',
@@ -63,14 +258,6 @@ function eyvescloud_option_definitions()
             'default'     => 'lxc',
             'description' => 'lxc 或 kvm',
             'options'     => ['lxc' => 'LXC', 'kvm' => 'KVM'],
-        ],
-        [
-            'label'       => '镜像/模板 ID',
-            'key'         => 'template_id',
-            'type'        => 'text',
-            'size'        => 40,
-            'default'     => 'alpine-3.21',
-            'description' => 'EYVESCLOUD 模板 ID，例如 alpine-3.21、debian-bookworm、ubuntu-jammy 或已启用的 KVM 镜像 ID',
         ],
         [
             'label'       => 'CPU 核心',
@@ -250,6 +437,11 @@ function eyvescloud_option_definitions()
             'options'     => ['true' => '启用', 'false' => '禁用'],
         ],
     ];
+
+    // 动态项（区域/节点）排在最前，与魔方云等同类插件的配置习惯一致。
+    // 注意：这会改变 configoptionN 的编号顺序——若某产品是在旧版模块下配置的，
+    // 升级后需重新核对一次产品配置项。
+    return array_merge($dynamic, $defs);
 }
 
 /**
@@ -835,6 +1027,19 @@ function eyvescloud_int_option($options, $key, $default = 0)
     return (int)$options[$key];
 }
 
+/**
+ * 取一个字符串型产品配置项（去掉首尾空白）。空值返回空串——
+ * 调用方据此判断"未配置"，例如 target_node_id 为空时不传该字段。
+ */
+function eyvescloud_trim_option($options, $key, $default = '')
+{
+    if (!isset($options[$key])) {
+        return $default;
+    }
+    $value = trim((string)$options[$key]);
+    return $value === '' ? $default : $value;
+}
+
 function eyvescloud_float_option($options, $key, $default = 0)
 {
     if (!isset($options[$key]) || $options[$key] === '') {
@@ -1306,6 +1511,9 @@ function eyvescloud_container_payload($params)
 
     return [
         'name'               => eyvescloud_container_name($params),
+        // 指定节点（可选）：面板 v1 创建接口原样接受该字段并转发到目标节点。
+        // 留空 = 本机创建（不传该键，行为与旧版完全一致）。
+        'target_node_id'     => eyvescloud_trim_option($options, 'node'),
         'virtualization'     => $options['virtualization'] ?? 'lxc',
         'template_id'        => $options['template_id'] ?? '',
         'vcpu'               => eyvescloud_float_option($options, 'vcpu', 1),
@@ -2352,7 +2560,7 @@ function eyvescloud_isoNumericID($params)
     return $id;
 }
 
-function eyvescloud_isoAttach($params)
+function eyvescloud_isoAttachImpl($params)
 {
     $isoId = trim((string)eyvescloud_request_value('iso_id', ''));
     if ($isoId === '') {
@@ -2370,7 +2578,7 @@ function eyvescloud_isoAttach($params)
     return ['status' => 'success', 'msg' => 'ISO 已挂载', 'data' => []];
 }
 
-function eyvescloud_isoDetach($params)
+function eyvescloud_isoDetachImpl($params)
 {
     $cid = eyvescloud_isoNumericID($params);
     if ($cid <= 0) {
@@ -2704,7 +2912,7 @@ function eyvescloud_vnc_ticket($params)
  *
  * WHMCS 调用方从 POST 读 image 参数。空 image 时使用面板默认救援 ISO（由后端决定）。
  */
-function eyvescloud_rescueMode($params)
+function eyvescloud_rescueModeImpl($params)
 {
     // 后端 handler (rescue.go doRescue) 期望: {"enabled": true, "iso_id": "..."}。
     // iso_id 可选——空时后端使用面板默认救援 ISO（admin 在面板设置里配置）。
@@ -2732,7 +2940,7 @@ function eyvescloud_rescueMode($params)
  * - 恢复 HDD 启动优先级
  * - 冷启动回到原系统
  */
-function eyvescloud_rescueExit($params)
+function eyvescloud_rescueExitImpl($params)
 {
     // 后端 handler 用 enabled: false 表示退出救援模式，与 rescueMode (enabled: true) 共用同一 handler。
     $cid = eyvescloud_isoNumericID($params);
@@ -3048,9 +3256,9 @@ function eyvescloud_dispatch($params, $action)
         case 'isoList':
             return eyvescloud_normalize_result(eyvescloud_isoList($params));
         case 'isoAttach':
-            return eyvescloud_normalize_result(eyvescloud_isoAttach($params));
+            return eyvescloud_normalize_result(eyvescloud_isoAttachImpl($params));
         case 'isoDetach':
-            return eyvescloud_normalize_result(eyvescloud_isoDetach($params));
+            return eyvescloud_normalize_result(eyvescloud_isoDetachImpl($params));
 
         case 'reinstallTemplates':
             return eyvescloud_normalize_result(eyvescloud_reinstallTemplates($params));
@@ -3071,10 +3279,10 @@ function eyvescloud_dispatch($params, $action)
 
         case 'rescueMode':
             // KVM Rescue Mode（ISO 救援模式）。请求体 {image: "iso 文件名或 id"}。
-            return eyvescloud_normalize_result(eyvescloud_rescueMode($params));
+            return eyvescloud_normalize_result(eyvescloud_rescueModeImpl($params));
         case 'rescueExit':
             // 退出救援模式：卸载 rescue ISO 并强制冷启动回到原磁盘。
-            return eyvescloud_normalize_result(eyvescloud_rescueExit($params));
+            return eyvescloud_normalize_result(eyvescloud_rescueExitImpl($params));
 
         case 'trafficReset':
             return eyvescloud_normalize_result(eyvescloud_traffic_reset($params));

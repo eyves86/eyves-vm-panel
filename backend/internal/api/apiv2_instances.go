@@ -617,7 +617,7 @@ func v2InstancesCreate(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			body, _ := json.Marshal(cfg)
-			data, status, err := proxyNodeRequest(r, node, http.MethodPost, "/api/agent/containers/create", strings.NewReader(string(body)))
+			data, status, err := proxyNodeRequestWithTimeout(r, node, http.MethodPost, "/api/agent/containers/create", strings.NewReader(string(body)), NodeCreateTimeout)
 			if err != nil {
 				v2Upstream(w, r, "节点创建实例失败："+err.Error())
 				return
