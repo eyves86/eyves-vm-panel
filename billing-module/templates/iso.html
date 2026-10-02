@@ -1,0 +1,157 @@
+<style>
+.eyvescloud-iso-panel{font-size:14px;color:#1f2937}
+.eyvescloud-iso-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:16px}
+.eyvescloud-iso-card{border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fff}
+.eyvescloud-iso-label{color:#6b7280;font-size:12px;margin-bottom:4px}
+.eyvescloud-iso-value{font-size:18px;font-weight:600;word-break:break-all}
+.eyvescloud-iso-title{font-weight:600;margin:18px 0 8px}
+.eyvescloud-iso-muted{color:#6b7280}
+.eyvescloud-iso-form{border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:12px;margin-top:8px}
+.eyvescloud-iso-actions{display:flex;gap:8px;flex-wrap:wrap}
+.eyvescloud-iso-btn{height:34px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:4px;padding:0 12px;cursor:pointer}
+.eyvescloud-iso-btn[disabled]{opacity:.6;cursor:not-allowed}
+.eyvescloud-iso-btn-secondary{border-color:#d1d5db;background:#fff;color:#374151}
+.eyvescloud-iso-btn-danger{border-color:#dc2626;background:#dc2626;color:#fff}
+.eyvescloud-iso-list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.eyvescloud-iso-item{border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:12px}
+.eyvescloud-iso-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;align-items:center}
+.eyvescloud-iso-msg{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:6px;padding:10px 12px;margin-bottom:12px;display:none}
+.eyvescloud-iso-msg.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+.eyvescloud-iso-badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+.eyvescloud-iso-badge.mounted{background:#dcfce7;color:#15803d}
+.eyvescloud-iso-badge.free{background:#f3f4f6;color:#6b7280}
+.eyvescloud-iso-modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+.eyvescloud-iso-modal{width:min(420px,100%);background:#fff;border-radius:6px;border:1px solid #e5e7eb;box-shadow:0 18px 48px rgba(15,23,42,.22);padding:16px}
+.eyvescloud-iso-modal-title{font-size:16px;font-weight:700;color:#111827;margin-bottom:8px}
+.eyvescloud-iso-modal-body{font-size:14px;color:#4b5563;line-height:1.6;margin-bottom:14px}
+.eyvescloud-iso-modal-actions{display:flex;justify-content:flex-end;gap:8px}
+</style>
+
+<div class="eyvescloud-iso-panel" id="eyvescloud-iso-panel" data-service-id="{$service_id}" data-container-id="{$container_id}" data-area-key="{$area_key}">
+    <div class="eyvescloud-iso-msg" id="eyvescloud-iso-msg"></div>
+
+    <div class="eyvescloud-iso-grid">
+        <div class="eyvescloud-iso-card">
+            <div class="eyvescloud-iso-label">实例名称</div>
+            <div class="eyvescloud-iso-value">{$container_name}</div>
+        </div>
+    </div>
+
+    <div class="eyvescloud-iso-title">可用的 ISO 镜像</div>
+    <div id="eyvescloud-iso-list" class="eyvescloud-iso-list">
+        <div class="eyvescloud-iso-form eyvescloud-iso-muted">正在加载…</div>
+    </div>
+
+    <div class="eyvescloud-iso-muted" style="margin-top:14px">将 ISO 挂载到本实例的光驱，可引导安装或进入救援系统。镜像需先在 ISO 目录中启用。</div>
+
+    <div class="eyvescloud-iso-modal-mask" id="eyvescloud-iso-modal-mask">
+        <div class="eyvescloud-iso-modal">
+            <div class="eyvescloud-iso-modal-title" id="eyvescloud-iso-modal-title">确认操作</div>
+            <div class="eyvescloud-iso-modal-body" id="eyvescloud-iso-modal-body"></div>
+            <div class="eyvescloud-iso-modal-actions">
+                <button class="eyvescloud-iso-btn eyvescloud-iso-btn-secondary" type="button" id="eyvescloud-iso-cancel">取消</button>
+                <button class="eyvescloud-iso-btn" type="button" id="eyvescloud-iso-confirm">确认</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+    var panel = document.getElementById('eyvescloud-iso-panel');
+    if (!panel || panel.getAttribute('data-bound') === '1') return;
+    panel.setAttribute('data-bound', '1');
+
+    var msg = document.getElementById('eyvescloud-iso-msg');
+    var list = document.getElementById('eyvescloud-iso-list');
+    var mask = document.getElementById('eyvescloud-iso-modal-mask');
+    var pending = null;
+    var maskText = document.getElementById('eyvescloud-iso-modal-body');
+    var cancelBtn = document.getElementById('eyvescloud-iso-cancel');
+    var confirmBtn = document.getElementById('eyvescloud-iso-confirm');
+    var containerID = parseInt(panel.getAttribute('data-container-id')||'', 10) || 0;
+
+    function endpoint(){ return "{$MODULE_CUSTOM_API}"; }
+    function escapeHtml(v){ return String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
+    function show(type, text){ msg.className = 'eyvescloud-iso-msg'+(type==='error'?' error':''); msg.style.display='block'; msg.textContent = text||''; }
+
+    function render(items){
+        if(!Array.isArray(items) || items.length===0){
+            list.innerHTML = '<div class="eyvescloud-iso-form eyvescloud-iso-muted">暂无可用 ISO 镜像</div>';
+            return;
+        }
+        list.innerHTML = items.map(function(iso){
+            var id = escapeHtml(iso.id||'');
+            var name = escapeHtml(iso.name||id);
+            var os = escapeHtml(iso.os||'-');
+            var size = escapeHtml(iso.size_text||'-');
+            var attached = parseInt(iso.attached_to_container_id||0,10) === containerID;
+            var badge = attached
+                ? '<span class="eyvescloud-iso-badge mounted">已挂载</span>'
+                : '<span class="eyvescloud-iso-badge free">未挂载</span>';
+            var btn = attached
+                ? '<button class="eyvescloud-iso-btn eyvescloud-iso-btn-danger" type="button" data-iso-action="detach" data-iso-id="'+id+'" data-iso-name="'+name+'">卸载</button>'
+                : '<button class="eyvescloud-iso-btn eyvescloud-iso-btn-secondary" type="button" data-iso-action="attach" data-iso-id="'+id+'" data-iso-name="'+name+'">挂载</button>';
+            return '<div class="eyvescloud-iso-item" data-iso-id="'+id+'">'+
+                '<div class="eyvescloud-iso-row">'+
+                '<div><div class="eyvescloud-iso-label">镜像名称</div><div class="eyvescloud-iso-value">'+name+'</div></div>'+
+                '<div><div class="eyvescloud-iso-label">系统</div><div>'+os+'</div></div>'+
+                '<div><div class="eyvescloud-iso-label">大小</div><div>'+size+'</div></div>'+
+                '<div><div class="eyvescloud-iso-label">状态</div><div>'+badge+'</div></div>'+
+                '<div class="eyvescloud-iso-actions">'+btn+'</div>'+
+                '</div></div>';
+        }).join('');
+    }
+
+    function post(func, payload, done){
+        try{
+            var body = new URLSearchParams();
+            body.set('id', panel.getAttribute('data-service-id')||'');
+            body.set('func', func || '');
+            Object.keys(payload||{}).forEach(function(k){ body.set(k, payload[k]); });
+            fetch(endpoint(),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded; charset=UTF-8','Authorization':'JWT {$Think.get.jwt}'},credentials:'same-origin',body:body.toString()})
+            .then(function(r){return r.text();})
+            .then(function(txt){
+                var d; try{d=JSON.parse(txt);}catch(e){d={status:'error',msg:'非 JSON 响应: '+txt};}
+                if(d.status===200||d.status==='success'){
+                    show('success', d.msg||'操作成功');
+                    if(done) done(d);
+                    load();
+                } else {
+                    show('error', d.msg||'操作失败');
+                }
+            })
+            .catch(function(e){ show('error', e.message||'请求失败'); });
+        }catch(e){ show('error', e.message||'请求失败'); }
+    }
+
+    function load(){ post('isoList', {}, function(d){ if(d.data && d.data.isos){ render(d.data.isos); } }); }
+
+    function ask(title, text, cb){
+        maskText.textContent = text||'';
+        document.getElementById('eyvescloud-iso-modal-title').textContent = title||'确认操作';
+        pending = cb;
+        mask.style.display='flex';
+    }
+    function closeMask(){ pending=null; mask.style.display='none'; }
+
+    panel.addEventListener('click', function(ev){
+        var b = ev.target.closest('[data-iso-action]');
+        if(!b) return;
+        var id = b.getAttribute('data-iso-id');
+        var name = b.getAttribute('data-iso-name')||id;
+        b.disabled = true;
+        if(b.getAttribute('data-iso-action')==='attach'){
+            ask('挂载 ISO', '确认将「'+name+'」挂载到本实例？可在开机引导界面选择安装或救援。', function(){ post('isoAttach', {iso_id:id}, function(){ b.disabled=false; }); });
+        } else {
+            ask('卸载 ISO', '确认从本实例卸载「'+name+'」？', function(){ post('isoDetach', {}, function(){ b.disabled=false; }); });
+        }
+    });
+
+    if(cancelBtn){ cancelBtn.addEventListener('click', closeMask); }
+    if(confirmBtn){ confirmBtn.addEventListener('click', function(){ var cb=pending; closeMask(); if(cb) cb(); }); }
+    if(mask){ mask.addEventListener('click', function(ev){ if(ev.target===mask) closeMask(); }); }
+
+    load();
+})();
+</script>

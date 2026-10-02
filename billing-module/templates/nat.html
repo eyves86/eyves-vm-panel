@@ -1,0 +1,328 @@
+<style>
+.eyvescloud-nat-panel{font-size:14px;color:#1f2937}
+.eyvescloud-nat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:16px}
+.eyvescloud-nat-card{border:1px solid #e5e7eb;border-radius:6px;padding:12px;background:#fff}
+.eyvescloud-nat-label{color:#6b7280;font-size:12px;margin-bottom:4px}
+.eyvescloud-nat-value{font-size:18px;font-weight:600;word-break:break-all}
+.eyvescloud-nat-title{font-weight:600;margin:18px 0 8px}
+.eyvescloud-nat-muted{color:#6b7280}
+.eyvescloud-nat-form{border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:12px;margin-top:8px}
+.eyvescloud-nat-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;align-items:end}
+.eyvescloud-nat-field label{display:block;color:#6b7280;font-size:12px;margin-bottom:4px}
+.eyvescloud-nat-input,.eyvescloud-nat-select{width:100%;height:34px;border:1px solid #d1d5db;border-radius:4px;padding:6px 8px;box-sizing:border-box}
+.eyvescloud-nat-actions{display:flex;gap:8px;flex-wrap:wrap}
+.eyvescloud-nat-btn{height:34px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:4px;padding:0 12px;cursor:pointer}
+.eyvescloud-nat-btn[disabled]{opacity:.6;cursor:not-allowed}
+.eyvescloud-nat-btn-secondary{border-color:#d1d5db;background:#fff;color:#374151}
+.eyvescloud-nat-btn-danger{border-color:#dc2626;background:#dc2626;color:#fff}
+.eyvescloud-nat-list{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+.eyvescloud-nat-item{border:1px solid #e5e7eb;border-radius:6px;background:#fff;padding:12px}
+.eyvescloud-nat-message{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:6px;padding:10px 12px;margin-bottom:12px;display:none}
+.eyvescloud-nat-message.error{border-color:#fecaca;background:#fef2f2;color:#b91c1c}
+.eyvescloud-nat-debug{margin-top:12px;border:1px dashed #d1d5db;border-radius:6px;background:#f9fafb;padding:10px;color:#374151;white-space:pre-wrap;font-size:12px;display:none}
+.eyvescloud-nat-modal-mask{position:fixed;inset:0;background:rgba(15,23,42,.42);display:none;align-items:center;justify-content:center;z-index:9999;padding:16px}
+.eyvescloud-nat-modal{width:min(420px,100%);background:#fff;border-radius:6px;border:1px solid #e5e7eb;box-shadow:0 18px 48px rgba(15,23,42,.22);padding:16px}
+.eyvescloud-nat-modal-title{font-size:16px;font-weight:700;color:#111827;margin-bottom:8px}
+.eyvescloud-nat-modal-body{font-size:14px;color:#4b5563;line-height:1.6;margin-bottom:14px}
+.eyvescloud-nat-modal-actions{display:flex;justify-content:flex-end;gap:8px}
+</style>
+
+<div class="eyvescloud-nat-panel" id="eyvescloud-nat-panel" data-service-id="{$service_id}" data-area-key="{$area_key}">
+    <div class="eyvescloud-nat-message" id="eyvescloud-nat-message"></div>
+
+    <div class="eyvescloud-nat-grid">
+        <div class="eyvescloud-nat-card">
+            <div class="eyvescloud-nat-label">&#23454;&#20363;&#21517;&#31216;</div>
+            <div class="eyvescloud-nat-value">{$container_name}</div>
+        </div>
+        <div class="eyvescloud-nat-card">
+            <div class="eyvescloud-nat-label">&#20844;&#32593;&#22320;&#22336;</div>
+            <div class="eyvescloud-nat-value">{$nat_host}</div>
+        </div>
+        <div class="eyvescloud-nat-card">
+            <div class="eyvescloud-nat-label">SSH &#31471;&#21475;</div>
+            <div class="eyvescloud-nat-value">{$ssh_port}</div>
+        </div>
+    </div>
+
+    <div class="eyvescloud-nat-title">&#28155;&#21152;&#31471;&#21475;&#26144;&#23556;</div>
+    <div class="eyvescloud-nat-form">
+        <div class="eyvescloud-nat-row">
+            <div class="eyvescloud-nat-field">
+                <label>&#20844;&#32593;&#31471;&#21475;</label>
+                <input class="eyvescloud-nat-input" id="eyvescloud-add-host-port" type="number" min="1" max="65535" placeholder="61320">
+            </div>
+            <div class="eyvescloud-nat-field">
+                <label>&#23481;&#22120;&#31471;&#21475;</label>
+                <input class="eyvescloud-nat-input" id="eyvescloud-add-container-port" type="number" min="1" max="65535" placeholder="8080">
+            </div>
+            <div class="eyvescloud-nat-field">
+                <label>&#21327;&#35758;</label>
+                <select class="eyvescloud-nat-select" id="eyvescloud-add-protocol">
+                    <option value="tcp">TCP</option>
+                    <option value="udp">UDP</option>
+                </select>
+            </div>
+            <div class="eyvescloud-nat-field">
+                <label>&#35828;&#26126;</label>
+                <input class="eyvescloud-nat-input" id="eyvescloud-add-description" type="text" placeholder="HTTP">
+            </div>
+            <div class="eyvescloud-nat-actions">
+                <button class="eyvescloud-nat-btn" type="button" data-eyvescloud-action="add">&#28155;&#21152;</button>
+                <button class="eyvescloud-nat-btn eyvescloud-nat-btn-secondary" type="button" data-eyvescloud-action="random-port">&#33719;&#21462;&#38543;&#26426;&#31471;&#21475;</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="eyvescloud-nat-title">&#29616;&#26377;&#31471;&#21475;&#26144;&#23556;</div>
+    <div id="eyvescloud-nat-list" class="eyvescloud-nat-list">
+        {if condition="empty($port_mappings)"}
+        <div class="eyvescloud-nat-form eyvescloud-nat-muted">&#26242;&#26080;&#31471;&#21475;&#26144;&#23556;</div>
+        {else/}
+        {foreach name="port_mappings" item="mapping"}
+        <div class="eyvescloud-nat-item" data-index="{$mapping.index}">
+            <div class="eyvescloud-nat-row">
+                <div class="eyvescloud-nat-field">
+                    <label>&#32034;&#24341;</label>
+                    <div class="eyvescloud-nat-value">{$mapping.index}</div>
+                </div>
+                <div class="eyvescloud-nat-field">
+                    <label>&#20844;&#32593;&#35775;&#38382;</label>
+                    <div class="eyvescloud-nat-value">{$nat_host}:{$mapping.host_port}</div>
+                </div>
+                <div class="eyvescloud-nat-field">
+                    <label>&#20844;&#32593;&#31471;&#21475;</label>
+                    <input class="eyvescloud-nat-input" data-field="host_port" type="number" min="1" max="65535" value="{$mapping.host_port}">
+                </div>
+                <div class="eyvescloud-nat-field">
+                    <label>&#23481;&#22120;&#31471;&#21475;</label>
+                    <input class="eyvescloud-nat-input" data-field="container_port" type="number" min="1" max="65535" value="{$mapping.container_port}">
+                </div>
+                <div class="eyvescloud-nat-field">
+                    <label>&#21327;&#35758;</label>
+                    <select class="eyvescloud-nat-select" data-field="protocol">
+                        <option value="tcp" {$mapping.tcp_selected}>TCP</option>
+                        <option value="udp" {$mapping.udp_selected}>UDP</option>
+                    </select>
+                </div>
+                <div class="eyvescloud-nat-field">
+                    <label>&#35828;&#26126;</label>
+                    <input class="eyvescloud-nat-input" data-field="description" type="text" value="{$mapping.description}">
+                </div>
+                <div class="eyvescloud-nat-actions">
+                    <button class="eyvescloud-nat-btn eyvescloud-nat-btn-secondary" type="button" data-eyvescloud-action="update">&#20445;&#23384;</button>
+                    <button class="eyvescloud-nat-btn eyvescloud-nat-btn-danger" type="button" data-eyvescloud-action="delete">&#21024;&#38500;</button>
+                </div>
+            </div>
+        </div>
+        {/foreach}
+        {/if}
+    </div>
+
+    <pre class="eyvescloud-nat-debug" id="eyvescloud-nat-debug"></pre>
+    <div class="eyvescloud-nat-modal-mask" id="eyvescloud-nat-delete-modal">
+        <div class="eyvescloud-nat-modal">
+            <div class="eyvescloud-nat-modal-title">&#30830;&#35748;&#21024;&#38500;</div>
+            <div class="eyvescloud-nat-modal-body" id="eyvescloud-nat-delete-text">&#30830;&#35748;&#21024;&#38500;&#35813;&#31471;&#21475;&#26144;&#23556;&#65311;</div>
+            <div class="eyvescloud-nat-modal-actions">
+                <button class="eyvescloud-nat-btn eyvescloud-nat-btn-secondary" type="button" id="eyvescloud-nat-delete-cancel">&#21462;&#28040;</button>
+                <button class="eyvescloud-nat-btn eyvescloud-nat-btn-danger" type="button" id="eyvescloud-nat-delete-confirm">&#21024;&#38500;</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function(){
+    var panel = document.getElementById('eyvescloud-nat-panel');
+    if (!panel || panel.getAttribute('data-bound') === '1') return;
+    panel.setAttribute('data-bound', '1');
+
+    var message = document.getElementById('eyvescloud-nat-message');
+    var debugBox = document.getElementById('eyvescloud-nat-debug');
+    var list = document.getElementById('eyvescloud-nat-list');
+    var natHost = '{$nat_host}';
+    var deleteModal = document.getElementById('eyvescloud-nat-delete-modal');
+    var deleteText = document.getElementById('eyvescloud-nat-delete-text');
+    var deleteCancel = document.getElementById('eyvescloud-nat-delete-cancel');
+    var deleteConfirm = document.getElementById('eyvescloud-nat-delete-confirm');
+    var pendingDeletePayload = null;
+
+    function showMessage(type, text) {
+        message.className = 'eyvescloud-nat-message' + (type === 'error' ? ' error' : '');
+        message.style.display = 'block';
+        message.textContent = text || '';
+    }
+
+    function showDebug(data) {
+        debugBox.style.display = 'block';
+        debugBox.textContent = JSON.stringify(data || {}, null, 2);
+    }
+
+    function endpoint() {
+        return "{$MODULE_CUSTOM_API}";
+    }
+
+    function field(item, name) {
+        return item.querySelector('[data-field="' + name + '"]');
+    }
+
+    function setBusy(busy) {
+        panel.querySelectorAll('button').forEach(function(btn){ btn.disabled = !!busy; });
+    }
+
+    function renderList(items) {
+        if (!Array.isArray(items) || items.length === 0) {
+            list.innerHTML = '<div class="eyvescloud-nat-form eyvescloud-nat-muted">&#26242;&#26080;&#31471;&#21475;&#26144;&#23556;</div>';
+            return;
+        }
+        list.innerHTML = items.map(function(item) {
+            var protocol = (item.protocol || 'tcp').toLowerCase();
+            var desc = escapeHtml(item.description || '');
+            var index = escapeHtml(String(item.index));
+            var hostPort = escapeHtml(String(item.host_port || ''));
+            var containerPort = escapeHtml(String(item.container_port || ''));
+            return '<div class="eyvescloud-nat-item" data-index="' + index + '">' +
+                '<div class="eyvescloud-nat-row">' +
+                '<div class="eyvescloud-nat-field"><label>&#32034;&#24341;</label><div class="eyvescloud-nat-value">' + index + '</div></div>' +
+                '<div class="eyvescloud-nat-field"><label>&#20844;&#32593;&#35775;&#38382;</label><div class="eyvescloud-nat-value">' + escapeHtml(natHost) + ':' + hostPort + '</div></div>' +
+                '<div class="eyvescloud-nat-field"><label>&#20844;&#32593;&#31471;&#21475;</label><input class="eyvescloud-nat-input" data-field="host_port" type="number" min="1" max="65535" value="' + hostPort + '"></div>' +
+                '<div class="eyvescloud-nat-field"><label>&#23481;&#22120;&#31471;&#21475;</label><input class="eyvescloud-nat-input" data-field="container_port" type="number" min="1" max="65535" value="' + containerPort + '"></div>' +
+                '<div class="eyvescloud-nat-field"><label>&#21327;&#35758;</label><select class="eyvescloud-nat-select" data-field="protocol">' +
+                '<option value="tcp"' + (protocol === 'tcp' ? ' selected' : '') + '>TCP</option>' +
+                '<option value="udp"' + (protocol === 'udp' ? ' selected' : '') + '>UDP</option>' +
+                '</select></div>' +
+                '<div class="eyvescloud-nat-field"><label>&#35828;&#26126;</label><input class="eyvescloud-nat-input" data-field="description" type="text" value="' + desc + '"></div>' +
+                '<div class="eyvescloud-nat-actions"><button class="eyvescloud-nat-btn eyvescloud-nat-btn-secondary" type="button" data-eyvescloud-action="update">&#20445;&#23384;</button>' +
+                '<button class="eyvescloud-nat-btn eyvescloud-nat-btn-danger" type="button" data-eyvescloud-action="delete">&#21024;&#38500;</button></div>' +
+                '</div></div>';
+        }).join('');
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    async function request(action, payload, silent) {
+        setBusy(true);
+        try {
+            var funcMap = {
+                'random-port': 'randomPort',
+                'add': 'addNat',
+                'update': 'updateNat',
+                'delete': 'deleteNat',
+                'list': 'natList'
+            };
+            var body = new URLSearchParams();
+            body.set('id', panel.getAttribute('data-service-id') || '');
+            body.set('func', funcMap[action] || action);
+            Object.keys(payload || {}).forEach(function(key){ body.set(key, payload[key]); });
+            var res = await fetch(endpoint(), {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'Authorization': 'JWT {$Think.get.jwt}'
+                },
+                credentials: 'same-origin',
+                body: body.toString()
+            });
+            var text = await res.text();
+            var data;
+            try { data = JSON.parse(text); } catch (e) { data = {status:'error', msg:'\u975e JSON \u54cd\u5e94: ' + text}; }
+            showDebug((data.data && data.data.debug) || data.debug || data);
+            if (data.status === 200 || data.status === 'success') {
+                if (!silent) {
+                    showMessage('success', data.msg || '\u64cd\u4f5c\u6210\u529f');
+                }
+                if (data.data && data.data.port) {
+                    document.getElementById('eyvescloud-add-host-port').value = data.data.port;
+                }
+                if (data.data && Array.isArray(data.data.port_mappings)) {
+                    renderList(data.data.port_mappings);
+                } else if (action !== 'random-port') {
+                    request('list', {}, true);
+                }
+            } else {
+                showMessage('error', data.msg || '\u64cd\u4f5c\u5931\u8d25');
+            }
+        } catch (e) {
+            showMessage('error', e.message || '\u8bf7\u6c42\u5931\u8d25');
+            showDebug({error: String(e)});
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    function openDeleteModal(payload) {
+        pendingDeletePayload = payload;
+        if (deleteText) {
+            deleteText.textContent = '\u786e\u8ba4\u5220\u9664\u7aef\u53e3\u6620\u5c04 ' + natHost + ':' + (payload.host_port || '-') + ' -> ' + (payload.container_port || '-') + '/' + (payload.protocol || 'tcp') + ' \u5417\uff1f';
+        }
+        if (deleteModal) {
+            deleteModal.style.display = 'flex';
+        }
+    }
+
+    function closeDeleteModal() {
+        pendingDeletePayload = null;
+        if (deleteModal) {
+            deleteModal.style.display = 'none';
+        }
+    }
+
+    panel.addEventListener('click', function(event) {
+        var button = event.target.closest('[data-eyvescloud-action]');
+        if (!button) return;
+        var action = button.getAttribute('data-eyvescloud-action');
+        if (action === 'random-port') {
+            request('random-port', {});
+            return;
+        }
+        if (action === 'add') {
+            request('add', {
+                host_port: document.getElementById('eyvescloud-add-host-port').value,
+                container_port: document.getElementById('eyvescloud-add-container-port').value,
+                protocol: document.getElementById('eyvescloud-add-protocol').value,
+                description: document.getElementById('eyvescloud-add-description').value
+            });
+            return;
+        }
+        var item = button.closest('.eyvescloud-nat-item');
+        if (!item) return;
+        var payload = {
+            index: item.getAttribute('data-index'),
+            host_port: field(item, 'host_port') ? field(item, 'host_port').value : '',
+            container_port: field(item, 'container_port') ? field(item, 'container_port').value : '',
+            protocol: field(item, 'protocol') ? field(item, 'protocol').value : 'tcp',
+            description: field(item, 'description') ? field(item, 'description').value : ''
+        };
+        if (action === 'delete') {
+            openDeleteModal(payload);
+            return;
+        }
+        request(action, payload);
+    });
+
+    if (deleteCancel) {
+        deleteCancel.addEventListener('click', closeDeleteModal);
+    }
+    if (deleteModal) {
+        deleteModal.addEventListener('click', function(event){
+            if (event.target === deleteModal) closeDeleteModal();
+        });
+    }
+    if (deleteConfirm) {
+        deleteConfirm.addEventListener('click', function(){
+            if (!pendingDeletePayload) return;
+            var payload = pendingDeletePayload;
+            closeDeleteModal();
+            request('delete', payload);
+        });
+    }
+})();
+</script>
