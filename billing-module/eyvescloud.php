@@ -1,2459 +1,1131 @@
 <?php
+/**
+ * EyvesCloud WHMCS 服务器模块
+ *
+ * 支持 LXC 与 KVM 两种运行时并存：
+ *   - 每个产品通过配置项 `runtime` 绑定一种运行时（LXC 产品 / KVM 产品）
+ *   - 镜像下拉按 runtime 过滤，杜绝把 LXC 模板装到 KVM 产品上
+ *   - 客户区能力（VNC / ISO / 救援）由 EyvesMapper 的 caps 位驱动
+ *
+ * 与既有 EyvesCloud WHMCS 模块的数据约定保持一致：
+ *   实例 ID 存于产品自定义字段 `hostid`，老客户迁移无需改数据。
+ */
 
-use think\Db;
-
-define('EYVESCLOUD_DEBUG', false);
-
-function eyvescloud_debug($message, $data = null)
-{
-    if (!EYVESCLOUD_DEBUG) {
-        return;
-    }
-    $line = '[EYVESCLOUD-DEBUG] ' . $message;
-    if ($data !== null) {
-        $line .= ' | ' . json_encode($data, JSON_UNESCAPED_UNICODE);
-    }
-    error_log($line);
+if (!defined('WHMCS')) {
+    die('This file cannot be accessed directly');
 }
 
-function eyvescloud_debug_entry($message, $data = null)
-{
-    return [
-        'time'    => date('Y-m-d H:i:s'),
-        'message' => $message,
-        'data'    => $data,
-    ];
+use WHMCS\Database\Capsule;
+use WHMCS\Module\Server\EyvesCloud\EyvesCloud;
+use WHMCS\Module\Server\EyvesCloud\EyvesCloudException;
+use WHMCS\Module\Server\EyvesCloud\EyvesMapper;
+use WHMCS\Module\Server\EyvesCloud\EyvesLang;
+
+require_once __DIR__ . '/lib/EyvesCloud.php';
+require_once __DIR__ . '/lib/EyvesMapper.php';
+require_once __DIR__ . '/lib/EyvesLang.php';
+
+const EYVESCLOUD_HOSTID_FIELD = 'hostid';
+const EYVESCLOUD_RUNTIME_FIELD = 'runtime';
+const EYVESCLOUD_VERSION = '1.0';
+
+/* =====================================================================
+ * 内部工具
+ * =================================================================== */
+
+if (!function_exists('eyvescloud_api')) {
+    /** @return EyvesCloud */
+    function eyvescloud_api(array $params)
+    {
+        return new EyvesCloud($params);
+    }
 }
 
-function eyvescloud_json_response($payload)
-{
-    if (!headers_sent()) {
-        header('Content-Type: application/json; charset=utf-8');
+if (!function_exists('eyvescloud_first_server_id')) {
+    /** 产品未绑定服务器时，退化到本模块的第一台服务器（用于配置项拉镜像） */
+    function eyvescloud_first_server_id()
+    {
+        try {
+            $row = Capsule::table('tblservers')->where('type', 'eyvescloud')->orderBy('id')->first();
+            if ($row && !empty($row->id)) {
+                return (int) $row->id;
+            }
+            $row = Capsule::table('tblservers')->orderBy('id')->first();
+            return $row && !empty($row->id) ? (int) $row->id : 0;
+        } catch (Throwable $e) {
+            return 0;
+        }
     }
-    echo json_encode($payload, JSON_UNESCAPED_UNICODE);
-    exit;
 }
+
+if (!function_exists('eyvescloud_get_hostid')) {
+    /** 读取服务对应的面板实例 ID */
+    function eyvescloud_get_hostid($serviceId, $productId = 0)
+    {
+        try {
+            $q = Capsule::table('tblcustomfields')->where('fieldname', EYVESCLOUD_HOSTID_FIELD);
+            if ($productId) {
+                $q->where('relid', $productId);
+            }
+            $field = $q->first();
+            if (!$field || empty($field->id)) {
+                return '';
+            }
+            $val = Capsule::table('tblcustomfieldsvalues')
+                ->where('fieldid', $field->id)
+                ->where('relid', $serviceId)
+                ->first();
+            return $val && isset($val->value) ? trim((string) $val->value) : '';
+        } catch (Throwable $e) {
+            return '';
+        }
+    }
+}
+
+if (!function_exists('eyvescloud_set_hostid')) {
+    function eyvescloud_set_hostid($serviceId, $value, $productId = 0)
+    {
+        try {
+            $q = Capsule::table('tblcustomfields')->where('fieldname', EYVESCLOUD_HOSTID_FIELD);
+            if ($productId) {
+                $q->where('relid', $productId);
+            }
+            $field = $q->first();
+            if (!$field || empty($field->id)) {
+                return false;
+            }
+            $exists = Capsule::table('tblcustomfieldsvalues')
+                ->where('fieldid', $field->id)->where('relid', $serviceId)->first();
+            if ($exists) {
+                Capsule::table('tblcustomfieldsvalues')
+                    ->where('fieldid', $field->id)->where('relid', $serviceId)
+                    ->update(['value' => $value]);
+            } else {
+                Capsule::table('tblcustomfieldsvalues')->insert([
+                    'fieldid' => $field->id, 'relid' => $serviceId, 'value' => $value,
+                ]);
+            }
+            return true;
+        } catch (Throwable $e) {
+            return false;
+        }
+    }
+}
+
+/**
+ * 产品配置项 → 创建规格。
+ * runtime 决定镜像族、控制台类型与可用能力，是 LXC/KVM 并存的枢纽。
+ */
+if (!function_exists('eyvescloud_spec_from_params')) {
+    function eyvescloud_spec_from_params(array $params, $nameOverride = '')
+    {
+        $cfg = isset($params['configoptions']) && is_array($params['configoptions']) ? $params['configoptions'] : [];
+
+        $runtime = 'lxc';
+        foreach (['runtime', 'virtualization', 'virt_type'] as $k) {
+            if (!empty($cfg[$k])) { $runtime = strtolower(trim((string) $cfg[$k])); break; }
+        }
+        // 兼容 "LXC (轻量)" / "KVM (完整虚拟化)" 这类带说明的选项值
+        $runtime = (strpos($runtime, 'kvm') !== false) ? 'kvm' : 'lxc';
+
+        $pick = function ($keys, $cfg, $default = null) {
+            foreach ((array) $keys as $k) {
+                if (isset($cfg[$k]) && $cfg[$k] !== '') { return $cfg[$k]; }
+            }
+            return $default;
+        };
+
+        $spec = [
+            'runtime'     => $runtime,
+            'name'        => $nameOverride !== '' ? $nameOverride : ('vm-' . ($params['serviceid'] ?? uniqid())),
+            'template_id' => (string) $pick(['image', 'template', 'template_id', 'os'], $cfg, ''),
+            'vcpu'        => (float) $pick(['vcpu', 'cpu', 'cores'], $cfg, 1),
+            'memory_mb'   => (int) $pick(['memory_mb', 'memory', 'ram_mb', 'ram'], $cfg, 512),
+            'disk_gb'     => (float) $pick(['disk_gb', 'disk'], $cfg, 10),
+        ];
+
+        $intOpts = [
+            'data_disk_gb'      => 'float',
+            'down_mbps'         => 'int',
+            'up_mbps'           => 'int',
+            'traffic_quota_gb'  => 'int',
+            'ssh_port'          => 'int',
+            'nat_ports'         => 'int',
+            'public_ipv4_count' => 'int',
+            'ipv6_count'        => 'int',
+        ];
+        foreach ($intOpts as $k => $t) {
+            $v = $pick([$k], $cfg, null);
+            if ($v !== null && $v !== '') {
+                $spec[$k] = $t === 'float' ? (float) $v : (int) $v;
+            }
+        }
+        $strOpts = ['node_id', 'storage_pool_id', 'tenant', 'traffic_mode', 'cloud_init'];
+        foreach ($strOpts as $k) {
+            $v = $pick([$k], $cfg, '');
+            if ($v !== '') { $spec[$k] = (string) $v; }
+        }
+        if (!empty($cfg['firewall'])) {
+            $spec['firewall_enabled'] = in_array(strtolower((string) $cfg['firewall']), ['on', '1', 'yes', 'true', '启用'], true);
+        }
+
+        // 密码：WHMCS 服务密码优先，否则由面板自动生成
+        if (!empty($params['password'])) {
+            $spec['auth'] = ['mode' => 'password', 'password' => (string) $params['password']];
+        }
+
+        return $spec;
+    }
+}
+
+/* =====================================================================
+ * 模块元数据与配置项
+ * =================================================================== */
 
 function eyvescloud_MetaData()
 {
     return [
-        'DisplayName' => 'EYVESCLOUD 计费系统对接模块',
-        'APIVersion'  => '1.1',
-        'HelpDoc'     => 'https://codeberg.org/fenhaolost/eyves-vm-panel',
-        'version'     => '1.0.12',
+        'DisplayName'                 => 'EyvesCloud',
+        'APIVersion'                  => '2.2',
+        'RequiresServer'              => true,
+        'DefaultNonSSLPort'           => '8999',
+        'DefaultSSLPort'              => '443',
+        'ServiceSingleSignOnLabel'    => '登录控制台',
+        'AdminSingleSignOnLabel'      => '登录面板管理',
     ];
 }
 
 function eyvescloud_ConfigOptions()
 {
+    // 连接面板拉取真实镜像清单；失败则退化为纯文本输入，绝不阻断产品保存
+    $lxcImages = [];
+    $kvmImages = [];
+    $connError = '';
+    try {
+        $sid = eyvescloud_first_server_id();
+        if ($sid > 0) {
+            $api = new EyvesCloud(['serverid' => $sid]);
+            $grouped = $api->imagesGrouped();
+            foreach ($grouped['lxc'] as $img) {
+                if (empty($img['enabled'])) { continue; }
+                $lxcImages[$img['id']] = $img['name'] . ' (' . ($img['arch'] ?? '') . ')';
+            }
+            foreach ($grouped['kvm'] as $img) {
+                if (empty($img['enabled'])) { continue; }
+                $kvmImages[$img['id']] = $img['name'] . ' (' . ($img['arch'] ?? '') . ')';
+            }
+        } else {
+            $connError = '尚未添加 EyvesCloud 服务器';
+        }
+    } catch (Throwable $e) {
+        $connError = '镜像清单拉取失败：' . $e->getMessage();
+    }
+
+    $imageOptions = [];
+    if (!empty($lxcImages)) {
+        $imageOptions['—— LXC 镜像 ——'] = '';
+        foreach ($lxcImages as $k => $v) { $imageOptions[$v . '  [' . $k . ']'] = $k; }
+    }
+    if (!empty($kvmImages)) {
+        $imageOptions['—— KVM 镜像 ——'] = '';
+        foreach ($kvmImages as $k => $v) { $imageOptions[$v . '  [' . $k . ']'] = $k; }
+    }
+
     return [
-        ['type' => 'dropdown', 'name' => '虚拟化类型', 'description' => 'lxc 或 kvm', 'default' => 'lxc', 'key' => 'virtualization', 'options' => ['lxc' => 'LXC', 'kvm' => 'KVM']],
-        ['type' => 'text', 'name' => '镜像/模板 ID', 'description' => 'EYVESCLOUD 模板 ID，例如 alpine-3.21、debian-bookworm、ubuntu-jammy 或已启用的 KVM 镜像 ID', 'default' => 'alpine-3.21', 'key' => 'template_id'],
-        ['type' => 'text', 'name' => 'CPU 核心', 'description' => 'vCPU 数量，KVM 必须为整数', 'default' => '1', 'key' => 'vcpu'],
-        ['type' => 'text', 'name' => 'CPU 百分比', 'description' => 'CPU 使用率限制，0 表示不额外限制', 'default' => '0', 'key' => 'cpu_percent'],
-        ['type' => 'text', 'name' => '内存 MB', 'description' => '容器内存，单位 MB', 'default' => '512', 'key' => 'ram_mb'],
-        ['type' => 'text', 'name' => '硬盘 GB', 'description' => '系统盘大小，单位 GB（支持 0.5、0.75、1、5 等浮点数）', 'default' => '5', 'key' => 'disk_gb'],
-        ['type' => 'text', 'name' => '带宽 Mbps', 'description' => '网络带宽限制，0 表示不限制', 'default' => '100', 'key' => 'network_bw_mbps'],
-        ['type' => 'dropdown', 'name' => '流量模式', 'description' => 'total=总流量，in_out=分别限制入/出方向', 'default' => 'total', 'key' => 'traffic_mode', 'options' => ['total' => '总流量', 'in_out' => '入/出分开']],
-        ['type' => 'text', 'name' => '月流量 GB', 'description' => 'total 模式下的月流量限制，0 表示不限制', 'default' => '100', 'key' => 'monthly_traffic_gb'],
-        ['type' => 'text', 'name' => '入站流量 GB', 'description' => 'in_out 模式下入站流量限制，0 表示不限制', 'default' => '0', 'key' => 'traffic_in_gb'],
-        ['type' => 'text', 'name' => '出站流量 GB', 'description' => 'in_out 模式下出站流量限制，0 表示不限制', 'default' => '0', 'key' => 'traffic_out_gb'],
-        ['type' => 'text', 'name' => 'IO 速度 MB/s', 'description' => '磁盘 IO 限制，0 表示不限制', 'default' => '0', 'key' => 'io_speed_mbps'],
-        ['type' => 'dropdown', 'name' => '分配 NAT', 'description' => '开通时是否分配 NAT 端口映射', 'default' => 'true', 'key' => 'assign_nat', 'options' => ['true' => '启用', 'false' => '禁用']],
-        ['type' => 'text', 'name' => 'NAT 端口数量', 'description' => '开通时分配的端口映射数量，最小 2', 'default' => '2', 'key' => 'port_mapping_count'],
-        ['type' => 'text', 'name' => '快照配额', 'description' => '每台实例允许保留的快照数量', 'default' => '3', 'key' => 'snapshot_limit'],
-        ['type' => 'text', 'name' => '额外端口', 'description' => '逗号分隔的容器端口，例如 80,443', 'default' => '', 'key' => 'extra_ports'],
-        ['type' => 'dropdown', 'name' => '自动公网 IPv4', 'description' => '开通时是否从 EYVESCLOUD 公网 IPv4 池分配独立 IPv4', 'default' => 'false', 'key' => 'assign_ipv4', 'options' => ['true' => '启用', 'false' => '禁用']],
-        ['type' => 'text', 'name' => '公网 IPv4 数量', 'description' => '自动分配公网 IPv4 的数量，通常填写 1', 'default' => '1', 'key' => 'ipv4_count'],
-        ['type' => 'text', 'name' => '指定公网 IPv4', 'description' => '指定分配的公网 IPv4，多个用逗号分隔；留空则从地址池自动分配', 'default' => '', 'key' => 'public_ipv4s'],
-        ['type' => 'dropdown', 'name' => '自动 IPv6', 'description' => '开通时自动分配 IPv6', 'default' => 'false', 'key' => 'assign_ipv6', 'options' => ['true' => '启用', 'false' => '禁用']],
-        ['type' => 'text', 'name' => 'IPv6 数量', 'description' => '自动分配 IPv6 的数量，通常填写 1', 'default' => '1', 'key' => 'ipv6_count'],
-        ['type' => 'text', 'name' => '指定 IPv6', 'description' => '指定分配的 IPv6 地址，多个用逗号分隔；留空则从地址池自动分配', 'default' => '', 'key' => 'ipv6_addresses'],
-        ['type' => 'dropdown', 'name' => 'SSH 鉴权模式', 'description' => 'auto_password=自动生成密码，password=使用指定密码，key=使用 SSH 公钥', 'default' => 'auto_password', 'key' => 'ssh_auth_mode', 'options' => ['auto_password' => '自动密码', 'password' => '指定密码', 'key' => 'SSH 公钥']],
-        ['type' => 'text', 'name' => '指定 SSH 密码', 'description' => 'SSH 鉴权模式为 password 时使用；其他模式留空', 'default' => '', 'key' => 'ssh_password'],
-        ['type' => 'text', 'name' => 'SSH 公钥', 'description' => 'SSH 鉴权模式为 key 时使用；填写完整 public key', 'default' => '', 'key' => 'ssh_public_key'],
-        ['type' => 'dropdown', 'name' => '同步到期时间', 'description' => '开通/续费时把计费系统到期日期同步到 EYVESCLOUD，格式会转换为 YYYY-MM-DD', 'default' => 'true', 'key' => 'sync_expiry', 'options' => ['true' => '启用', 'false' => '禁用']],
+        'runtime' => [
+            'FriendlyName' => '虚拟化类型',
+            'Type'         => 'dropdown',
+            'Options'      => ['lxc' => 'LXC（容器，轻量）', 'kvm' => 'KVM（完整虚拟化）'],
+            'Default'      => 'lxc',
+            'Description'  => '决定可用镜像族与控制台类型：LXC 用 SSH 终端，KVM 支持 VNC/ISO/救援',
+        ],
+        'image' => [
+            'FriendlyName' => '系统镜像',
+            'Type'         => count($imageOptions) > 0 ? 'dropdown' : 'text',
+            'Options'      => $imageOptions,
+            'Default'      => '',
+            'Description'  => count($imageOptions) > 0
+                ? '镜像已按运行时归类，请与上方「虚拟化类型」保持一致'
+                : ('请填写镜像 ID。' . $connError),
+        ],
+        'vcpu' => [
+            'FriendlyName' => 'CPU 核数',
+            'Type' => 'text', 'Size' => '10', 'Default' => '1',
+            'Description' => '支持小数（如 0.5）',
+        ],
+        'memory_mb' => [
+            'FriendlyName' => '内存 (MB)',
+            'Type' => 'text', 'Size' => '10', 'Default' => '512',
+        ],
+        'disk_gb' => [
+            'FriendlyName' => '系统盘 (GB)',
+            'Type' => 'text', 'Size' => '10', 'Default' => '10',
+        ],
+        'data_disk_gb' => [
+            'FriendlyName' => '数据盘 (GB)',
+            'Type' => 'text', 'Size' => '10', 'Default' => '0',
+            'Description' => '填 0 表示不创建数据盘（LXC/KVM 均支持，单块）',
+        ],
+        'traffic_quota_gb' => [
+            'FriendlyName' => '月流量 (GB)',
+            'Type' => 'text', 'Size' => '10', 'Default' => '0',
+            'Description' => '0 表示不限',
+        ],
+        'down_mbps' => ['FriendlyName' => '下行带宽 (Mbps)', 'Type' => 'text', 'Size' => '10', 'Default' => '100'],
+        'up_mbps'   => ['FriendlyName' => '上行带宽 (Mbps)', 'Type' => 'text', 'Size' => '10', 'Default' => '50'],
+        'nat_ports' => [
+            'FriendlyName' => 'NAT 端口数',
+            'Type' => 'text', 'Size' => '10', 'Default' => '0',
+            'Description' => '分配给实例的端口映射数量上限',
+        ],
+        'public_ipv4_count' => ['FriendlyName' => '独立 IPv4 数', 'Type' => 'text', 'Size' => '10', 'Default' => '0'],
+        'ipv6_count'        => ['FriendlyName' => 'IPv6 数量', 'Type' => 'text', 'Size' => '10', 'Default' => '0'],
+        'firewall' => [
+            'FriendlyName' => '防火墙',
+            'Type' => 'dropdown', 'Options' => 'on,off', 'Default' => 'off',
+        ],
+        'node_id' => [
+            'FriendlyName' => '指定节点',
+            'Type' => 'text', 'Size' => '20', 'Default' => '',
+            'Description' => '留空=本机主控；填 auto=调度器自动选择',
+        ],
     ];
 }
 
-function eyvescloud_base_url($params)
+/* =====================================================================
+ * 生命周期
+ * =================================================================== */
+
+function eyvescloud_TestConnection(array $params)
 {
-    if (!empty($params['server_host'])) {
-        return rtrim($params['server_host'], '/');
+    try {
+        $res = eyvescloud_api($params)->testConnection();
+        if (empty($res['success'])) {
+            return ['success' => false, 'error' => $res['error'] ?? '连接失败'];
+        }
+        return ['success' => true, 'error' => '', 'version' => $res['version'] ?? ''];
+    } catch (Throwable $e) {
+        return ['success' => false, 'error' => $e->getMessage()];
     }
-
-    $host = $params['server_ip'] ?? $params['ip'] ?? '';
-    $port = $params['port'] ?? '';
-    $scheme = (!empty($params['secure']) && (string)$params['secure'] !== '0') ? 'https' : 'http';
-
-    if (stripos($host, 'http://') === 0 || stripos($host, 'https://') === 0) {
-        $base = rtrim($host, '/');
-    } else {
-        $base = $scheme . '://' . $host;
-    }
-
-    if ($port !== '' && strpos(parse_url($base, PHP_URL_HOST) ?: $base, ':') === false) {
-        $base .= ':' . $port;
-    }
-
-    return rtrim($base, '/');
 }
 
-function eyvescloud_api_key($params)
+function eyvescloud_CreateAccount(array $params)
 {
-    foreach (['accesshash', 'server_password', 'password'] as $key) {
-        if (!empty($params[$key])) {
-            return trim($params[$key]);
+    try {
+        $api = eyvescloud_api($params);
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $productId = (int) ($params['pid'] ?? 0);
+
+        // 幂等：已有绑定实例直接返回
+        $existing = eyvescloud_get_hostid($serviceId, $productId);
+        if ($existing !== '') {
+            return 'success';
+        }
+
+        $name = !empty($params['domain']) ? $params['domain'] : ('vm-' . $serviceId);
+        $name = preg_replace('/[^a-zA-Z0-9\-]/', '-', $name);
+        $name = trim($name, '-');
+        if ($name === '') { $name = 'vm-' . $serviceId; }
+
+        $spec = eyvescloud_spec_from_params($params, $name);
+        if ($spec['template_id'] === '') {
+            return '创建失败：未配置系统镜像（产品配置项「系统镜像」）';
+        }
+
+        // 防呆：镜像必须属于产品的运行时。
+        // 注意「该运行时一个镜像都没有」也要拦 —— 否则会一路走到面板，
+        // 报出一个和配置无关的底层错误（如 "Template is not enabled or downloaded"）。
+        try {
+            $imgList = $api->images($spec['runtime']);
+            $ids = array_column($imgList, 'id');
+            if (empty($ids)) {
+                return sprintf(
+                    '创建失败：%s 运行时当前没有任何可用镜像。请确认宿主节点已具备该虚拟化能力（KVM 需要 /dev/kvm 与 virsh）。',
+                    strtoupper($spec['runtime'])
+                );
+            }
+            if (!in_array($spec['template_id'], $ids, true)) {
+                return sprintf(
+                    '创建失败：镜像 %s 不属于 %s 运行时（该运行时可用：%s）',
+                    $spec['template_id'], strtoupper($spec['runtime']), implode(', ', array_slice($ids, 0, 5))
+                );
+            }
+        } catch (Throwable $e) {
+            // 拉不到镜像清单时不阻断创建，交给面板校验
+        }
+
+        $res = $api->createInstance($spec);
+        $items = isset($res['items']) ? $res['items'] : [];
+        $instanceRef = '';
+        if (!empty($items) && isset($items[0]['name'])) {
+            $instanceRef = (string) $items[0]['name'];
+        }
+        // 记下创建时返回的初始密码（面板只在创建响应里回一次）
+        $initialPassword = isset($res['password']) ? (string) $res['password'] : '';
+
+        $taskIds = isset($res['task_ids']) && is_array($res['task_ids']) ? $res['task_ids'] : [];
+
+        // 绑定：优先用实例名，等任务完成后再换真实 ID
+        if ($instanceRef !== '') {
+            eyvescloud_set_hostid($serviceId, $instanceRef, $productId);
+        }
+
+        if (!empty($taskIds)) {
+            $last = $api->waitTask($taskIds[0], 180, 3);
+            $st = strtolower((string) ($last['status'] ?? ''));
+            if (in_array($st, ['failed', 'error'], true)) {
+                eyvescloud_set_hostid($serviceId, '', $productId);
+                return '创建失败：' . ($last['message'] ?? $last['error'] ?? '面板任务失败');
+            }
+        }
+
+        // 任务结束后把 hostid 换成面板真实 ID（数字 ID 或 UUID）
+        try {
+            $found = $api->findInstanceByName($instanceRef);
+            if ($found && !empty($found['id'])) {
+                eyvescloud_set_hostid($serviceId, (string) $found['id'], $productId);
+            }
+        } catch (Throwable $e) {
+            // 名字绑定依然可用，忽略
+        }
+
+        if ($initialPassword !== '') {
+            try {
+                Capsule::table('tblhosting')->where('id', $serviceId)->update([
+                    'password' => encrypt($initialPassword),
+                ]);
+            } catch (Throwable $e) {
+                // 非致命
+            }
+        }
+
+        return 'success';
+    } catch (EyvesCloudException $e) {
+        return '创建失败：' . $e->getMessage();
+    } catch (Throwable $e) {
+        return '创建失败：' . $e->getMessage();
+    }
+}
+
+function eyvescloud_SuspendAccount(array $params)
+{
+    return eyvescloud_power_call($params, 'suspend', '挂起失败');
+}
+
+function eyvescloud_UnsuspendAccount(array $params)
+{
+    return eyvescloud_power_call($params, 'unsuspend', '恢复失败');
+}
+
+function eyvescloud_TerminateAccount(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $productId = (int) ($params['pid'] ?? 0);
+        $hostid = eyvescloud_get_hostid($serviceId, $productId);
+        if ($hostid === '') {
+            return 'success'; // 无绑定视为已销毁
+        }
+        $ref = eyvescloud_resolve_id($api, $hostid);
+        // 销毁走回收站软删除，与 WHMCS 终止语义对齐（可恢复窗口）
+        $api->deleteInstance($ref, false);
+        eyvescloud_set_hostid($serviceId, '', $productId);
+        return 'success';
+    } catch (EyvesCloudException $e) {
+        return '销毁失败：' . $e->getMessage();
+    } catch (Throwable $e) {
+        return '销毁失败：' . $e->getMessage();
+    }
+}
+
+function eyvescloud_ChangePassword(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $ref = eyvescloud_require_instance($api, $params);
+        $pw = isset($params['password']) ? (string) $params['password'] : '';
+        $api->resetPassword($ref, $pw);
+        return 'success';
+    } catch (EyvesCloudException $e) {
+        return '改密失败：' . $e->getMessage();
+    } catch (Throwable $e) {
+        return '改密失败：' . $e->getMessage();
+    }
+}
+
+/**
+ * 升降配。LXC/KVM 均可在线调整 vCPU/内存/带宽；
+ * 磁盘只增不减（面板语义），缩小请求直接拒绝并说明。
+ */
+function eyvescloud_ChangePackage(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $ref = eyvescloud_require_instance($api, $params);
+        $cur = eyvescloud_capability_instance($api, $ref);
+        $spec = eyvescloud_spec_from_params($params, $cur['name'] ?? '');
+
+        $patch = [];
+        if ($spec['vcpu'] > 0)      { $patch['vcpu'] = $spec['vcpu']; }
+        if ($spec['memory_mb'] > 0) { $patch['memory_mb'] = $spec['memory_mb']; }
+        if ($spec['disk_gb'] > 0) {
+            if ($spec['disk_gb'] < (float) ($cur['disk_gb'] ?? 0)) {
+                return sprintf('升降配失败：磁盘不支持缩小（当前 %.0f GB，请求 %.0f GB）', $cur['disk_gb'], $spec['disk_gb']);
+            }
+            $patch['disk_gb'] = $spec['disk_gb'];
+        }
+        foreach (['data_disk_gb', 'down_mbps', 'up_mbps', 'traffic_quota_gb'] as $k) {
+            if (isset($spec[$k]) && $spec[$k] > 0) { $patch[$k] = $spec[$k]; }
+        }
+        if (empty($patch)) {
+            return 'success';
+        }
+        $api->updateInstance($ref, $patch);
+        return 'success';
+    } catch (EyvesCloudException $e) {
+        return '升降配失败：' . $e->getMessage();
+    } catch (Throwable $e) {
+        return '升降配失败：' . $e->getMessage();
+    }
+}
+
+function eyvescloud_AdminCustomButtonArray()
+{
+    return [
+        '开机'         => 'PowerOn',
+        '关机'         => 'PowerOff',
+        '强制关机'     => 'HardStop',
+        '重启'         => 'Reboot',
+        '强制重启'     => 'HardRestart',
+        '重装系统'     => 'Reinstall',
+        '重置密码'     => 'ResetPassword',
+        '重置流量'     => 'ResetTraffic',
+    ];
+}
+
+function eyvescloud_PowerOn(array $params)      { return eyvescloud_power_call($params, 'start', '开机失败'); }
+function eyvescloud_PowerOff(array $params)     { return eyvescloud_power_call($params, 'shutdown', '关机失败'); }
+function eyvescloud_HardStop(array $params)     { return eyvescloud_power_call($params, 'hard-stop', '强制关机失败'); }
+function eyvescloud_Reboot(array $params)       { return eyvescloud_power_call($params, 'restart', '重启失败'); }
+function eyvescloud_HardRestart(array $params)  { return eyvescloud_power_call($params, 'hard-restart', '强制重启失败'); }
+
+function eyvescloud_Reinstall(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $ref = eyvescloud_require_instance($api, $params);
+        $spec = eyvescloud_spec_from_params($params);
+        if ($spec['template_id'] === '') {
+            return '重装失败：产品未配置系统镜像';
+        }
+        $api->reinstall($ref, $spec['template_id'], 'password', (string) ($params['password'] ?? ''));
+        return 'success';
+    } catch (Throwable $e) {
+        return '重装失败：' . $e->getMessage();
+    }
+}
+
+function eyvescloud_ResetPassword(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $ref = eyvescloud_require_instance($api, $params);
+        $res = $api->resetPassword($ref, (string) ($params['password'] ?? ''));
+        // 面板未指定密码时会回传新密码，落回 WHMCS
+        $newPw = is_array($res) && !empty($res['password']) ? (string) $res['password'] : '';
+        if ($newPw !== '') {
+            Capsule::table('tblhosting')->where('id', (int) $params['serviceid'])->update(['password' => encrypt($newPw)]);
+            return 'success|新密码：' . $newPw;
+        }
+        return 'success';
+    } catch (Throwable $e) {
+        return '重置密码失败：' . $e->getMessage();
+    }
+}
+
+function eyvescloud_ResetTraffic(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $ref = eyvescloud_require_instance($api, $params);
+        $api->call('POST', '/api/v1/containers/' . rawurlencode($ref) . '/traffic-reset');
+        return 'success';
+    } catch (Throwable $e) {
+        return '重置流量失败：' . $e->getMessage();
+    }
+}
+
+/* =====================================================================
+ * 客户区
+ * =================================================================== */
+
+function eyvescloud_ClientArea(array $params)
+{
+    try {
+        EyvesLang::load();
+        $lang = eyvescloud_lang_array();
+
+        $api = eyvescloud_api($params);
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $productId = (int) ($params['pid'] ?? 0);
+        $hostid = eyvescloud_get_hostid($serviceId, $productId);
+        if ($hostid === '') {
+            return ['templatefile' => 'templates/error', 'vars' => [
+                'message' => $lang['not_provisioned'] ?? '该服务尚未开通实例',
+                'lang'    => $lang,
+                'serviceid' => $serviceId,
+                'assets'    => eyvescloud_assets_url(),
+                'evVersion' => eyvescloud_asset_version(),
+                'webRoot'   => eyvescloud_web_root(),
+            ]];
+        }
+
+        $ref  = eyvescloud_resolve_id($api, $hostid);
+        $raw  = $api->instance($ref);
+        $vm   = EyvesMapper::instance($raw);
+
+        // ---- 补齐展示用派生字段（缺失一律安全降级，绝不让模板拿到 undefined）----
+        // 状态 → 语言键。不要拼字符串（曾经拼出 status_on 这个不存在的键，
+        // 导致运行中的实例显示原始英文串 "running"）。
+        $statusKeyMap = [
+            'running'  => 'on',
+            'stopped'  => 'off',
+            'starting' => 'starting',
+            'stopping' => 'stopping',
+            'creating' => 'creating',
+            'error'    => 'status_error',
+            'unknown'  => 'status_unknown',
+        ];
+        $vKey = isset($statusKeyMap[$vm['status']]) ? $statusKeyMap[$vm['status']] : 'status_unknown';
+        $vm['status_label'] = isset($lang[$vKey]) && $lang[$vKey] !== '' ? $lang[$vKey] : $vm['status'];
+        $vm['os_family'] = eyvescloud_os_family($vm['template_id']);
+        $region = eyvescloud_resolve_region($api, $vm['node_id']);
+        $vm['region_code'] = $region['code'];
+        $vm['region_name'] = $region['name'];
+
+        // ---- 当前页签 ----
+        $page = isset($_REQUEST['page']) ? preg_replace('/[^a-z]/', '', (string) $_REQUEST['page']) : 'base';
+        if ($page === '') { $page = 'base'; }
+        $caps = $vm['caps'];
+        // 服务端同样按能力位把关：手动构造 URL 也进不去不该看的页签
+        $allowed = ['base', 'monitor', 'network', 'drive', 'sshkey', 'password', 'crons', 'tasks', 'setting'];
+        if (!empty($caps['port_map']))  { $allowed[] = 'portmap'; }
+        if (!empty($caps['snapshot']))  { $allowed[] = 'snapshots'; }
+        if (!empty($caps['backup']))    { $allowed[] = 'backups'; }
+        if (!empty($caps['firewall']))  { $allowed[] = 'securitys'; }
+        if (!empty($caps['iso_mount'])) { $allowed[] = 'iso'; }
+        if (!in_array($page, $allowed, true)) {
+            $page = 'base';
+        }
+
+        // ---- 页签数据 ----
+        $data = eyvescloud_page_data($api, $vm, $page);
+
+        // ---- 监控图表数据（服务端转换，模板只负责画）----
+        $charts     = [];
+        $chartsJson = '[]';
+        $ranges     = [];
+        if ($page === 'monitor') {
+            $rangeKeys = [
+                ['key' => '1h',  'label' => $lang['range_1h']  ?? '1h'],
+                ['key' => '6h',  'label' => $lang['range_6h']  ?? '6h'],
+                ['key' => '24h', 'label' => $lang['range_24h'] ?? '24h'],
+                ['key' => '7d',  'label' => $lang['range_7d']  ?? '7d'],
+            ];
+            $curRange = isset($_REQUEST['range']) ? (string) $_REQUEST['range'] : '1h';
+            foreach ($rangeKeys as $rk) {
+                $rk['active'] = ($rk['key'] === $curRange);
+                $ranges[] = $rk;
+            }
+            $charts = eyvescloud_build_charts(isset($data['metrics']) ? $data['metrics'] : null, $curRange, $lang);
+            $chartsJson = json_encode($charts, JSON_UNESCAPED_UNICODE);
+            $data['hasData'] = !empty($charts);
+        }
+
+        // ---- 只把前端 JS 真正用到的词条下发给浏览器 ----
+        // （整份字典 172 条全塞进去纯属浪费，而且会在 DOM 里制造假信号）
+        // 这份清单来自模板里 EvClient.lang.* / LANG.* 的实际引用，改模板时记得同步。
+        $jsKeys = [
+            'panel_unreachable', 'operation_failed', 'operation_success', 'copied',
+            'actionconfirmtitle', 'warn_irreversible', 'cancel', 'confirm', 'close',
+            'submit', 'create', 'save', 'delete', 'restore', 'refresh', 'loading',
+            'boot', 'shutdown', 'hardshutdown', 'reboot', 'hardreboot', 'console',
+            'port_add', 'internal_port', 'external_port', 'protocol', 'remark',
+            'random_port', 'confirm_delete',
+            'snapshot_name', 'snapshot_create', 'snapshot_restore',
+            'backup_create',
+            'reinstallos', 'reinstall_confirm', 'reinstall_tip', 'reinstall_name_mismatch',
+            'select_image', 'image_not_downloaded',
+            'password', 'new_password', 'password_rule', 'password_reset_ok',
+            'reset_traffic_ok',
+            'rescue_enter', 'rescue_pick_iso',
+        ];
+        $langJs = [];
+        foreach ($jsKeys as $k) {
+            $langJs[$k] = isset($lang[$k]) ? $lang[$k] : '';
+        }
+
+        return [
+            'templatefile' => 'templates/clientarea',
+            'vars' => [
+                'vm'          => $vm,
+                'caps'        => $caps,
+                'console'     => $vm['console'],
+                'page'        => $page,
+                'data'        => $data,
+                'charts'      => $charts,
+                'chartsJson'  => $chartsJson,
+                'ranges'      => $ranges,
+                'lang'        => $lang,
+                'langJson'    => json_encode($langJs, JSON_UNESCAPED_UNICODE),
+                'serviceid'   => $serviceId,
+                'webRoot'     => eyvescloud_web_root(),
+                'assets'      => eyvescloud_assets_url(),
+                'api'         => eyvescloud_api_url(),
+                'evVersion'   => eyvescloud_asset_version(),
+                'pageAlert'   => null,
+            ],
+        ];
+    } catch (Throwable $e) {
+        EyvesLang::load();
+        return ['templatefile' => 'templates/error', 'vars' => [
+            'message'   => $e->getMessage(),
+            'lang'      => eyvescloud_lang_array(),
+            'serviceid' => (int) ($params['serviceid'] ?? 0),
+            'assets'    => eyvescloud_assets_url(),
+            'evVersion' => eyvescloud_asset_version(),
+        ]];
+    }
+}
+
+function eyvescloud_AdminServicesTabFields(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $serviceId = (int) ($params['serviceid'] ?? 0);
+        $productId = (int) ($params['pid'] ?? 0);
+        $hostid = eyvescloud_get_hostid($serviceId, $productId);
+        if ($hostid === '') {
+            return ['面板实例 ID' => '<input type="text" name="eyves_hostid" value="" size="40" placeholder="留空并在下方绑定">'];
+        }
+        $ref = eyvescloud_resolve_id($api, $hostid);
+        $model = EyvesMapper::instance($api->instance($ref));
+        return [
+            '面板实例 ID' => htmlspecialchars($model['id']),
+            '运行时'      => $model['runtime_label'],
+            '状态'        => $model['status'] . ($model['suspended'] ? '（已挂起）' : ''),
+            '主 IP'       => htmlspecialchars($model['primary_ip']),
+            '节点'        => htmlspecialchars($model['node_name']),
+            '规格'        => sprintf('%.2f 核 / %d MB / %.0f GB + %.0f GB', $model['vcpu'], $model['memory_mb'], $model['disk_gb'], $model['data_disk_gb']),
+            '流量'        => sprintf('%.2f / %.0f GB', $model['traffic']['used_gb'], $model['traffic']['quota_gb']),
+            '到期'        => htmlspecialchars($model['expires_at']),
+        ];
+    } catch (Throwable $e) {
+        return ['状态' => '读取失败：' . htmlspecialchars($e->getMessage())];
+    }
+}
+
+function eyvescloud_ServiceSingleSignOn(array $params)
+{
+    try {
+        $api = eyvescloud_api($params);
+        $ref = eyvescloud_require_instance($api, $params);
+        $model = EyvesMapper::instance($api->instance($ref));
+        // LXC → SSH 终端；KVM → VNC。由 caps 决定，不在这里判断 runtime
+        $console = $api->console($model);
+        $url = $console['url'] ?? '';
+        return ['success' => true, 'redirectTo' => $url];
+    } catch (Throwable $e) {
+        return ['success' => false, 'errorMsg' => $e->getMessage()];
+    }
+}
+
+/* =====================================================================
+ * 共享内部实现
+ * =================================================================== */
+
+if (!function_exists('eyvescloud_power_call')) {
+    function eyvescloud_power_call(array $params, $action, $errPrefix)
+    {
+        try {
+            $api = eyvescloud_api($params);
+            $ref = eyvescloud_require_instance($api, $params);
+            $api->power($ref, $action);
+            return 'success';
+        } catch (EyvesCloudException $e) {
+            return $errPrefix . '：' . $e->getMessage();
+        } catch (Throwable $e) {
+            return $errPrefix . '：' . $e->getMessage();
         }
     }
-    return '';
 }
 
-function eyvescloud_request($params, $endpoint, $data = [], $method = 'GET', $timeout = 30, $extraHeaders = [])
-{
-    $url = eyvescloud_base_url($params) . $endpoint;
-    $apiKey = eyvescloud_api_key($params);
-    $method = strtoupper($method);
-    // 默认开启 TLS 证书校验；仅当服务器配置里显式设置 insecure=1 时允许自签证书跳过校验。
-    $insecure = !empty($params['insecure']);
-
-    $curl = curl_init();
-    // 仅使用 X-API-Key 一个鉴权头：上游 eyvescloud API 同时接受 Authorization Bearer，
-    // 但双发会让上游日志冗余、易被误读为"两个不同 key"，反而增大泄露面。
-    // 推荐签发收敛到 sub-user scope 的 API Key（不要 admin:*），避免WHMCS 单点失陷
-    // 拿到上游全局权限（详见审计报告 EVE-005）。
-    $headers = [
-        'Content-Type: application/json',
-        'X-API-Key: ' . $apiKey,
-    ];
-    foreach ((array)$extraHeaders as $name => $value) {
-        $headers[] = $name . ': ' . $value;
-    }
-
-    $options = [
-        CURLOPT_URL            => $url,
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_TIMEOUT        => $timeout,
-        CURLOPT_CONNECTTIMEOUT => 10,
-        CURLOPT_FOLLOWLOCATION => true,
-        CURLOPT_CUSTOMREQUEST  => $method,
-        CURLOPT_HTTPHEADER     => $headers,
-        CURLOPT_SSL_VERIFYPEER => $insecure ? false : true,
-        CURLOPT_SSL_VERIFYHOST => $insecure ? 0 : 2,
-        CURLOPT_USERAGENT      => 'EYVESCLOUD-Billing',
-    ];
-
-    if ($method !== 'GET' && $data !== null) {
-        $options[CURLOPT_POSTFIELDS] = json_encode($data, JSON_UNESCAPED_UNICODE);
-    }
-
-    curl_setopt_array($curl, $options);
-    $body = curl_exec($curl);
-    $errno = curl_errno($curl);
-    $error = curl_error($curl);
-    $httpCode = curl_getinfo($curl, CURLINFO_HTTP_CODE);
-    curl_close($curl);
-
-    eyvescloud_debug('request', ['url' => $url, 'method' => $method, 'http_code' => $httpCode, 'errno' => $errno]);
-
-    if ($errno) {
-        return ['success' => false, 'message' => 'CURL ERROR: ' . $error, '_http_code' => 0];
-    }
-
-    $decoded = json_decode($body, true);
-    if (!is_array($decoded)) {
-        return ['success' => false, 'message' => 'Invalid JSON response: ' . substr((string)$body, 0, 300), '_http_code' => $httpCode];
-    }
-
-    $decoded['_http_code'] = $httpCode;
-    return $decoded;
-}
-
-function eyvescloud_request_debug($params, $endpoint, $data = [], $method = 'GET', $timeout = 30)
-{
-    $started = microtime(true);
-    $res = eyvescloud_request($params, $endpoint, $data, $method, $timeout);
-    return [
-        'response' => $res,
-        'debug'    => eyvescloud_debug_entry('EYVESCLOUD API request', [
-            'method'   => strtoupper($method),
-            'endpoint' => $endpoint,
-            'payload'  => $data,
-            'http'     => is_array($res) ? ($res['_http_code'] ?? null) : null,
-            'success'  => eyvescloud_success($res),
-            'message'  => eyvescloud_message($res, ''),
-            'ms'       => (int)round((microtime(true) - $started) * 1000),
-        ]),
-    ];
-}
-
-function eyvescloud_success($res)
-{
-    if (!is_array($res)) {
-        return false;
-    }
-    if (isset($res['success'])) {
-        return (bool)$res['success'];
-    }
-    return isset($res['code']) && (int)$res['code'] >= 200 && (int)$res['code'] < 300;
-}
-
-function eyvescloud_message($res, $fallback = '操作失败')
-{
-    if (!is_array($res)) {
-        return $fallback;
-    }
-    return $res['message'] ?? $res['msg'] ?? $res['error'] ?? $fallback;
-}
-
-function eyvescloud_container_name($params)
-{
-    $name = $params['domain'] ?? '';
-    if (is_array($name)) {
-        $name = reset($name);
-    }
-    $name = trim((string)$name);
-    if ($name === '') {
-        $name = 'host-' . ($params['hostid'] ?? time());
-    }
-    $name = preg_replace('/[^A-Za-z0-9_.-]/', '-', $name);
-    return trim($name, '-.');
-}
-
-function eyvescloud_host_id($params)
-{
-    foreach (['hostid', 'id', 'serviceid', 'service_id', 'relid'] as $key) {
-        if (!empty($params[$key]) && is_numeric($params[$key])) {
-            return (int)$params[$key];
+if (!function_exists('eyvescloud_resolve_id')) {
+    /**
+     * hostid 可能是面板数字 ID、UUID 或实例名（创建瞬间绑定的是名字）。
+     * 统一解析成可用于 URL 的标识。
+     */
+    function eyvescloud_resolve_id(EyvesCloud $api, $hostid)
+    {
+        $hostid = trim((string) $hostid);
+        if ($hostid === '') {
+            throw new EyvesCloudException('未绑定面板实例');
         }
+        // 直接按 ID 探测
+        try {
+            $api->instance($hostid);
+            return $hostid;
+        } catch (Throwable $e) {
+            // 退化为按名字查找
+        }
+        $found = $api->findInstanceByName($hostid);
+        if ($found && !empty($found['id'])) {
+            return (string) $found['id'];
+        }
+        throw new EyvesCloudException('面板中找不到实例：' . $hostid);
     }
-    return 0;
 }
-function eyvescloud_first_string($value)
-{
-    if (is_array($value)) {
-        foreach ($value as $item) {
-            if (is_array($item)) {
-                foreach (['address', 'ip', 'ipv4', 'public_ip', 'public_ipv4'] as $key) {
-                    if (!empty($item[$key])) {
-                        $itemValue = trim((string)$item[$key]);
-                        if ($itemValue !== '') {
-                            return $itemValue;
+
+if (!function_exists('eyvescloud_require_instance')) {
+    function eyvescloud_require_instance(EyvesCloud $api, array $params)
+    {
+        $hostid = eyvescloud_get_hostid((int) ($params['serviceid'] ?? 0), (int) ($params['pid'] ?? 0));
+        return eyvescloud_resolve_id($api, $hostid);
+    }
+}
+
+if (!function_exists('eyvescloud_capability_instance')) {
+    function eyvescloud_capability_instance(EyvesCloud $api, $ref)
+    {
+        return $api->instance($ref);
+    }
+}
+
+/* =====================================================================
+ * 客户区辅助（模板上下文构造）
+ * =================================================================== */
+
+if (!function_exists('eyvescloud_lang_array')) {
+    function eyvescloud_lang_array()
+    {
+        global $_LANG;
+        return is_array($_LANG) ? $_LANG : [];
+    }
+}
+
+if (!function_exists('eyvescloud_web_root')) {
+    function eyvescloud_web_root()
+    {
+        try {
+            if (class_exists('\WHMCS\Config\Setting')) {
+                $root = \WHMCS\Config\Setting::getValue('SystemURL');
+                if (!empty($root)) {
+                    return rtrim($root, '/');
+                }
+            }
+        } catch (Throwable $e) {
+            // 降级为相对路径
+        }
+        return '';
+    }
+}
+
+if (!function_exists('eyvescloud_module_url')) {
+    function eyvescloud_module_url()
+    {
+        return eyvescloud_web_root() . '/modules/servers/eyvescloud';
+    }
+}
+
+if (!function_exists('eyvescloud_asset_version')) {
+    /**
+     * 静态资源版本号 = 关键文件的 mtime。
+     * 写死常量会让浏览器永远吃缓存（改样式不生效，升级后客户看到的还是旧界面），
+     * 用 mtime 才能改完即生效、升级即失效。
+     */
+    function eyvescloud_asset_version()
+    {
+        static $ver = null;
+        if ($ver !== null) {
+            return $ver;
+        }
+        $files = [
+            __DIR__ . '/templates/assets/css/eyves.css',
+            __DIR__ . '/templates/javascript.tpl',
+        ];
+        $max = 0;
+        foreach ($files as $f) {
+            if (is_file($f)) {
+                $t = @filemtime($f);
+                if ($t && $t > $max) { $max = $t; }
+            }
+        }
+        $ver = $max > 0 ? (string) $max : EYVESCLOUD_VERSION;
+        return $ver;
+    }
+}
+
+if (!function_exists('eyvescloud_assets_url')) {
+    function eyvescloud_assets_url()
+    {
+        return eyvescloud_module_url() . '/templates/assets/';
+    }
+}
+
+if (!function_exists('eyvescloud_api_url')) {
+    function eyvescloud_api_url()
+    {
+        return eyvescloud_module_url() . '/api_client.php';
+    }
+}
+
+if (!function_exists('eyvescloud_os_family')) {
+    /**
+     * 从镜像 ID 推导操作系统图标族。
+     * 只用于给 font-os 图标挑字形，识别不出就回落到通用图标，不参与任何业务判断。
+     */
+    function eyvescloud_os_family($templateId)
+    {
+        $id = strtolower((string) $templateId);
+        $map = [
+            // 只映射 font-os 图标集真实存在的字形（见 assets/css/font-os/os/），
+            // 不在集合里的系统（alpine/kali/gentoo/oracle…）返回空串，
+            // 由模板回落到通用图标 —— 总比渲染出一个空白方块好。
+            'ubuntu'   => 'ubuntu',
+            'debian'   => 'debian',
+            'centos'   => 'centos',
+            'alma'     => 'almalinux',
+            'rocky'    => 'rockylinux',
+            'fedora'   => 'fedora',
+            'arch'     => 'archlinux',
+            'opensuse' => 'opensuse',
+            'suse'     => 'opensuse',
+            'freebsd'  => 'freebsd',
+            'openbsd'  => 'openbsd',
+            'windows'  => 'windows',
+            'win'      => 'windows',
+            'coreos'   => 'coreos',
+            'rancher'  => 'rancheros',
+        ];
+        foreach ($map as $needle => $family) {
+            if ($needle !== '' && strpos($id, $needle) !== false) {
+                return $family;
+            }
+        }
+        return '';
+    }
+}
+
+if (!function_exists('eyvescloud_resolve_region')) {
+    /**
+     * 实例 → 区域展示信息（供区域徽标用）。
+     * 面板的实例视图不带 region 字段，需经 node → region 反查；任何一步失败都安全降级。
+     */
+    function eyvescloud_resolve_region(EyvesCloud $api, $nodeId)
+    {
+        $out = ['code' => '', 'name' => ''];
+        if ($nodeId === '') {
+            return $out;
+        }
+        try {
+            $node = null;
+            foreach ($api->nodes() as $n) {
+                if (isset($n['id']) && (string) $n['id'] === (string) $nodeId) {
+                    $node = $n;
+                    break;
+                }
+            }
+            if (!$node) {
+                return $out;
+            }
+            $out['name'] = isset($node['name']) ? (string) $node['name'] : '';
+            $regionId = isset($node['region_id']) ? (string) $node['region_id'] : '';
+            if ($regionId === '') {
+                return $out;
+            }
+            foreach ($api->regions() as $r) {
+                if (isset($r['id']) && (string) $r['id'] === $regionId) {
+                    $out['name'] = isset($r['name']) ? (string) $r['name'] : $out['name'];
+                    foreach (['code', 'short_name', 'slug'] as $k) {
+                        if (!empty($r[$k])) {
+                            $out['code'] = strtolower(substr((string) $r[$k], 0, 2));
+                            break;
                         }
                     }
-                }
-                continue;
-            }
-
-            $itemValue = trim((string)$item);
-            if ($itemValue !== '') {
-                return $itemValue;
-            }
-        }
-        return '';
-    }
-
-    $value = trim((string)$value);
-    return $value;
-}
-
-function eyvescloud_public_host_from_container($container = [])
-{
-    if (is_array($container)) {
-        foreach (['public_ipv4s', 'public_ipv4', 'public_ip', 'ipv4_addresses', 'ipv4', 'nat_public_ip', 'host_ip', 'external_ip', 'node_ip', 'nat_host'] as $key) {
-            if (!empty($container[$key])) {
-                $value = eyvescloud_first_string($container[$key]);
-                if ($value !== '') {
-                    return $value;
+                    break;
                 }
             }
+        } catch (Throwable $e) {
+            // 区域信息仅为装饰，取不到不影响页面
         }
+        return $out;
     }
-
-    return '';
 }
 
-function eyvescloud_public_ipv4_from_routing($params, $container = [])
-{
-    if (!is_array($container)) {
-        return '';
-    }
+if (!function_exists('eyvescloud_page_data')) {
+    /**
+     * 按页签抓取服务端数据。所有请求失败都降级为空数组，页面照样渲染。
+     */
+    function eyvescloud_page_data(EyvesCloud $api, array $vm, $page)
+    {
+        $id = $vm['id'];
+        switch ($page) {
+            case 'monitor':
+                $range = isset($_REQUEST['range']) ? (string) $_REQUEST['range'] : '1h';
+                return [
+                    'metrics' => $api->metrics($id, $range),
+                    'usage'   => $api->usage($id),
+                ];
 
-    $containerId = isset($container['id']) ? (string)$container['id'] : '';
-    $containerName = isset($container['name']) ? (string)$container['name'] : eyvescloud_container_name($params);
-
-    $res = eyvescloud_request($params, '/api/v1/routing', [], 'GET', 30);
-    if (!eyvescloud_success($res) || empty($res['data']['ipv4_assignments']) || !is_array($res['data']['ipv4_assignments'])) {
-        return '';
-    }
-
-    foreach ($res['data']['ipv4_assignments'] as $assignment) {
-        if (!is_array($assignment)) {
-            continue;
-        }
-        $matchId = $containerId !== '' && isset($assignment['container_id']) && (string)$assignment['container_id'] === $containerId;
-        $matchName = $containerName !== '' && isset($assignment['container_name']) && (string)$assignment['container_name'] === $containerName;
-        if ($matchId || $matchName) {
-            return eyvescloud_first_string($assignment['address'] ?? '');
-        }
-    }
-
-    return '';
-}
-
-function eyvescloud_public_host($params, $container = [], $useRouting = false)
-{
-    $fromContainer = eyvescloud_public_host_from_container($container);
-    if ($fromContainer !== '') {
-        return $fromContainer;
-    }
-
-    if ($useRouting) {
-        $fromRouting = eyvescloud_public_ipv4_from_routing($params, $container);
-        if ($fromRouting !== '') {
-            return $fromRouting;
-        }
-    }
-
-    foreach (['server_ip', 'ip'] as $key) {
-        if (!empty($params[$key])) {
-            $value = trim((string)$params[$key]);
-            if (stripos($value, 'http://') === 0 || stripos($value, 'https://') === 0) {
-                return parse_url($value, PHP_URL_HOST) ?: $value;
-            }
-            return $value;
-        }
-    }
-
-    return parse_url(eyvescloud_base_url($params), PHP_URL_HOST) ?: '';
-}
-
-function eyvescloud_container_ssh_port($container)
-{
-    if (!is_array($container)) {
-        return '';
-    }
-    foreach (['ssh_port', 'host_ssh_port', 'nat_ssh_port'] as $key) {
-        if (isset($container[$key]) && $container[$key] !== '') {
-            return (int)$container[$key];
-        }
-    }
-    return '';
-}
-
-function eyvescloud_container_password($container)
-{
-    if (!is_array($container)) {
-        return '';
-    }
-    foreach (['ssh_password', 'password', 'root_password', 'default_password'] as $key) {
-        if (isset($container[$key]) && $container[$key] !== '') {
-            $password = trim((string)$container[$key]);
-            if ($password !== '' && !preg_match('/^\*+$/', $password)) {
-                return $password;
-            }
-        }
-    }
-    return '';
-}
-
-function eyvescloud_store_password($password)
-{
-    $password = (string)$password;
-    if ($password === '') {
-        return '';
-    }
-    return function_exists('cmf_encrypt') ? cmf_encrypt($password) : $password;
-}
-
-function eyvescloud_webssh_url($params, $ticket, $containerName)
-{
-    $baseUrl = rtrim(eyvescloud_base_url($params), '/');
-    $scheme = stripos($baseUrl, 'https://') === 0 ? 'wss' : 'ws';
-    $host = parse_url($baseUrl, PHP_URL_HOST);
-    $port = parse_url($baseUrl, PHP_URL_PORT);
-    $wsBase = $scheme . '://' . $host . ($port ? ':' . $port : '');
-    $wsUrl = $wsBase
-        . '/api/ssh?container=' . rawurlencode((string)$containerName)
-        . '&container_name=' . rawurlencode((string)$containerName)
-        . '&ticket=' . rawurlencode((string)$ticket);
-
-    $siteScheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $siteHost = $_SERVER['HTTP_HOST'] ?? '';
-    $handler = ($siteHost !== '' ? $siteScheme . '://' . $siteHost : '') . '/plugins/servers/eyvescloud/handlers/webssh.php';
-
-    return $handler
-        . '?ws=' . rawurlencode($wsUrl)
-        . '&protocol=' . rawurlencode('eyvescloud-ticket.' . (string)$ticket)
-        . '&ticket=' . rawurlencode((string)$ticket)
-        . '&container=' . rawurlencode((string)$containerName);
-}
-
-function eyvescloud_vnc_url($params, $ticket, $containerName)
-{
-    $baseUrl = rtrim(eyvescloud_base_url($params), '/');
-    $scheme = stripos($baseUrl, 'https://') === 0 ? 'wss' : 'ws';
-    $host = parse_url($baseUrl, PHP_URL_HOST);
-    $port = parse_url($baseUrl, PHP_URL_PORT);
-    $wsBase = $scheme . '://' . $host . ($port ? ':' . $port : '');
-    // VNC WebSocket 代理固定为 /api/vnc（注意：不带 /v1），见 backend/internal/server/server.go。
-    // 票据通过 WebSocket 子协议 eyvescloud-vnc-ticket.<ticket> 传递。
-    $wsUrl = $wsBase . '/api/vnc?container=' . rawurlencode((string)$containerName);
-
-    $siteScheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-    $siteHost = $_SERVER['HTTP_HOST'] ?? '';
-    $handler = ($siteHost !== '' ? $siteScheme . '://' . $siteHost : '') . '/plugins/servers/eyvescloud/handlers/vnc.php';
-
-    return $handler
-        . '?ws=' . rawurlencode($wsUrl)
-        . '&protocol=' . rawurlencode('eyvescloud-vnc-ticket.' . (string)$ticket)
-        . '&ticket=' . rawurlencode((string)$ticket)
-        . '&container=' . rawurlencode((string)$containerName);
-}
-
-function eyvescloud_bool_option($value, $default = false)
-{
-    if ($value === null || $value === '') {
-        return $default;
-    }
-    if (is_bool($value)) {
-        return $value;
-    }
-    return in_array(strtolower((string)$value), ['1', 'true', 'yes', 'on'], true);
-}
-
-function eyvescloud_int_option($options, $key, $default = 0)
-{
-    if (!isset($options[$key]) || $options[$key] === '') {
-        return $default;
-    }
-    return (int)$options[$key];
-}
-
-function eyvescloud_float_option($options, $key, $default = 0)
-{
-    if (!isset($options[$key]) || $options[$key] === '') {
-        return $default;
-    }
-    return (float)$options[$key];
-}
-
-function eyvescloud_number_value($value, $default = 0)
-{
-    if (is_numeric($value)) {
-        return (float)$value;
-    }
-    if (is_string($value) && preg_match('/-?\d+(?:\.\d+)?/', $value, $match)) {
-        return (float)$match[0];
-    }
-    return $default;
-}
-
-function eyvescloud_pick_number($sources, $keys, $default = 0)
-{
-    foreach ($sources as $source) {
-        if (!is_array($source)) {
-            continue;
-        }
-        foreach ($keys as $key) {
-            if (array_key_exists($key, $source) && $source[$key] !== '' && $source[$key] !== null) {
-                return eyvescloud_number_value($source[$key], $default);
-            }
-        }
-    }
-    return $default;
-}
-
-function eyvescloud_pct($value)
-{
-    $value = eyvescloud_number_value($value, 0);
-    if ($value < 0) {
-        return 0;
-    }
-    if ($value > 100) {
-        return 100;
-    }
-    return round($value, 2);
-}
-
-function eyvescloud_bytes_to_gb($bytes)
-{
-    return round(eyvescloud_number_value($bytes, 0) / 1073741824, 2);
-}
-
-function eyvescloud_bytes_to_mb($bytes)
-{
-    return round(eyvescloud_number_value($bytes, 0) / 1048576, 2);
-}
-
-function eyvescloud_format_bytes($bytes)
-{
-    $value = eyvescloud_number_value($bytes, 0);
-    if ($value >= 1073741824) {
-        return round($value / 1073741824, 2) . ' GB';
-    }
-    if ($value >= 1048576) {
-        return round($value / 1048576, 2) . ' MB';
-    }
-    if ($value >= 1024) {
-        return round($value / 1024, 2) . ' KB';
-    }
-    return round($value, 2) . ' B';
-}
-
-function eyvescloud_format_rate($bytesPerSecond)
-{
-    $value = eyvescloud_number_value($bytesPerSecond, 0);
-    if ($value >= 1073741824) {
-        return round($value / 1073741824, 2) . ' GB/s';
-    }
-    if ($value >= 1048576) {
-        return round($value / 1048576, 2) . ' MB/s';
-    }
-    if ($value >= 1024) {
-        return round($value / 1024, 2) . ' KB/s';
-    }
-    return round($value, 2) . ' B/s';
-}
-
-function eyvescloud_extra_ports($value)
-{
-    if (empty($value)) {
-        return [];
-    }
-    $ports = [];
-    foreach (preg_split('/[,;\s]+/', (string)$value) as $port) {
-        $port = (int)trim($port);
-        if ($port > 0 && $port <= 65535) {
-            $ports[] = $port;
-        }
-    }
-    return array_values(array_unique($ports));
-}
-
-function eyvescloud_csv_values($value)
-{
-    if (is_array($value)) {
-        $parts = $value;
-    } else {
-        $parts = preg_split('/[,;\s]+/', (string)$value);
-    }
-
-    $result = [];
-    foreach ($parts as $part) {
-        $part = trim((string)$part);
-        if ($part !== '') {
-            $result[] = $part;
-        }
-    }
-    return array_values(array_unique($result));
-}
-
-function eyvescloud_expiry_from_params($params)
-{
-    $options = $params['configoptions'] ?? [];
-    if (!eyvescloud_bool_option($options['sync_expiry'] ?? 'true', true)) {
-        return '';
-    }
-    $raw = $params['nextduedate'] ?? '';
-    if ($raw === '' || $raw === '0' || $raw === 0 || $raw === '0000-00-00' || $raw === '0000-00-00 00:00:00') {
-        return '';
-    }
-
-    $timestamp = 0;
-    if (is_numeric($raw)) {
-        $timestamp = (int)$raw;
-        if ($timestamp > 20000000000) {
-            $timestamp = (int)floor($timestamp / 1000);
-        }
-    } else {
-        $timestamp = strtotime((string)$raw);
-    }
-
-    if ($timestamp === false || $timestamp <= time()) {
-        return '';
-    }
-
-    return date('Y-m-d', $timestamp);
-}
-
-function eyvescloud_container_payload($params)
-{
-    $options = $params['configoptions'] ?? [];
-    $trafficMode = $options['traffic_mode'] ?? 'total';
-    $assignNat = eyvescloud_bool_option($options['assign_nat'] ?? 'true', true);
-    $assignIpv4 = eyvescloud_bool_option($options['assign_ipv4'] ?? 'false', false);
-    $assignIpv6 = eyvescloud_bool_option($options['assign_ipv6'] ?? 'false', false);
-    $publicIpv4s = eyvescloud_csv_values($options['public_ipv4s'] ?? '');
-    $ipv6Addresses = eyvescloud_csv_values($options['ipv6_addresses'] ?? '');
-    if (!empty($publicIpv4s)) {
-        $assignIpv4 = true;
-    }
-    if (!empty($ipv6Addresses)) {
-        $assignIpv6 = true;
-    }
-    $sshAuthMode = strtolower(trim((string)($options['ssh_auth_mode'] ?? 'auto_password')));
-    if (!in_array($sshAuthMode, ['auto_password', 'password', 'key'], true)) {
-        $sshAuthMode = 'auto_password';
-    }
-
-    return [
-        'name'               => eyvescloud_container_name($params),
-        'virtualization'     => $options['virtualization'] ?? 'lxc',
-        'template_id'        => $options['template_id'] ?? '',
-        'vcpu'               => eyvescloud_float_option($options, 'vcpu', 1),
-        'cpu_percent'        => eyvescloud_int_option($options, 'cpu_percent', 0),
-        'ram_mb'             => eyvescloud_int_option($options, 'ram_mb', 512),
-        'disk_gb'            => eyvescloud_float_option($options, 'disk_gb', 5),
-        'network_bw_mbps'    => eyvescloud_int_option($options, 'network_bw_mbps', 100),
-        'monthly_traffic_gb' => eyvescloud_int_option($options, 'monthly_traffic_gb', 100),
-        'traffic_mode'       => in_array($trafficMode, ['total', 'in_out'], true) ? $trafficMode : 'total',
-        'traffic_in_gb'      => eyvescloud_int_option($options, 'traffic_in_gb', 0),
-        'traffic_out_gb'     => eyvescloud_int_option($options, 'traffic_out_gb', 0),
-        'io_speed_mbps'      => eyvescloud_int_option($options, 'io_speed_mbps', 0),
-        'extra_ports'        => eyvescloud_extra_ports($options['extra_ports'] ?? ''),
-        'port_mapping_count' => $assignNat ? max(2, eyvescloud_int_option($options, 'port_mapping_count', 2)) : 0,
-        'assign_nat'         => $assignNat,
-        'assign_ipv4'        => $assignIpv4,
-        'ipv4_count'         => max(1, eyvescloud_int_option($options, 'ipv4_count', 1)),
-        'public_ipv4s'       => $publicIpv4s,
-        'snapshot_limit'     => max(1, eyvescloud_int_option($options, 'snapshot_limit', 3)),
-        'assign_ipv6'        => $assignIpv6,
-        'ipv6_count'         => max(1, eyvescloud_int_option($options, 'ipv6_count', 1)),
-        'ipv6_addresses'     => $ipv6Addresses,
-        'ssh_auth_mode'      => $sshAuthMode,
-        'ssh_password'       => (string)($options['ssh_password'] ?? ''),
-        'ssh_public_key'     => trim((string)($options['ssh_public_key'] ?? '')),
-        'expires_at'         => eyvescloud_expiry_from_params($params),
-    ];
-}
-
-function eyvescloud_find_container($params)
-{
-    $name = eyvescloud_container_name($params);
-    return eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name), [], 'GET');
-}
-
-function eyvescloud_task_matches_container($task, $name)
-{
-    if (!is_array($task)) {
-        return false;
-    }
-    $candidates = [
-        $task['container_name'] ?? '',
-        $task['config']['name'] ?? '',
-    ];
-    foreach ($candidates as $candidate) {
-        $candidate = trim((string)$candidate);
-        if ($candidate !== '' && strcasecmp($candidate, (string)$name) === 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/**
- * 有界轮询等待异步开通/重装任务完成。
- *
- * EYVESCLOUD 的开通/重装是异步任务队列，POST 返回时容器可能尚未创建，
- * 或 ssh_port / ssh_password / status 仍为空。这里轮询任务队列与容器详情，
- * 直到容器就绪或超时。超时不视为失败，而是尽力写回已有字段。
- *
- * @return array{ready:bool,failed:bool,container:array,msg:string}
- */
-function eyvescloud_wait_container_ready($params, $timeout = 120)
-{
-    $interval = 3;
-    $name = eyvescloud_container_name($params);
-    $deadline = time() + max(0, (int)$timeout);
-
-    // 记录开始前的任务 ID，避免历史失败任务干扰本次判定。
-    $baselineTaskIds = [];
-    $tasksRes = eyvescloud_request($params, '/api/v1/tasks', [], 'GET', 15);
-    if (eyvescloud_success($tasksRes) && !empty($tasksRes['data']) && is_array($tasksRes['data'])) {
-        foreach ($tasksRes['data'] as $task) {
-            if (is_array($task) && isset($task['id'])) {
-                $baselineTaskIds[(string)$task['id']] = true;
-            }
-        }
-    }
-
-    $container = [];
-    $lastStatus = '';
-
-    while (true) {
-        // 1) 任务队列：本次新增的同名失败任务立即返回错误。
-        $tasksRes = eyvescloud_request($params, '/api/v1/tasks', [], 'GET', 15);
-        if (eyvescloud_success($tasksRes) && !empty($tasksRes['data']) && is_array($tasksRes['data'])) {
-            foreach ($tasksRes['data'] as $task) {
-                if (!is_array($task)) {
-                    continue;
-                }
-                $taskId = (string)($task['id'] ?? '');
-                if ($taskId !== '' && isset($baselineTaskIds[$taskId])) {
-                    continue;
-                }
-                if (!eyvescloud_task_matches_container($task, $name)) {
-                    continue;
-                }
-                if (strtolower((string)($task['status'] ?? '')) === 'failed') {
-                    return [
-                        'ready'     => false,
-                        'failed'    => true,
-                        'container' => $container,
-                        'msg'       => '异步任务失败: ' . ($task['error'] ?? '未知错误'),
+            case 'portmap':
+                $ports = $api->portMappings($id);
+                $norm  = [];
+                foreach ((array) $ports as $i => $p) {
+                    if (!is_array($p)) { continue; }
+                    $norm[] = [
+                        'index'         => isset($p['index']) ? $p['index'] : $i,
+                        'external_port' => isset($p['external_port']) ? $p['external_port'] : (isset($p['host_port']) ? $p['host_port'] : ''),
+                        'internal_port' => isset($p['internal_port']) ? $p['internal_port'] : (isset($p['container_port']) ? $p['container_port'] : ''),
+                        'protocol'      => isset($p['protocol']) ? $p['protocol'] : 'tcp',
+                        'remark'        => isset($p['remark']) ? $p['remark'] : '',
                     ];
                 }
-            }
-        }
+                return ['ports' => $norm, 'limit' => (int) $vm['port_limit'], 'used' => count($norm)];
 
-        // 2) 容器详情：状态有效且 SSH 端口/密码至少有一个非空才算就绪。
-        $detail = eyvescloud_find_container($params);
-        if (eyvescloud_success($detail) && !empty($detail['data']) && is_array($detail['data'])) {
-            $container = $detail['data'];
-            $lastStatus = strtolower(trim((string)($container['status'] ?? '')));
-            $sshPort = eyvescloud_container_ssh_port($container);
-            $password = eyvescloud_container_password($container);
-            $sshReady = ($sshPort !== '' && (int)$sshPort > 0) || $password !== '';
-            if ($lastStatus !== '' && !in_array($lastStatus, ['initializing', 'creating', 'pending'], true) && $sshReady) {
-                return [
-                    'ready'     => true,
-                    'failed'    => false,
-                    'container' => $container,
-                    'msg'       => '容器已就绪',
-                ];
-            }
-        }
+            case 'snapshots':
+                $list = EyvesMapper::snapshotList($api->snapshots($id));
+                return ['snapshots' => $list, 'count' => count($list)];
 
-        if (time() >= $deadline) {
-            break;
-        }
-        sleep($interval);
-    }
+            case 'backups':
+                return ['backups' => EyvesMapper::backupList($api->backups($id))];
 
-    $msg = '容器仍在初始化，字段可能稍后才可用';
-    if ($lastStatus !== '') {
-        $msg .= '（当前状态: ' . $lastStatus . '）';
-    }
-    return [
-        'ready'     => false,
-        'failed'    => false,
-        'container' => $container,
-        'msg'       => $msg,
-    ];
-}
+            case 'securitys':
+                $groups = $api->securityGroups();
+                $attachedRaw = $api->instanceSecurityGroups($id);
+                $attached = [];
+                if (is_array($attachedRaw)) {
+                    $src = isset($attachedRaw['items']) ? $attachedRaw['items'] : $attachedRaw;
+                    foreach ((array) $src as $g) {
+                        if (is_array($g) && isset($g['id'])) { $attached[] = (string) $g['id']; }
+                        elseif (is_string($g)) { $attached[] = $g; }
+                    }
+                }
+                $norm = [];
+                foreach ((array) $groups as $g) {
+                    if (!is_array($g)) { continue; }
+                    $norm[] = [
+                        'id'          => isset($g['id']) ? (string) $g['id'] : '',
+                        'name'        => isset($g['name']) ? (string) $g['name'] : '',
+                        'description' => isset($g['description']) ? (string) $g['description'] : '',
+                        'rule_count'  => isset($g['rule_count']) ? (int) $g['rule_count'] : null,
+                    ];
+                }
+                return ['groups' => $norm, 'attached' => $attached, 'ruleLabel' => 'Rules'];
 
-function eyvescloud_post_value($key, $default = '')
-{
-    if (function_exists('input')) {
-        $value = input('post.' . $key);
-        return $value === null ? $default : $value;
-    }
-    return $_POST[$key] ?? $default;
-}
+            case 'sshkey':
+                return ['keys' => $api->sshKeys()];
 
-function eyvescloud_request_value($key, $default = '')
-{
-    if (function_exists('input')) {
-        $value = input('param.' . $key);
-        if ($value === null) {
-            $value = input('*.' . $key);
-        }
-        return $value === null ? $default : $value;
-    }
-    if (isset($_POST[$key])) {
-        return $_POST[$key];
-    }
-    return $_GET[$key] ?? $default;
-}
+            case 'iso':
+                return ['isos' => $api->isoImages()];
 
-function eyvescloud_json_input()
-{
-    $input = [];
-    if (!empty($_POST) && is_array($_POST)) {
-        $input = $_POST;
-    }
+            case 'crons':
+                $schedule = isset($vm['snapshot_schedule']) && is_array($vm['snapshot_schedule'])
+                    ? $vm['snapshot_schedule'] : [];
+                return ['schedule' => [
+                    'enabled'        => !empty($schedule['enabled']),
+                    'interval_hours' => isset($schedule['interval_hours']) ? (int) $schedule['interval_hours'] : 0,
+                    'time'           => isset($schedule['time']) ? (string) $schedule['time'] : '',
+                    'last_run'       => isset($schedule['last_run']) ? (string) $schedule['last_run'] : '',
+                    'next_run'       => isset($schedule['next_run']) ? (string) $schedule['next_run'] : '',
+                ]];
 
-    $raw = file_get_contents('php://input');
-    $data = json_decode((string)$raw, true);
-    if (is_array($data)) {
-        return array_merge($input, $data);
-    }
+            case 'tasks':
+                $all = EyvesMapper::taskList($api->tasks());
+                $mine = [];
+                foreach ($all as $t) {
+                    if ($t['instance'] === '' || $t['instance'] === $vm['name']) {
+                        $mine[] = $t;
+                    }
+                }
+                return ['tasks' => $mine];
 
-    $form = [];
-    parse_str((string)$raw, $form);
-    if (!empty($form) && is_array($form)) {
-        return array_merge($input, $form);
-    }
+            case 'setting':
+                // 关键：重装镜像必须按本实例的运行时过滤，杜绝 LXC 镜像装到 KVM
+                return ['images' => EyvesMapper::imageOptions($api->images($vm['runtime']), $vm['runtime'])];
 
-    return $input;
-}
-
-function eyvescloud_param_value($data, $key, $default = '')
-{
-    if (is_array($data) && array_key_exists($key, $data)) {
-        return $data[$key];
-    }
-    return eyvescloud_request_value($key, $default);
-}
-
-function eyvescloud_container_api_id($params, &$container = null)
-{
-    $res = eyvescloud_find_container($params);
-    if (eyvescloud_success($res) && !empty($res['data']) && is_array($res['data'])) {
-        $container = $res['data'];
-        if (!empty($container['id'])) {
-            return (string)$container['id'];
-        }
-        if (!empty($container['uuid'])) {
-            return (string)$container['uuid'];
-        }
-        if (!empty($container['name'])) {
-            return (string)$container['name'];
+            default:
+                return [];
         }
     }
-
-    $container = [];
-    return eyvescloud_container_name($params);
 }
 
-function eyvescloud_port_mappings_from_container($container)
-{
-    if (!is_array($container)) {
-        return [];
-    }
-
-    foreach (['port_mappings', 'portMappings', 'nat', 'nat_list', 'NatList'] as $key) {
-        if (!empty($container[$key]) && is_array($container[$key])) {
-            return $container[$key];
+if (!function_exists('eyvescloud_build_charts')) {
+    /**
+     * 把面板 metrics 响应转成 flot 可用的数据点。
+     * 面板返回结构未知/为空时返回空数组，模板会走「无数据」空态。
+     */
+    function eyvescloud_build_charts($metrics, $range, array $lang)
+    {
+        if (!is_array($metrics)) {
+            return [];
         }
-    }
-
-    return [];
-}
-
-function eyvescloud_normalize_port_mappings($mappings)
-{
-    if (!is_array($mappings)) {
-        return [];
-    }
-
-    $result = [];
-    foreach ($mappings as $index => $mapping) {
-        if (!is_array($mapping)) {
-            continue;
-        }
-        $protocol = strtolower((string)($mapping['protocol'] ?? 'tcp'));
-        $result[] = [
-            'index'          => is_numeric($index) ? (int)$index : $index,
-            'host_port'      => $mapping['host_port'] ?? '',
-            'container_port' => $mapping['container_port'] ?? '',
-            'protocol'       => in_array($protocol, ['tcp', 'udp'], true) ? $protocol : 'tcp',
-            'tcp_selected'   => $protocol === 'udp' ? '' : 'selected',
-            'udp_selected'   => $protocol === 'udp' ? 'selected' : '',
-            'description'    => $mapping['description'] ?? '',
-        ];
-    }
-
-    return $result;
-}
-
-function eyvescloud_nat_post_action()
-{
-    $func = eyvescloud_request_value('func', '');
-    return strtolower(trim((string)$func));
-}
-
-function eyvescloud_handle_nat_post($params)
-{
-    $action = eyvescloud_nat_post_action();
-    if ($action === '') {
-        return ['message' => '', 'mappings' => null];
-    }
-
-    if (!in_array($action, ['randomport', 'addnat', 'updatenat', 'deletenat'], true)) {
-        return ['message' => '', 'mappings' => null];
-    }
-
-    $map = [
-        'randomport' => 'eyvescloud_randomPort',
-        'addnat'     => 'eyvescloud_addNat',
-        'updatenat'  => 'eyvescloud_updateNat',
-        'deletenat'  => 'eyvescloud_deleteNat',
-    ];
-
-    if (!isset($map[$action]) || !function_exists($map[$action])) {
-        return ['message' => '', 'mappings' => null];
-    }
-
-    $res = call_user_func($map[$action], $params);
-    if (!is_array($res)) {
-        return ['message' => (string)$res, 'mappings' => null];
-    }
-
-    $ok = (($res['status'] ?? '') === 'success' || (int)($res['status'] ?? 0) === 200);
-    $prefix = $ok ? '成功: ' : '失败: ';
-    return [
-        'message'  => $prefix . ($res['msg'] ?? '操作完成'),
-        'mappings' => ($ok && isset($res['data']['port_mappings']) && is_array($res['data']['port_mappings'])) ? $res['data']['port_mappings'] : null,
-    ];
-}
-
-function eyvescloud_nat_payload_from_post()
-{
-    return eyvescloud_nat_payload_from_data(null);
-}
-
-function eyvescloud_nat_payload_from_data($data = null)
-{
-    $hostPort = (int)eyvescloud_param_value($data, 'host_port', 0);
-    $containerPort = (int)eyvescloud_param_value($data, 'container_port', 0);
-    $protocol = strtolower(trim((string)eyvescloud_param_value($data, 'protocol', 'tcp')));
-    $description = trim((string)eyvescloud_param_value($data, 'description', ''));
-
-    if ($hostPort < 1 || $hostPort > 65535) {
-        return ['error' => '公网端口必须在 1-65535 之间'];
-    }
-    if ($containerPort < 1 || $containerPort > 65535) {
-        return ['error' => '容器端口必须在 1-65535 之间'];
-    }
-    if (!in_array($protocol, ['tcp', 'udp'], true)) {
-        return ['error' => '协议只支持 tcp 或 udp'];
-    }
-
-    return [
-        'container_port' => $containerPort,
-        'host_port'      => $hostPort,
-        'protocol'       => $protocol,
-        'description'    => $description,
-    ];
-}
-
-function eyvescloud_nat_ajax($params)
-{
-    $input = eyvescloud_json_input();
-    $action = strtolower(trim((string)eyvescloud_param_value($input, 'action', '')));
-    $debug = [eyvescloud_debug_entry('NAT ajax received', [
-        'action' => $action,
-        'input'  => $input,
-        'query'  => $_GET,
-    ])];
-
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $debug[] = eyvescloud_debug_entry('Container resolved', [
-        'container_id' => $containerId,
-        'container'    => [
-            'id'   => $container['id'] ?? null,
-            'uuid' => $container['uuid'] ?? null,
-            'name' => $container['name'] ?? null,
-        ],
-    ]);
-
-    if (!in_array($action, ['random-port', 'add', 'update', 'delete'], true)) {
-        return ['status' => 'error', 'msg' => '未知 NAT 操作', 'debug' => $debug];
-    }
-
-    if ($action === 'random-port') {
-        $call = eyvescloud_request_debug($params, '/api/v1/containers/' . rawurlencode($containerId) . '/random-port', [], 'GET', 30);
-        $debug[] = $call['debug'];
-        $res = $call['response'];
-        return eyvescloud_success($res)
-            ? ['status' => 'success', 'msg' => '随机端口: ' . ($res['data']['port'] ?? ''), 'port' => $res['data']['port'] ?? '', 'debug' => $debug]
-            : ['status' => 'error', 'msg' => eyvescloud_message($res, '获取随机端口失败'), 'debug' => $debug];
-    }
-
-    if ($action === 'delete') {
-        $index = eyvescloud_param_value($input, 'index', '');
-        if ($index === '' || !is_numeric($index) || (int)$index < 0) {
-            return ['status' => 'error', 'msg' => '端口映射索引错误', 'debug' => $debug];
-        }
-        $endpoint = '/api/v1/containers/' . rawurlencode($containerId) . '/port-mappings/' . rawurlencode((string)(int)$index);
-        $call = eyvescloud_request_debug($params, $endpoint, [], 'DELETE', 30);
-        $debug[] = $call['debug'];
-        $res = $call['response'];
-    } else {
-        $payload = eyvescloud_nat_payload_from_data($input);
-        if (isset($payload['error'])) {
-            return ['status' => 'error', 'msg' => $payload['error'], 'debug' => $debug];
-        }
-
-        if ($action === 'add') {
-            $endpoint = '/api/v1/containers/' . rawurlencode($containerId) . '/port-mappings';
-            $call = eyvescloud_request_debug($params, $endpoint, $payload, 'POST', 30);
+        // 兼容两种形态：{series:[{key,points}]} 或 {cpu:[{t,v}], memory:[...]}
+        $series = [];
+        if (isset($metrics['series']) && is_array($metrics['series'])) {
+            $series = $metrics['series'];
         } else {
-            $index = eyvescloud_param_value($input, 'index', '');
-            if ($index === '' || !is_numeric($index) || (int)$index < 0) {
-                return ['status' => 'error', 'msg' => '端口映射索引错误', 'debug' => $debug];
+            foreach ($metrics as $k => $v) {
+                if (is_array($v) && isset($v[0])) {
+                    $series[] = ['key' => $k, 'points' => $v];
+                }
             }
-            $endpoint = '/api/v1/containers/' . rawurlencode($containerId) . '/port-mappings/' . rawurlencode((string)(int)$index);
-            $call = eyvescloud_request_debug($params, $endpoint, $payload, 'PUT', 30);
         }
-        $debug[] = $call['debug'];
-        $res = $call['response'];
-    }
-
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, 'NAT 操作失败'), 'debug' => $debug];
-    }
-
-    return [
-        'status'        => 'success',
-        'msg'           => eyvescloud_message($res, 'NAT 操作成功'),
-        'port_mappings' => eyvescloud_normalize_port_mappings($res['data'] ?? []),
-        'debug'         => $debug,
-    ];
-}
-
-function eyvescloud_normalize_metric_history($points)
-{
-    if (!is_array($points)) {
-        return [];
-    }
-
-    $result = [];
-    foreach ($points as $point) {
-        if (!is_array($point)) {
-            continue;
+        if (empty($series)) {
+            return [];
         }
-        // 面板 history 返回原始采样 + 小时聚合：ts(毫秒)、cpu/memory(百分比)、
-        // network_rx/tx 与 disk_read/write（字节/秒）。统一转成前端图表字段。
-        $ts = (int)($point['ts'] ?? 0);
-        $result[] = [
-            'ts'             => $ts,
-            'time'           => $ts > 0 ? date('H:i', (int)floor($ts / 1000)) : '',
-            'cpu_percent'    => eyvescloud_pct($point['cpu'] ?? 0),
-            'mem_percent'    => eyvescloud_pct($point['memory'] ?? 0),
-            'net_in_bps'     => round(eyvescloud_number_value($point['network_rx'] ?? 0, 0), 2),
-            'net_out_bps'    => round(eyvescloud_number_value($point['network_tx'] ?? 0, 0), 2),
-            'disk_read_bps'  => round(eyvescloud_number_value($point['disk_read'] ?? 0, 0), 2),
-            'disk_write_bps' => round(eyvescloud_number_value($point['disk_write'] ?? 0, 0), 2),
+
+        $meta = [
+            'cpu'    => ['label' => $lang['monitor_cpu'] ?? 'CPU',    'unit' => '%',  'color' => '#2563eb'],
+            'ram'    => ['label' => $lang['monitor_memory'] ?? 'RAM', 'unit' => '%',  'color' => '#12a150'],
+            'memory' => ['label' => $lang['monitor_memory'] ?? 'RAM', 'unit' => '%',  'color' => '#12a150'],
+            'disk'   => ['label' => $lang['monitor_disk'] ?? 'Disk',  'unit' => '%',  'color' => '#d97706'],
+            'net'    => ['label' => $lang['monitor_net'] ?? 'Net',    'unit' => 'KB/s', 'color' => '#7c3aed'],
         ];
-    }
 
-    return $result;
-}
-
-function eyvescloud_info_ajax($params)
-{
-    $debug = [eyvescloud_debug_entry('Info ajax received', ['query' => $_GET])];
-    $res = eyvescloud_find_container($params);
-    if (!eyvescloud_success($res) || empty($res['data']) || !is_array($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取实例信息失败'), 'debug' => $debug];
-    }
-
-    $c = $res['data'];
-    $name = $c['name'] ?? eyvescloud_container_name($params);
-
-    $usageCall = eyvescloud_request_debug($params, '/api/v1/containers/' . rawurlencode($name) . '/usage', [], 'GET', 30);
-    if (!eyvescloud_success($usageCall['response']) && !empty($c['uuid'])) {
-        $usageCall = eyvescloud_request_debug($params, '/api/containers/' . rawurlencode((string)$c['uuid']) . '/usage', [], 'GET', 30);
-    }
-    $trafficCall = eyvescloud_request_debug($params, '/api/v1/containers/' . rawurlencode($name) . '/traffic', [], 'GET', 30);
-    // 历史指标：面板提供原始采样 + 小时聚合时序，用于一次性画出历史曲线；
-    // 不可用时前端回退到实时值持续采样。
-    $historyId = !empty($c['id']) ? (string)$c['id'] : (string)$name;
-    $historyCall = eyvescloud_request_debug($params, '/api/v1/containers/' . rawurlencode($historyId) . '/history', [], 'GET', 30);
-    $debug[] = $usageCall['debug'];
-    $debug[] = $trafficCall['debug'];
-    $debug[] = $historyCall['debug'];
-
-    $usageRes = $usageCall['response'];
-    $usage = eyvescloud_success($usageRes) && isset($usageRes['data']) && is_array($usageRes['data']) ? $usageRes['data'] : [];
-    $trafficRes = $trafficCall['response'];
-    $traffic = eyvescloud_success($trafficRes) && isset($trafficRes['data']) && is_array($trafficRes['data']) ? $trafficRes['data'] : [];
-    $history = eyvescloud_normalize_metric_history(
-        eyvescloud_success($historyCall['response']) && isset($historyCall['response']['data']) && is_array($historyCall['response']['data'])
-            ? $historyCall['response']['data']
-            : []
-    );
-    $options = $params['configoptions'] ?? [];
-    $sources = [$usage, $traffic, $c];
-
-    $rxBytes = eyvescloud_pick_number($sources, ['rx_used_bytes', 'rx_bytes', 'traffic_used_rx', 'in_bytes', 'input_bytes', 'network_rx_bytes'], 0);
-    $txBytes = eyvescloud_pick_number($sources, ['tx_used_bytes', 'tx_bytes', 'traffic_used_tx', 'out_bytes', 'output_bytes', 'network_tx_bytes'], 0);
-    $totalBytes = eyvescloud_pick_number($sources, ['total_used_bytes', 'traffic_used_bytes'], 0);
-    if ($rxBytes <= 0 && $txBytes <= 0 && $totalBytes > 0) {
-        $txBytes = $totalBytes;
-    }
-    if ($rxBytes <= 0) {
-        $rxBytes = eyvescloud_pick_number($sources, ['traffic_in_gb', 'in_gb', 'rx_gb'], 0) * 1073741824;
-    }
-    if ($txBytes <= 0) {
-        $txBytes = eyvescloud_pick_number($sources, ['traffic_out_gb', 'out_gb', 'tx_gb'], 0) * 1073741824;
-    }
-
-    $limitGB = eyvescloud_pick_number([$traffic, $c, $options], ['monthly_traffic_gb', 'traffic_limit_gb', 'limit_gb'], 0);
-    $trafficUsedGB = round(($rxBytes + $txBytes) / 1073741824, 2);
-    $trafficPercent = $limitGB > 0 ? eyvescloud_pct(($trafficUsedGB / $limitGB) * 100) : 0;
-
-    $cpuPercent = eyvescloud_pct(eyvescloud_pick_number([$usage, $traffic], ['cpu_usage_pct', 'cpu_percent', 'cpu_usage_percent', 'cpu_usage', 'cpu'], 0));
-
-    $memoryUsedMB = eyvescloud_pick_number($sources, ['memory_used_mb', 'mem_used_mb', 'ram_used_mb', 'memory_usage_mb'], 0);
-    if ($memoryUsedMB <= 0) {
-        $memoryUsedMB = eyvescloud_bytes_to_mb(eyvescloud_pick_number($sources, ['memory_usage_bytes', 'memory_used', 'mem_used', 'ram_used', 'memory_bytes'], 0));
-    }
-    $memoryTotalMB = eyvescloud_pick_number([$usage, $c, $options], ['memory_total_mb', 'mem_total_mb', 'ram_total_mb', 'ram_mb'], 0);
-    if ($memoryTotalMB <= 0) {
-        $memoryTotalMB = eyvescloud_bytes_to_mb(eyvescloud_pick_number($sources, ['memory_total', 'mem_total', 'ram_total'], 0));
-    }
-    $memoryPercent = $memoryTotalMB > 0 ? eyvescloud_pct(($memoryUsedMB / $memoryTotalMB) * 100) : 0;
-
-    $vcpu = eyvescloud_pick_number([$c, $options], ['vcpu', 'cpu', 'cores'], 1);
-    $loadPercent = eyvescloud_pick_number([$usage, $traffic], ['load_percent', 'load_usage_percent'], -1);
-    if ($loadPercent < 0) {
-        $loadValue = eyvescloud_pick_number([$usage, $traffic], ['load1', 'load', 'load_average'], 0);
-        $loadPercent = $vcpu > 0 ? ($loadValue / $vcpu) * 100 : 0;
-    }
-    $loadPercent = eyvescloud_pct($loadPercent);
-
-    $diskUsedGB = eyvescloud_pick_number($sources, ['disk_used_gb', 'disk_usage_gb', 'storage_used_gb'], 0);
-    if ($diskUsedGB <= 0) {
-        $diskUsedGB = eyvescloud_bytes_to_gb(eyvescloud_pick_number($sources, ['disk_usage_bytes', 'disk_used', 'disk_usage', 'storage_used'], 0));
-    }
-    $diskTotalGB = eyvescloud_pick_number([$usage, $c, $options], ['disk_total_gb', 'storage_total_gb', 'disk_gb'], 0);
-    if ($diskTotalGB <= 0) {
-        $diskTotalGB = eyvescloud_bytes_to_gb(eyvescloud_pick_number($sources, ['disk_total', 'storage_total'], 0));
-    }
-    $diskPercent = $diskTotalGB > 0 ? eyvescloud_pct(($diskUsedGB / $diskTotalGB) * 100) : 0;
-
-    $netInBps = eyvescloud_pick_number($sources, ['rx_bps', 'in_bps', 'network_rx_bps', 'net_in_bps'], 0);
-    $netOutBps = eyvescloud_pick_number($sources, ['tx_bps', 'out_bps', 'network_tx_bps', 'net_out_bps'], 0);
-    $diskReadBps = eyvescloud_pick_number($sources, ['disk_read_bps', 'read_bps', 'io_read_bps'], 0);
-    $diskWriteBps = eyvescloud_pick_number($sources, ['disk_write_bps', 'write_bps', 'io_write_bps'], 0);
-
-    return [
-        'status' => 'success',
-        'data'   => [
-            'cpu_percent'    => $cpuPercent,
-            'cpu_detail'     => $cpuPercent . '%',
-            'mem_percent'    => $memoryPercent,
-            'mem_detail'     => ($memoryTotalMB > 0 ? round($memoryUsedMB, 0) . ' / ' . round($memoryTotalMB, 0) . ' MB' : '-'),
-            'load_percent'   => $loadPercent,
-            'load_detail'    => $loadPercent . '%',
-            'disk_percent'   => $diskPercent,
-            'disk_detail'    => ($diskTotalGB > 0 ? round($diskUsedGB, 2) . ' / ' . round($diskTotalGB, 2) . ' GB' : '-'),
-            'traffic_used'   => $trafficUsedGB,
-            'traffic_limit'  => $limitGB,
-            'traffic_in_gb'  => round($rxBytes / 1073741824, 2),
-            'traffic_out_gb' => round($txBytes / 1073741824, 2),
-            'traffic_used_text' => eyvescloud_format_bytes($rxBytes + $txBytes),
-            'traffic_limit_text'=> $limitGB > 0 ? round($limitGB, 2) . ' GB' : '不限',
-            'traffic_in_text'   => eyvescloud_format_bytes($rxBytes),
-            'traffic_out_text'  => eyvescloud_format_bytes($txBytes),
-            'traffic_percent'=> $trafficPercent,
-            'net_in_bps'     => round($netInBps, 2),
-            'net_out_bps'    => round($netOutBps, 2),
-            'net_in_rate'    => eyvescloud_format_rate($netInBps),
-            'net_out_rate'   => eyvescloud_format_rate($netOutBps),
-            'disk_read_bps'  => round($diskReadBps, 2),
-            'disk_write_bps' => round($diskWriteBps, 2),
-            'disk_read_rate' => eyvescloud_format_rate($diskReadBps),
-            'disk_write_rate'=> eyvescloud_format_rate($diskWriteBps),
-            'chart_time'     => date('H:i:s'),
-            'usage'          => $usage,
-            'history'        => $history,
-        ],
-        'debug'  => $debug,
-    ];
-}
-
-function eyvescloud_domain_status_from_container($container)
-{
-    if (!is_array($container)) {
-        return 'Active';
-    }
-
-    if (!empty($container['policy_blocked'])) {
-        return 'Suspended';
-    }
-
-    $status = strtolower(trim((string)($container['status'] ?? '')));
-    if (in_array($status, ['suspended', 'blocked', 'policy_blocked', 'disabled'], true)) {
-        return 'Suspended';
-    }
-
-    return 'Active';
-}
-
-function eyvescloud_update_host_from_container($params, $container)
-{
-    $hostId = eyvescloud_host_id($params);
-    if ($hostId <= 0 || !is_array($container)) {
-        return;
-    }
-
-    $update = [
-        'domainstatus' => eyvescloud_domain_status_from_container($container),
-        'username'     => 'root',
-        'dedicatedip'  => eyvescloud_public_host($params, $container, true),
-    ];
-
-    $sshPort = eyvescloud_container_ssh_port($container);
-    if ($sshPort !== '') {
-        $update['port'] = $sshPort;
-    }
-
-    $password = eyvescloud_container_password($container);
-    if ($password !== '') {
-        $update['password'] = eyvescloud_store_password($password);
-    }
-
-    try {
-        Db::name('host')->where('id', $hostId)->update($update);
-    } catch (\Exception $e) {
-        eyvescloud_debug('host update failed', $e->getMessage());
-    }
-}
-
-function eyvescloud_TestLink($params)
-{
-    $res = eyvescloud_request($params, '/api/v1/dashboard', [], 'GET');
-    return [
-        'status' => 200,
-        'data'   => [
-            'server_status' => eyvescloud_success($res) ? 1 : 0,
-            'msg'           => eyvescloud_success($res) ? '连接成功' : eyvescloud_message($res, '连接失败'),
-        ],
-    ];
-}
-
-function eyvescloud_CreateAccount($params)
-{
-    $exists = eyvescloud_find_container($params);
-    if (eyvescloud_success($exists)) {
-        return ['status' => 'error', 'msg' => '容器已存在，不能重复开通'];
-    }
-
-    $payload = eyvescloud_container_payload($params);
-    if (empty($payload['template_id'])) {
-        return ['status' => 'error', 'msg' => '产品配置缺少 template_id'];
-    }
-
-    // 幂等键：同一主机重试开通时，后端返回既有容器（而不是二次开通），
-    // 与容器名唯一校验共同兜底，防止计费系统回调超时后重复开通。
-    $idemKey = 'container-create-' . eyvescloud_host_id($params);
-    $res = eyvescloud_request($params, '/api/v1/containers', $payload, 'POST', 120, ['Idempotency-Key' => $idemKey]);
-    if (!eyvescloud_success($res)) {
-        // 幂等命中（后端返回已存在容器）视为开通成功，避免误报失败。
-        $message = (string)eyvescloud_message($res, '');
-        if (stripos($message, 'idempotent') === false && stripos($message, 'already exists') === false) {
-            return ['status' => 'error', 'msg' => eyvescloud_message($res, '开通失败')];
-        }
-    }
-
-    $hostId = eyvescloud_host_id($params);
-    if ($hostId > 0) {
-        try {
-            Db::name('host')->where('id', $hostId)->update([
-                'domainstatus' => 'Active',
-                'username'     => 'root',
-                'dedicatedip'  => eyvescloud_public_ipv4_from_routing($params) ?: eyvescloud_public_host($params),
-            ]);
-        } catch (\Exception $e) {
-            return ['status' => 'error', 'msg' => '开通成功但同步计费系统数据库失败: ' . $e->getMessage()];
-        }
-    }
-
-    $wait = eyvescloud_wait_container_ready($params);
-    if (!empty($wait['container'])) {
-        eyvescloud_update_host_from_container($params, $wait['container']);
-        eyvescloud_remember_container($params, $wait['container']);
-    }
-
-    $msg = eyvescloud_message($res, '开通成功');
-    if (!empty($wait['failed'])) {
-        return ['status' => 'error', 'msg' => $msg . '，但' . ($wait['msg'] ?? '异步任务失败')];
-    }
-    if (empty($wait['ready'])) {
-        $msg .= '（' . ($wait['msg'] ?? '容器仍在初始化') . '）';
-    }
-
-    return ['status' => 'success', 'msg' => $msg];
-}
-
-function eyvescloud_TerminateAccount($params)
-{
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/delete', [], 'DELETE', 60);
-    if (eyvescloud_success($res)) {
-        eyvescloud_forget_container($params);
-        return ['status' => 'success', 'msg' => eyvescloud_message($res, '删除任务已提交')];
-    }
-    return ['status' => 'error', 'msg' => eyvescloud_message($res, '删除失败')];
-}
-
-function eyvescloud_action($params, $action, $successMsg, $timeout = 60)
-{
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/' . $action, [], 'POST', $timeout);
-    return eyvescloud_success($res)
-        ? ['status' => 'success', 'msg' => eyvescloud_message($res, $successMsg)]
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, $successMsg . '失败')];
-}
-
-function eyvescloud_On($params)
-{
-    return eyvescloud_action($params, 'start', '开机任务已提交');
-}
-
-function eyvescloud_Off($params)
-{
-    return eyvescloud_action($params, 'stop', '关机任务已提交');
-}
-
-function eyvescloud_Reboot($params)
-{
-    return eyvescloud_action($params, 'restart', '重启任务已提交');
-}
-
-function eyvescloud_SuspendAccount($params)
-{
-    // 优先使用上游专用 /suspend 端点（设置 Suspended 标志并排入 stop 任务，
-    // 比单纯 stop 更彻底，避免客户在容器内仍可访问控制台）。端点不存在时
-    // 旧服务器会返回 404，自动 fallback 到 stop，保证向后兼容。
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/suspend', [], 'POST', 60);
-    if (eyvescloud_success($res)) {
-        return ['status' => 'success', 'msg' => eyvescloud_message($res, '容器已暂停')];
-    }
-    if (!empty($res['_http_code']) && (int)$res['_http_code'] === 404) {
-        return eyvescloud_Off($params);
-    }
-    return ['status' => 'error', 'msg' => eyvescloud_message($res, '暂停失败')];
-}
-
-function eyvescloud_UnsuspendAccount($params)
-{
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/unsuspend', [], 'POST', 60);
-    if (eyvescloud_success($res)) {
-        return ['status' => 'success', 'msg' => eyvescloud_message($res, '容器已恢复')];
-    }
-    if (!empty($res['_http_code']) && (int)$res['_http_code'] === 404) {
-        return eyvescloud_On($params);
-    }
-    return ['status' => 'error', 'msg' => eyvescloud_message($res, '恢复失败')];
-}
-
-function eyvescloud_Status($params)
-{
-    $res = eyvescloud_find_container($params);
-    if (!eyvescloud_success($res) || empty($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '查询失败')];
-    }
-
-    $status = strtolower($res['data']['status'] ?? '');
-    if ($status === 'running') {
-        return ['status' => 'success', 'data' => ['status' => 'on', 'des' => '运行中']];
-    }
-    if ($status === 'stopped') {
-        return ['status' => 'success', 'data' => ['status' => 'off', 'des' => '已关机']];
-    }
-    return ['status' => 'success', 'data' => ['status' => 'unknown', 'des' => $status ?: '未知']];
-}
-
-function eyvescloud_Sync($params)
-{
-    $res = eyvescloud_find_container($params);
-    if (!eyvescloud_success($res) || empty($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '同步失败')];
-    }
-    eyvescloud_update_host_from_container($params, $res['data']);
-    return ['status' => 'success', 'msg' => '同步成功'];
-}
-
-function eyvescloud_Reinstall($params)
-{
-    $templateId = $params['reinstall_os'] ?? '';
-    if ($templateId === '') {
-        $templateId = ($params['configoptions']['template_id'] ?? '');
-    }
-    if ($templateId === '') {
-        return ['status' => 'error', 'msg' => '缺少重装系统模板 ID'];
-    }
-
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/reinstall', ['template_id' => $templateId], 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '重装失败')];
-    }
-
-    $wait = eyvescloud_wait_container_ready($params);
-    if (!empty($wait['container'])) {
-        eyvescloud_update_host_from_container($params, $wait['container']);
-    } elseif (isset($res['data']) && is_array($res['data'])) {
-        eyvescloud_update_host_from_container($params, $res['data']);
-    }
-
-    $msg = eyvescloud_message($res, '重装任务已提交');
-    if (!empty($wait['failed'])) {
-        return ['status' => 'error', 'msg' => $msg . '，但' . ($wait['msg'] ?? '异步任务失败')];
-    }
-    if (empty($wait['ready'])) {
-        $msg .= '（' . ($wait['msg'] ?? '容器仍在初始化') . '）';
-    }
-
-    return ['status' => 'success', 'msg' => $msg];
-}
-
-function eyvescloud_CrackPassword($params, $new_pass)
-{
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/reset-password', ['password' => $new_pass], 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '重置密码失败')];
-    }
-
-    $password = $res['data']['ssh_password'] ?? $res['data']['password'] ?? $new_pass;
-    $hostId = eyvescloud_host_id($params);
-    if ($hostId > 0) {
-        try {
-            Db::name('host')->where('id', $hostId)->update(['password' => eyvescloud_store_password($password)]);
-            $detail = eyvescloud_find_container($params);
-            if (eyvescloud_success($detail) && isset($detail['data'])) {
-                eyvescloud_update_host_from_container($params, $detail['data']);
+        $out = [];
+        foreach ($series as $s) {
+            if (!is_array($s)) { continue; }
+            $key = isset($s['key']) ? (string) $s['key'] : '';
+            $points = isset($s['points']) && is_array($s['points']) ? $s['points'] : [];
+            $pts = [];
+            foreach ($points as $p) {
+                if (is_array($p)) {
+                    $t = isset($p['t']) ? $p['t'] : (isset($p['timestamp']) ? $p['timestamp'] : null);
+                    $v = isset($p['v']) ? $p['v'] : (isset($p['value']) ? $p['value'] : null);
+                } elseif (is_object($p)) {
+                    $t = isset($p->t) ? $p->t : (isset($p->timestamp) ? $p->timestamp : null);
+                    $v = isset($p->v) ? $p->v : (isset($p->value) ? $p->value : null);
+                } else {
+                    continue;
+                }
+                if ($t === null || $v === null) { continue; }
+                if (!is_numeric($t)) { $t = strtotime((string) $t); }
+                // flot 的 time 模式要毫秒
+                $pts[] = [(float) $t * 1000, (float) $v];
             }
-        } catch (\Exception $e) {
-            return ['status' => 'error', 'msg' => '密码重置成功但同步计费系统数据库失败: ' . $e->getMessage()];
+            if (empty($pts)) { continue; }
+            $m = isset($meta[$key]) ? $meta[$key] : ['label' => strtoupper($key), 'unit' => '', 'color' => '#2563eb'];
+            $out[] = [
+                'key'     => $key,
+                'label'   => $m['label'],
+                'unit'    => $m['unit'],
+                'color'   => $m['color'],
+                'current' => round((float) end($pts)[1], 2),
+                'points'  => $pts,
+            ];
         }
-    }
-
-    return ['status' => 'success', 'msg' => eyvescloud_message($res, '密码重置成功')];
-}
-
-// WHMCS / 计费系统客户改密码标准入口：从 $params['password'] 取新密码后委托给 CrackPassword。
-function eyvescloud_ChangePassword($params)
-{
-    $newPass = $params['password'] ?? '';
-    if (is_array($newPass)) {
-        $newPass = reset($newPass);
-    }
-    $newPass = trim((string)$newPass);
-    if ($newPass === '') {
-        return ['status' => 'error', 'msg' => '新密码不能为空'];
-    }
-
-    return eyvescloud_CrackPassword($params, $newPass);
-}
-
-function eyvescloud_TrafficReset($params)
-{
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/traffic-reset', [], 'POST', 30);
-    return eyvescloud_success($res)
-        ? ['status' => 'success', 'msg' => eyvescloud_message($res, '流量已重置')]
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, '流量重置失败')];
-}
-
-function eyvescloud_randomPort($params)
-{
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($containerId) . '/random-port', [], 'GET', 30);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取随机端口失败')];
-    }
-
-    $port = $res['data']['port'] ?? '';
-    return ['status' => 200, 'msg' => $port ? '随机端口: ' . $port : '随机端口获取成功', 'data' => ['port' => $port]];
-}
-
-function eyvescloud_addNat($params)
-{
-    $payload = eyvescloud_nat_payload_from_post();
-    if (isset($payload['error'])) {
-        return ['status' => 'error', 'msg' => $payload['error']];
-    }
-
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($containerId) . '/port-mappings', $payload, 'POST', 30);
-    return eyvescloud_success($res)
-        ? ['status' => 200, 'msg' => eyvescloud_message($res, '端口映射添加成功'), 'data' => ['port_mappings' => eyvescloud_normalize_port_mappings($res['data'] ?? [])]]
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, '端口映射添加失败')];
-}
-
-function eyvescloud_updateNat($params)
-{
-    $index = eyvescloud_request_value('index', '');
-    if ($index === '' || !is_numeric($index) || (int)$index < 0) {
-        return ['status' => 'error', 'msg' => '端口映射索引错误'];
-    }
-
-    $payload = eyvescloud_nat_payload_from_post();
-    if (isset($payload['error'])) {
-        return ['status' => 'error', 'msg' => $payload['error']];
-    }
-
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $endpoint = '/api/v1/containers/' . rawurlencode($containerId) . '/port-mappings/' . rawurlencode((string)(int)$index);
-    $res = eyvescloud_request($params, $endpoint, $payload, 'PUT', 30);
-    return eyvescloud_success($res)
-        ? ['status' => 200, 'msg' => eyvescloud_message($res, '端口映射更新成功'), 'data' => ['port_mappings' => eyvescloud_normalize_port_mappings($res['data'] ?? [])]]
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, '端口映射更新失败')];
-}
-
-function eyvescloud_deleteNat($params)
-{
-    $index = eyvescloud_request_value('index', '');
-    if ($index === '' || !is_numeric($index) || (int)$index < 0) {
-        return ['status' => 'error', 'msg' => '端口映射索引错误'];
-    }
-
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $endpoint = '/api/v1/containers/' . rawurlencode($containerId) . '/port-mappings/' . rawurlencode((string)(int)$index);
-    $res = eyvescloud_request($params, $endpoint, [], 'DELETE', 30);
-    return eyvescloud_success($res)
-        ? ['status' => 200, 'msg' => eyvescloud_message($res, '端口映射删除成功'), 'data' => ['port_mappings' => eyvescloud_normalize_port_mappings($res['data'] ?? [])]]
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, '端口映射删除失败')];
-}
-
-function eyvescloud_natList($params)
-{
-    $res = eyvescloud_find_container($params);
-    if (!eyvescloud_success($res) || empty($res['data']) || !is_array($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取 NAT 列表失败')];
-    }
-
-    return [
-        'status' => 200,
-        'msg'    => '获取成功',
-        'data'   => [
-            'port_mappings' => eyvescloud_normalize_port_mappings(eyvescloud_port_mappings_from_container($res['data'])),
-            'debug' => [
-                eyvescloud_debug_entry('NatList', [
-                    'container' => [
-                        'id'   => $res['data']['id'] ?? null,
-                        'uuid' => $res['data']['uuid'] ?? null,
-                        'name' => $res['data']['name'] ?? null,
-                    ],
-                    'http' => $res['_http_code'] ?? null,
-                ]),
-            ],
-        ],
-    ];
-}
-
-function eyvescloud_infoData($params)
-{
-    $data = eyvescloud_info_ajax($params);
-    if (($data['status'] ?? '') !== 'success') {
-        return [
-            'status' => 200,
-            'msg'    => $data['msg'] ?? '流量统计暂不可用',
-            'data'   => [
-                'cpu_percent'    => 0,
-                'cpu_detail'     => '-',
-                'mem_percent'    => 0,
-                'mem_detail'     => '-',
-                'load_percent'   => 0,
-                'load_detail'    => '-',
-                'disk_percent'   => 0,
-                'disk_detail'    => '-',
-                'traffic_used'   => '-',
-                'traffic_limit'  => '-',
-                'traffic_in_gb'  => '-',
-                'traffic_out_gb' => '-',
-                'traffic_used_text' => '-',
-                'traffic_limit_text'=> '-',
-                'traffic_in_text'   => '-',
-                'traffic_out_text'  => '-',
-                'traffic_percent'=> 0,
-                'net_in_bps'     => 0,
-                'net_out_bps'    => 0,
-                'net_in_rate'    => '0 B/s',
-                'net_out_rate'   => '0 B/s',
-                'disk_read_bps'  => 0,
-                'disk_write_bps' => 0,
-                'disk_read_rate' => '0 B/s',
-                'disk_write_rate'=> '0 B/s',
-                'chart_time'     => date('H:i:s'),
-                'history'        => [],
-                'debug'          => $data['debug'] ?? [],
-            ],
-        ];
-    }
-
-    $data['data']['debug'] = $data['debug'] ?? [];
-    return ['status' => 200, 'msg' => '获取成功', 'data' => $data['data']];
-}
-
-function eyvescloud_ChangePackage($params)
-{
-    $options = $params['configoptions'] ?? [];
-    $name = eyvescloud_container_name($params);
-
-    $resource = [
-        'vcpu'             => eyvescloud_float_option($options, 'vcpu', 0),
-        'ram_mb'           => eyvescloud_int_option($options, 'ram_mb', 0),
-        'disk_gb'          => eyvescloud_float_option($options, 'disk_gb', 0),
-        'io_speed_mbps'    => eyvescloud_int_option($options, 'io_speed_mbps', 0),
-        'network_bw_mbps'  => eyvescloud_int_option($options, 'network_bw_mbps', 0),
-    ];
-    $resource = array_filter($resource, function ($value) {
-        return $value !== 0 && $value !== 0.0;
-    });
-
-    if (!empty($resource)) {
-        $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/resource-limit', $resource, 'PUT', 60);
-        if (!eyvescloud_success($res)) {
-            return ['status' => 'error', 'msg' => eyvescloud_message($res, '资源限制调整失败')];
-        }
-    }
-
-    $traffic = [
-        'traffic_mode'       => $options['traffic_mode'] ?? 'total',
-        'monthly_traffic_gb' => eyvescloud_int_option($options, 'monthly_traffic_gb', 0),
-        'traffic_in_gb'      => eyvescloud_int_option($options, 'traffic_in_gb', 0),
-        'traffic_out_gb'     => eyvescloud_int_option($options, 'traffic_out_gb', 0),
-    ];
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/traffic-limit', $traffic, 'PUT', 30);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '流量限制调整失败')];
-    }
-
-    $expiresAt = eyvescloud_expiry_from_params($params);
-    if ($expiresAt !== '') {
-        $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/expiry', ['expires_at' => $expiresAt], 'PUT', 30);
-        if (!eyvescloud_success($res)) {
-            return ['status' => 'error', 'msg' => eyvescloud_message($res, '到期时间同步失败')];
-        }
-    }
-
-    return ['status' => 'success', 'msg' => '配置变更成功'];
-}
-
-function eyvescloud_Renew($params)
-{
-    $expiresAt = eyvescloud_expiry_from_params($params);
-    if ($expiresAt === '') {
-        return ['status' => 'success', 'msg' => '未启用到期时间同步'];
-    }
-    $name = eyvescloud_container_name($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/expiry', ['expires_at' => $expiresAt], 'PUT', 30);
-    return eyvescloud_success($res)
-        ? ['status' => 'success', 'msg' => '续费到期时间同步成功']
-        : ['status' => 'error', 'msg' => eyvescloud_message($res, '续费同步失败')];
-}
-
-function eyvescloud_UsageUpdate($params)
-{
-    $name = eyvescloud_container_name($params);
-    $usageRes = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/usage', [], 'GET', 30);
-    $trafficRes = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/traffic', [], 'GET', 30);
-
-    $usage = eyvescloud_success($usageRes) && isset($usageRes['data']) && is_array($usageRes['data']) ? $usageRes['data'] : [];
-    $traffic = eyvescloud_success($trafficRes) && isset($trafficRes['data']) && is_array($trafficRes['data']) ? $trafficRes['data'] : [];
-    if (empty($usage) && empty($traffic)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($trafficRes, eyvescloud_message($usageRes, '获取用量失败'))];
-    }
-
-    $hostId = eyvescloud_host_id($params);
-    if ($hostId <= 0) {
-        return ['status' => 'success', 'msg' => '用量获取成功（无主机记录可写回）'];
-    }
-
-    $rxBytes = eyvescloud_pick_number([$traffic, $usage], ['rx_used_bytes', 'traffic_used_rx', 'rx_bytes', 'network_rx_bytes'], 0);
-    $txBytes = eyvescloud_pick_number([$traffic, $usage], ['tx_used_bytes', 'traffic_used_tx', 'tx_bytes', 'network_tx_bytes'], 0);
-    $totalBytes = eyvescloud_pick_number([$traffic], ['total_used_bytes'], 0);
-    if ($totalBytes <= 0) {
-        $totalBytes = $rxBytes + $txBytes;
-    }
-    $limitGB = eyvescloud_pick_number([$traffic], ['limit_gb', 'monthly_traffic_gb'], 0);
-
-    // 计费系统主机表流量用量字段：计费系统沿用 WHMCS 的 bwusage / bwlimit（单位 MB）。
-    // TODO: 仓库内无该字段定义可核对，若目标计费系统字段名或单位不同，请按实际调整。
-    $update = [
-        'bwusage' => round($totalBytes / 1048576, 2),
-        'bwlimit' => $limitGB > 0 ? round($limitGB * 1024, 2) : 0,
-    ];
-
-    try {
-        Db::name('host')->where('id', $hostId)->update($update);
-    } catch (\Exception $e) {
-        return ['status' => 'error', 'msg' => '用量写回失败: ' . $e->getMessage()];
-    }
-
-    return ['status' => 'success', 'msg' => '用量已更新'];
-}
-
-function eyvescloud_AdminButton($params)
-{
-    if (empty($params['domain'])) {
-        return [];
-    }
-    return [
-        'Sync'         => '同步状态',
-        'TrafficReset' => '重置流量',
-        'vnc'          => 'VNC 控制台',
-    ];
-}
-
-function eyvescloud_ClientButton($params)
-{
-    if (empty($params['domain'])) {
-        return [];
-    }
-    return [
-        'webssh' => [
-            'place' => 'console',
-            'name'  => 'WebSSH',
-        ],
-        'vnc' => [
-            'place' => 'console',
-            'name'  => 'WebVNC',
-        ],
-    ];
-}
-
-function eyvescloud_webssh($params)
-{
-    $container = [];
-    $containerName = eyvescloud_container_name($params);
-    eyvescloud_container_api_id($params, $container);
-    if (!empty($container['name'])) {
-        $containerName = (string)$container['name'];
-    }
-
-    $res = eyvescloud_request($params, '/api/v1/ssh-ticket', ['container_name' => $containerName], 'POST', 30);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, 'WebSSH ticket create failed')];
-    }
-
-    $ticket = $res['data']['ticket'] ?? '';
-    if ($ticket === '') {
-        return ['status' => 'error', 'msg' => 'WebSSH ticket is empty'];
-    }
-
-    $url = eyvescloud_webssh_url($params, $ticket, $containerName);
-    $jsUrl = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-    return [
-        'status' => 'success',
-        'msg'    => "WebSSH started<script type='text/javascript'>window.open({$jsUrl}, '_blank');</script>",
-    ];
-}
-
-function eyvescloud_vnc($params)
-{
-    $container = [];
-    $containerName = eyvescloud_container_name($params);
-    eyvescloud_container_api_id($params, $container);
-    if (!empty($container['name'])) {
-        $containerName = (string)$container['name'];
-    }
-
-    // KVM VNC 票据：POST /api/v1/vnc-ticket，请求体 {"container_name": "..."}，返回 {"data": {"ticket": "..."}}。
-    $res = eyvescloud_request($params, '/api/v1/vnc-ticket', ['container_name' => $containerName], 'POST', 30);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, 'VNC 票据创建失败')];
-    }
-
-    $ticket = $res['data']['ticket'] ?? '';
-    if ($ticket === '') {
-        return ['status' => 'error', 'msg' => 'VNC 票据为空'];
-    }
-
-    $url = eyvescloud_vnc_url($params, $ticket, $containerName);
-    $jsUrl = json_encode($url, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-
-    return [
-        'status' => 'success',
-        'msg'    => "WebVNC started<script type='text/javascript'>window.open({$jsUrl}, '_blank');</script>",
-    ];
-}
-
-function eyvescloud_firewallList($params)
-{
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($containerId) . '/firewall', [], 'GET', 30);
-    if (!eyvescloud_success($res) || empty($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取防火墙设置失败')];
-    }
-
-    return [
-        'status' => 200,
-        'msg'    => '获取成功',
-        'data'   => $res['data'],
-    ];
-}
-
-function eyvescloud_firewallUpdate($params)
-{
-    $input = eyvescloud_json_input();
-    $enabled = eyvescloud_param_value($input, 'enabled', 'true');
-    $enabled = filter_var($enabled, FILTER_VALIDATE_BOOLEAN);
-    $defaultAction = strtoupper(trim((string)eyvescloud_param_value($input, 'default_action', '')));
-    $rules = eyvescloud_param_value($input, 'rules', '[]');
-
-    if (is_string($rules)) {
-        $decodedRules = json_decode($rules, true);
-        if (is_array($decodedRules)) {
-            $rules = $decodedRules;
-        }
-    }
-    if (!is_array($rules)) {
-        $rules = [];
-    }
-
-    $payload = [
-        'enabled' => $enabled,
-        'rules'   => $rules,
-    ];
-    if (in_array($defaultAction, ['ACCEPT', 'DROP'], true)) {
-        $payload['default_action'] = $defaultAction;
-    }
-
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($containerId) . '/firewall', $payload, 'PUT', 30);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '更新防火墙设置失败')];
-    }
-
-    // GET after PUT to confirm the actual state after EYVESCLOUD processes it
-    $getRes = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($containerId) . '/firewall', [], 'GET', 30);
-    $actualData = [];
-    if (eyvescloud_success($getRes) && !empty($getRes['data']) && is_array($getRes['data'])) {
-        $actualData = $getRes['data'];
-    }
-
-    return [
-        'status' => 200,
-        'msg'    => eyvescloud_message($res, '防火墙设置已更新'),
-        'data'   => $actualData,
-    ];
-}
-
-function eyvescloud_firewall_ajax($params)
-{
-    $input = eyvescloud_json_input();
-    $action = strtolower(trim((string)eyvescloud_param_value($input, 'action', '')));
-    $debug = [eyvescloud_debug_entry('Firewall ajax received', [
-        'action' => $action,
-        'input'  => $input,
-        'query'  => $_GET,
-    ])];
-
-    $container = [];
-    $containerId = eyvescloud_container_api_id($params, $container);
-    $debug[] = eyvescloud_debug_entry('Container resolved', [
-        'container_id' => $containerId,
-        'container'    => [
-            'id'   => $container['id'] ?? null,
-            'uuid' => $container['uuid'] ?? null,
-            'name' => $container['name'] ?? null,
-        ],
-    ]);
-
-    if (!in_array($action, ['list', 'update'], true)) {
-        return ['status' => 'error', 'msg' => '未知防火墙操作', 'debug' => $debug];
-    }
-
-    if ($action === 'list') {
-        $call = eyvescloud_request_debug($params, '/api/v1/containers/' . rawurlencode($containerId) . '/firewall', [], 'GET', 30);
-        $debug[] = $call['debug'];
-        $res = $call['response'];
-        if (!eyvescloud_success($res) || empty($res['data'])) {
-            return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取防火墙设置失败'), 'debug' => $debug];
-        }
-        return [
-            'status' => 'success',
-            'msg'    => '获取成功',
-            'data'   => $res['data'],
-            'debug'  => $debug,
-        ];
-    }
-
-    // update
-    $enabled = eyvescloud_param_value($input, 'enabled', 'true');
-    $enabled = filter_var($enabled, FILTER_VALIDATE_BOOLEAN);
-    $defaultAction = strtoupper(trim((string)eyvescloud_param_value($input, 'default_action', '')));
-    $rules = eyvescloud_param_value($input, 'rules', '[]');
-
-    if (is_string($rules)) {
-        $decodedRules = json_decode($rules, true);
-        if (is_array($decodedRules)) {
-            $rules = $decodedRules;
-        }
-    }
-    if (!is_array($rules)) {
-        $rules = [];
-    }
-
-    $payload = [
-        'enabled' => $enabled,
-        'rules'   => $rules,
-    ];
-    if (in_array($defaultAction, ['ACCEPT', 'DROP'], true)) {
-        $payload['default_action'] = $defaultAction;
-    }
-
-    $call = eyvescloud_request_debug($params, '/api/v1/containers/' . rawurlencode($containerId) . '/firewall', $payload, 'PUT', 30);
-    $debug[] = $call['debug'];
-    $res = $call['response'];
-
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '更新防火墙设置失败'), 'debug' => $debug];
-    }
-
-    return [
-        'status' => 'success',
-        'msg'    => eyvescloud_message($res, '防火墙设置已更新'),
-        'data'   => $res['data'] ?? [],
-        'debug'  => $debug,
-    ];
-}
-
-// ---- 通用：把后端返回的资产列表转成客户区友好的展示字段 ----
-function eyvescloud_normalize_assets($items, $sizeKey = 'size_bytes')
-{
-    $out = [];
-    foreach ((array)$items as $item) {
-        if (!is_array($item)) {
-            continue;
-        }
-        $item['size_text'] = eyvescloud_format_bytes((int)($item[$sizeKey] ?? 0));
-        $out[] = $item;
-    }
-    return $out;
-}
-
-// ---- 快照：客户区（list / create / restore / delete） ----
-function eyvescloud_snapshot_base($params)
-{
-    return '/api/v1/containers/' . rawurlencode(eyvescloud_container_name($params)) . '/snapshots';
-}
-
-function eyvescloud_snapshotList($params)
-{
-    $res = eyvescloud_request($params, eyvescloud_snapshot_base($params), [], 'GET', 30);
-    if (!eyvescloud_success($res) || !isset($res['data']['snapshots'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取快照列表失败')];
-    }
-    return ['status' => 200, 'msg' => '获取成功', 'data' => [
-        'snapshots' => eyvescloud_normalize_assets($res['data']['snapshots']),
-        'quota'     => $res['data']['quota'] ?? 0,
-    ]];
-}
-
-function eyvescloud_snapshotCreate($params)
-{
-    $res = eyvescloud_request($params, eyvescloud_snapshot_base($params), [], 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '创建快照失败')];
-    }
-    return ['status' => 200, 'msg' => '快照已创建'];
-}
-
-function eyvescloud_snapshotID()
-{
-    return trim((string)eyvescloud_request_value('id', ''));
-}
-
-function eyvescloud_snapshotRestore($params)
-{
-    $sid = eyvescloud_snapshotID();
-    if ($sid === '') {
-        return ['status' => 'error', 'msg' => '缺少快照 ID'];
-    }
-    $res = eyvescloud_request($params, eyvescloud_snapshot_base($params) . '/' . rawurlencode($sid) . '/restore', [], 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '还原快照失败')];
-    }
-    return ['status' => 200, 'msg' => '还原任务已提交'];
-}
-
-function eyvescloud_snapshotDelete($params)
-{
-    $sid = eyvescloud_snapshotID();
-    if ($sid === '') {
-        return ['status' => 'error', 'msg' => '缺少快照 ID'];
-    }
-    $res = eyvescloud_request($params, eyvescloud_snapshot_base($params) . '/' . rawurlencode($sid), [], 'DELETE', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '删除快照失败')];
-    }
-    return ['status' => 200, 'msg' => '快照已删除'];
-}
-
-// ---- 备份：客户区（list / create / restore / delete） ----
-function eyvescloud_backup_base($params)
-{
-    return '/api/v1/containers/' . rawurlencode(eyvescloud_container_name($params)) . '/backups';
-}
-
-function eyvescloud_backupList($params)
-{
-    $res = eyvescloud_request($params, eyvescloud_backup_base($params), [], 'GET', 30);
-    if (!eyvescloud_success($res) || !isset($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取备份列表失败')];
-    }
-    return ['status' => 200, 'msg' => '获取成功', 'data' => ['backups' => eyvescloud_normalize_assets($res['data'])]];
-}
-
-function eyvescloud_backupCreate($params)
-{
-    $res = eyvescloud_request($params, eyvescloud_backup_base($params), [], 'POST', 180);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '创建备份失败')];
-    }
-    return ['status' => 200, 'msg' => '备份已创建'];
-}
-
-function eyvescloud_backupRestore($params)
-{
-    $bid = trim((string)eyvescloud_request_value('id', ''));
-    if ($bid === '') {
-        return ['status' => 'error', 'msg' => '缺少备份 ID'];
-    }
-    $res = eyvescloud_request($params, eyvescloud_backup_base($params) . '/' . rawurlencode($bid) . '/restore', [], 'POST', 180);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '还原备份失败')];
-    }
-    return ['status' => 200, 'msg' => '还原任务已提交'];
-}
-
-function eyvescloud_backupDelete($params)
-{
-    $bid = trim((string)eyvescloud_request_value('id', ''));
-    if ($bid === '') {
-        return ['status' => 'error', 'msg' => '缺少备份 ID'];
-    }
-    $res = eyvescloud_request($params, eyvescloud_backup_base($params) . '/' . rawurlencode($bid), [], 'DELETE', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '删除备份失败')];
-    }
-    return ['status' => 200, 'msg' => '备份已删除'];
-}
-
-// ---- ISO 挂载：客户区（KVM only）----
-function eyvescloud_isoList($params)
-{
-    $res = eyvescloud_request($params, '/api/isos', [], 'GET', 30);
-    if (!eyvescloud_success($res) || !isset($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取 ISO 列表失败')];
-    }
-    return ['status' => 200, 'msg' => '获取成功', 'data' => ['isos' => eyvescloud_normalize_assets($res['data'])]];
-}
-
-function eyvescloud_isoNumericID($params)
-{
-    $container = [];
-    $id = (int)eyvescloud_container_api_id($params, $container);
-    if ($id <= 0 && !empty($container['id'])) {
-        $id = (int)$container['id'];
-    }
-    return $id;
-}
-
-function eyvescloud_isoAttach($params)
-{
-    $isoId = trim((string)eyvescloud_request_value('iso_id', ''));
-    if ($isoId === '') {
-        return ['status' => 'error', 'msg' => '缺少 ISO ID'];
-    }
-    $cid = eyvescloud_isoNumericID($params);
-    if ($cid <= 0) {
-        return ['status' => 'error', 'msg' => '无法解析容器编号，请用容器名称产品'];
-    }
-    $res = eyvescloud_request($params, '/api/isos/attach', ['container_id' => $cid, 'iso_id' => $isoId, 'attach' => true], 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '挂载 ISO 失败')];
-    }
-    return ['status' => 200, 'msg' => 'ISO 已挂载'];
-}
-
-function eyvescloud_isoDetach($params)
-{
-    $cid = eyvescloud_isoNumericID($params);
-    if ($cid <= 0) {
-        return ['status' => 'error', 'msg' => '无法解析容器编号，请用容器名称产品'];
-    }
-    $res = eyvescloud_request($params, '/api/isos/attach', ['container_id' => $cid, 'iso_id' => '', 'attach' => false], 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '卸载 ISO 失败')];
-    }
-    return ['status' => 200, 'msg' => 'ISO 已卸载'];
-}
-
-// ---- 重装选系统：客户区 ---- 
-function eyvescloud_reinstallTemplates($params)
-{
-    $res = eyvescloud_request($params, '/api/v1/templates', [], 'GET', 30);
-    if (!eyvescloud_success($res) || !isset($res['data'])) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '获取系统模板失败')];
-    }
-    $list = [];
-    foreach ((array)$res['data'] as $t) {
-        if (!is_array($t)) {
-            continue;
-        }
-        $list[] = [
-            'id'   => $t['id'] ?? '',
-            'name' => $t['name'] ?? $t['id'] ?? '',
-            'arch' => $t['arch'] ?? '',
-        ];
-    }
-    return ['status' => 200, 'msg' => '获取成功', 'data' => ['templates' => $list]];
-}
-
-function eyvescloud_client_reinstall($params)
-{
-    $templateId = trim((string)eyvescloud_request_value('template_id', ''));
-    if ($templateId === '') {
-        return ['status' => 'error', 'msg' => '请选择要重装的系统模板'];
-    }
-    $reinstallMode = trim((string)eyvescloud_request_value('reinstall_mode', ''));
-    $payload = ['template_id' => $templateId];
-    if ($reinstallMode !== '') {
-        $payload['reinstall_mode'] = $reinstallMode;
-    }
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode(eyvescloud_container_name($params)) . '/reinstall', $payload, 'POST', 60);
-    if (!eyvescloud_success($res)) {
-        return ['status' => 'error', 'msg' => eyvescloud_message($res, '重装失败')];
-    }
-    return ['status' => 200, 'msg' => '重装任务已提交'];
-}
-
-function eyvescloud_AllowFunction()
-{
-    $fns = ['TrafficReset', 'randomPort', 'addNat', 'updateNat', 'deleteNat', 'natList', 'infoData', 'webssh', 'vnc', 'firewallList', 'firewallUpdate',
-        'snapshotList', 'snapshotCreate', 'snapshotRestore', 'snapshotDelete',
-        'backupList', 'backupCreate', 'backupRestore', 'backupDelete',
-        'isoList', 'isoAttach', 'isoDetach',
-        'reinstallTemplates', 'reinstall'];
-    return ['client' => $fns, 'admin' => $fns];
-}
-
-function eyvescloud_ClientArea($params)
-{
-    $tabs = [
-        'info'     => ['name' => '实例信息'],
-        'nat'      => ['name' => 'NAT转发'],
-        'firewall' => ['name' => '防火墙'],
-        'snapshot' => ['name' => '快照'],
-        'backup'   => ['name' => '备份'],
-        'reinstall'=> ['name' => '重装系统'],
-    ];
-    // ISO 挂载仅对 KVM 产品展示。
-    $isKVM = strtolower((string)($params['configoptions']['virtualization'] ?? '')) === 'kvm';
-    if ($isKVM) {
-        $tabs['iso'] = ['name' => 'ISO挂载'];
-    }
-    return $tabs;
-}
-
-function eyvescloud_ClientAreaOutput($params, $key)
-{
-    $func = strtolower(trim((string)eyvescloud_request_value('func', '')));
-    if ($func === 'natajax') {
-        eyvescloud_json_response(eyvescloud_nat_ajax($params));
-    }
-    if ($func === 'infoajax') {
-        eyvescloud_json_response(eyvescloud_info_ajax($params));
-    }
-    if ($func === 'firewallajax') {
-        eyvescloud_json_response(eyvescloud_firewall_ajax($params));
-    }
-
-    // 通用客户端功能分发：func 对应 eyvescloud_<func>() 并返回 JSON。
-    $clientFuncs = [
-        'TrafficReset', 'randomPort', 'addNat', 'updateNat', 'deleteNat', 'natList',
-        'infoData', 'webssh', 'vnc', 'firewallList', 'firewallUpdate',
-        'snapshotList', 'snapshotCreate', 'snapshotRestore', 'snapshotDelete',
-        'backupList', 'backupCreate', 'backupRestore', 'backupDelete',
-        'isoList', 'isoAttach', 'isoDetach', 'reinstallTemplates', 'reinstall',
-    ];
-    if ($func !== '' && in_array($func, $clientFuncs, true)) {
-        $fn = ($func === 'reinstall') ? 'eyvescloud_client_reinstall' : ('eyvescloud_' . $func);
-        if (function_exists($fn)) {
-            eyvescloud_json_response(call_user_func($fn, $params));
-        }
-    }
-
-    if (!in_array($key, ['info', 'nat', 'firewall', 'snapshot', 'backup', 'iso', 'reinstall'], true)) {
-        return '';
-    }
-
-    $res = eyvescloud_find_container($params);
-    if (!eyvescloud_success($res) || empty($res['data'])) {
-        return '获取实例信息失败: ' . eyvescloud_message($res, '未知错误');
-    }
-
-    $c = $res['data'];
-    $publicHost = eyvescloud_public_host($params, $c, true);
-
-    if ($key === 'nat') {
-        $operation = eyvescloud_handle_nat_post($params);
-        $operationMsg = $operation['message'] ?? '';
-        $postMappings = $operation['mappings'] ?? null;
-        if ($operationMsg !== '') {
-            $res = eyvescloud_find_container($params);
-            $c = eyvescloud_success($res) && !empty($res['data']) && is_array($res['data']) ? $res['data'] : $c;
-        }
-        $mappings = $postMappings !== null ? $postMappings : eyvescloud_port_mappings_from_container($c);
-
-        return [
-            'template' => 'templates/nat.html',
-            'vars'     => [
-                'container'     => $c,
-                'container_name'=> $c['name'] ?? eyvescloud_container_name($params),
-                'ssh_port'      => $c['ssh_port'] ?? '',
-                'server_ip'     => $publicHost,
-                'nat_host'      => $publicHost,
-                'operation_msg' => $operationMsg,
-                'service_id'    => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-                'area_key'      => 'nat',
-                'port_mappings' => eyvescloud_normalize_port_mappings($mappings),
-            ],
-        ];
-    }
-
-    if ($key === 'firewall') {
-        return [
-            'template' => 'templates/firewall.html',
-            'vars'     => [
-                'container'      => $c,
-                'container_name' => $c['name'] ?? eyvescloud_container_name($params),
-                'server_ip'      => $publicHost,
-                'service_id'     => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-                'area_key'       => 'firewall',
-            ],
-        ];
-    }
-
-    $currentTemplate = $c['template'] ?? ($params['configoptions']['template_id'] ?? '');
-
-    if ($key === 'snapshot') {
-        return [
-            'template' => 'templates/snapshot.html',
-            'vars'     => [
-                'container'      => $c,
-                'container_name' => $c['name'] ?? eyvescloud_container_name($params),
-                'server_ip'      => $publicHost,
-                'service_id'     => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-                'area_key'       => 'snapshot',
-            ],
-        ];
-    }
-
-    if ($key === 'backup') {
-        return [
-            'template' => 'templates/backup.html',
-            'vars'     => [
-                'container'      => $c,
-                'container_name' => $c['name'] ?? eyvescloud_container_name($params),
-                'server_ip'      => $publicHost,
-                'service_id'     => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-                'area_key'       => 'backup',
-            ],
-        ];
-    }
-
-    if ($key === 'iso') {
-        return [
-            'template' => 'templates/iso.html',
-            'vars'     => [
-                'container'      => $c,
-                'container_name' => $c['name'] ?? eyvescloud_container_name($params),
-                'server_ip'      => $publicHost,
-                'container_id'   => eyvescloud_isoNumericID($params),
-                'service_id'     => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-                'area_key'       => 'iso',
-            ],
-        ];
-    }
-
-    if ($key === 'reinstall') {
-        return [
-            'template' => 'templates/reinstall.html',
-            'vars'     => [
-                'container'       => $c,
-                'container_name'  => $c['name'] ?? eyvescloud_container_name($params),
-                'server_ip'       => $publicHost,
-                'current_template'=> $currentTemplate,
-                'service_id'      => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-                'area_key'        => 'reinstall',
-            ],
-        ];
-    }
-
-    $initialRxBytes = (int)($c['traffic_used_rx'] ?? $c['rx_bytes'] ?? 0);
-    $initialTxBytes = (int)($c['traffic_used_tx'] ?? $c['tx_bytes'] ?? 0);
-    $initialTrafficUsed = ($initialRxBytes || $initialTxBytes) ? round(($initialRxBytes + $initialTxBytes) / 1073741824, 2) : '-';
-    $initialTrafficIn = $initialRxBytes ? round($initialRxBytes / 1073741824, 2) : '-';
-    $initialTrafficOut = $initialTxBytes ? round($initialTxBytes / 1073741824, 2) : '-';
-    $initialTrafficLimit = isset($c['monthly_traffic_gb']) && $c['monthly_traffic_gb'] !== '' ? $c['monthly_traffic_gb'] : '-';
-    $initialTrafficUsedText = ($initialRxBytes || $initialTxBytes) ? eyvescloud_format_bytes($initialRxBytes + $initialTxBytes) : '-';
-    $initialTrafficInText = $initialRxBytes ? eyvescloud_format_bytes($initialRxBytes) : '-';
-    $initialTrafficOutText = $initialTxBytes ? eyvescloud_format_bytes($initialTxBytes) : '-';
-    $initialTrafficLimitText = is_numeric($initialTrafficLimit) ? round((float)$initialTrafficLimit, 2) . ' GB' : '-';
-    $options = $params['configoptions'] ?? [];
-
-    return [
-        'template' => 'templates/info.html',
-        'vars'     => [
-            'container'      => $c,
-            'status_text'    => (($c['status'] ?? '') === 'running') ? '运行中' : '已关机',
-            'server_ip'      => $publicHost,
-            'ssh_host'       => $publicHost,
-            'ssh_port'       => $c['ssh_port'] ?? '',
-            'ssh_password'   => $c['ssh_password'] ?? '',
-            'ipv4'           => $c['ip'] ?? '',
-            'ipv6'           => $c['ipv6'] ?? '',
-            'vcpu'           => $c['vcpu'] ?? ($options['vcpu'] ?? ''),
-            'ram_mb'         => $c['ram_mb'] ?? ($options['ram_mb'] ?? ''),
-            'disk_gb'        => $c['disk_gb'] ?? ($options['disk_gb'] ?? ''),
-            'bandwidth'      => $c['network_bw_mbps'] ?? ($options['network_bw_mbps'] ?? ''),
-            'traffic_used'   => $initialTrafficUsed,
-            'traffic_limit'  => $initialTrafficLimit,
-            'traffic_in_gb'  => $initialTrafficIn,
-            'traffic_out_gb' => $initialTrafficOut,
-            'traffic_used_text' => $initialTrafficUsedText,
-            'traffic_limit_text'=> $initialTrafficLimitText,
-            'traffic_in_text'   => $initialTrafficInText,
-            'traffic_out_text'  => $initialTrafficOutText,
-            'expires_at'     => $c['expires_at'] ?? '',
-            'service_id'     => eyvescloud_request_value('id', $params['hostid'] ?? ''),
-            'area_key'       => 'info',
-        ],
-    ];
-}
-
-// ===== WHMCS 9.0.4 / PHP 8.3 补充：LoginLink / 按钮派发 / mod_eyvescloud 表 =====
-// 原版已有 UsageUpdate / AdminButton / ClientButton / TrafficReset 等，本处只补
-// 审计中真正缺失的项：LoginLink、按钮 handler（v9 中按钮派发需对应函数）、
-// mod_eyvescloud 映射表（用于反向定位、并发安全、UsageUpdate 幂等）。
-
-/**
- * WHMCS LoginLink — 客户端详情页"管理"按钮跳转目标，生成 sub-user access code，
- * 重定向到上游面板的容器详情页。access code 是一次性、TTL 10 分钟。
- * 上游无 access-link 端点时回退到普通容器详情 URL（避免点击无响应）。
- */
-function eyvescloud_LoginLink($params)
-{
-    $name = eyvescloud_container_name($params);
-    $base = eyvescloud_base_url($params);
-    $res = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/access-link', [
-        'redirect' => '/containers/' . rawurlencode($name),
-        'ttl'      => 600,
-    ], 'POST', 30);
-    if (eyvescloud_success($res) && !empty($res['data']['url'])) {
-        return ['status' => 'success', 'url' => $res['data']['url']];
-    }
-    return ['status' => 'success', 'url' => $base . '/containers/' . rawurlencode($name)];
-}
-
-/**
- * WHMCS v8/9 按钮派发：把 AdminButton / ClientButton 返回的按钮 key
- * 映射到对应处理函数。命令名 → 处理器；未识别命令返回 error。
- */
-function eyvescloud_AdminCustomButton($params, $cmd)
-{
-    $name = eyvescloud_container_name($params);
-    switch ($cmd) {
-        case 'Rescue':
-            $r = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/rescue', [], 'POST', 30);
-            return eyvescloud_format_button_result($r, '已发起救援模式');
-        case 'Snapshot':
-            $r = eyvescloud_request($params, '/api/v1/containers/' . rawurlencode($name) . '/snapshots',
-                ['name' => 'manual-' . date('Ymd-His')], 'POST', 30);
-            return eyvescloud_format_button_result($r, '快照任务已提交');
-        case 'RebuildISO':
-            return eyvescloud_Reinstall($params);
-        case 'ResetPassword':
-            // 8.3 推荐 random_bytes（CSPRNG）替换之前的 mt_rand 等弱随机。
-            $new = bin2hex(random_bytes(6));
-            return eyvescloud_CrackPassword($params, $new);
-        case 'OpenVNC':
-        case 'vnc':
-            return ['status' => 'info', 'msg' => '请前往容器详情页查看 VNC 链接'];
-    }
-    return ['status' => 'error', 'msg' => '未知命令: ' . $cmd];
-}
-
-function eyvescloud_format_button_result($res, $successMsg)
-{
-    return [
-        'status' => eyvescloud_success($res) ? 'success' : 'error',
-        'msg'    => eyvescloud_message($res, $successMsg),
-    ];
-}
-
-/**
- * mod_eyvescloud 表：容器 UUID ↔ WHMCS service id 的反向映射。
- * 用于并发安全（避免 container name 改名后无法定位）、UsageUpdate 幂等、
- * 自定义按钮拿到容器 ID 而非容器名。
- */
-function eyvescloud_ensure_schema()
-{
-    static $ensured = false;
-    if ($ensured) {
-        return;
-    }
-    try {
-        $exists = Db::query("SHOW TABLES LIKE 'mod_eyvescloud'");
-        if (!$exists) {
-            Db::query(<<<SQL
-CREATE TABLE IF NOT EXISTS `mod_eyvescloud` (
-    `service_id`      INT NOT NULL PRIMARY KEY,
-    `container_id`    VARCHAR(64) NOT NULL,
-    `container_uuid`  VARCHAR(64) DEFAULT NULL,
-    `container_name`  VARCHAR(128) DEFAULT NULL,
-    `expires_at`      DATE DEFAULT NULL,
-    `cached_status`   VARCHAR(32) DEFAULT NULL,
-    `cached_traffic`  DECIMAL(12,3) DEFAULT 0,
-    `cached_updated`  DATETIME DEFAULT NULL,
-    INDEX `idx_container_uuid` (`container_uuid`),
-    INDEX `idx_container_name` (`container_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-SQL);
-        }
-        $ensured = true;
-    } catch (\Throwable $e) {
-        eyvescloud_debug('ensure_schema failed', $e->getMessage());
+        return $out;
     }
 }
 
-function eyvescloud_remember_container($params, $container)
-{
-    if (!is_array($container) || empty($container['name'])) {
-        return;
-    }
-    $hostId = eyvescloud_host_id($params);
-    if ($hostId <= 0) {
-        return;
-    }
-    eyvescloud_ensure_schema();
-    try {
-        Db::name('mod_eyvescloud')->replace([
-            'service_id'     => $hostId,
-            'container_id'   => (string)($container['id'] ?? $container['name']),
-            'container_uuid' => (string)($container['uuid'] ?? ''),
-            'container_name' => (string)$container['name'],
-            'cached_status'  => (string)($container['status'] ?? ''),
-            'cached_updated' => date('Y-m-d H:i:s'),
-        ]);
-    } catch (\Throwable $e) {
-        eyvescloud_debug('remember_container failed', $e->getMessage());
-    }
-}
-
-function eyvescloud_forget_container($params)
-{
-    $hostId = eyvescloud_host_id($params);
-    if ($hostId <= 0) {
-        return;
-    }
-    eyvescloud_ensure_schema();
-    try {
-        Db::name('mod_eyvescloud')->where('service_id', $hostId)->delete();
-    } catch (\Throwable $e) {
-        eyvescloud_debug('forget_container failed', $e->getMessage());
-    }
-}

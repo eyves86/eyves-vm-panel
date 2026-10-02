@@ -1,0 +1,580 @@
+/* ==========================================================================
+   EyvesCloud 客户区 —— 设计系统
+   
+   数值全部对齐 AWS Cloudscape 设计系统（AWS 控制台在用的开源规范）：
+     · 4px 基准网格
+     · 字号不得小于 12px；正文 14/20，说明 12/16
+     · 容器内水平内边距 20px；页头到内容垂直间距 16px；网格沟槽 20px
+     · 等宽字体仅用于代码/数值/时间/IP/ID
+     · 状态用「图标 + 文字」（StatusIndicator），不是裸色点
+     · 键值对用多列网格、标签在上值在下（KeyValuePairs，columns=3）
+     · 复制用值旁的内联按钮（CopyToClipboard variant=inline）
+   ========================================================================== */
+
+/* 设计令牌挂在 :root：
+   弹层与 Toast 是 JS 挂到 <body> 下的，如果令牌定义在 .ev-panel 里，
+   那些节点会拿不到变量 —— 结果是整块弹层没有背景、按钮没有边框。 */
+:root {
+
+  /* ---- 间距：4px 基准网格 ---- */
+  --ev-sp-xxs: 4px;
+  --ev-sp-xs:  8px;
+  --ev-sp-s:   12px;
+  --ev-sp-m:   16px;   /* 卡片内垂直间距 / 页头到内容 */
+  --ev-sp-l:   20px;   /* 容器内水平内边距 / 网格沟槽 / 表单字段间距 */
+  --ev-sp-xl:  24px;
+
+  /* ---- 字号：Cloudscape 排版规范 ---- */
+  --ev-fs-h-large: 20px;  --ev-lh-h-large: 24px;  /* 容器标题 */
+  --ev-fs-h-small: 16px;  --ev-lh-h-small: 20px;  /* 段落标题 / 小节标题 */
+  --ev-fs-body:    14px;  --ev-lh-body:    20px;  /* 正文 */
+  --ev-fs-small:   12px;  --ev-lh-small:   16px;  /* 说明 / 标签 / 错误（下限）*/
+  --ev-fs-code:    12px;  --ev-lh-code:    16px;  /* 代码 / ID / IP */
+
+  /* ---- 颜色 ---- */
+  --ev-bg:        #ffffff;
+  --ev-bg-sub:    #fafafa;
+  --ev-bg-hover:  #f2f3f3;
+  --ev-line:      #e9ebed;   /* 分隔线 */
+  --ev-line-soft: #f0f1f1;
+  --ev-line-hard: #d1d5db;   /* 控件描边 */
+
+  --ev-ink:       #16191f;   /* 主文字 */
+  --ev-ink-2:     #414750;   /* 次要文字 */
+  --ev-ink-3:     #5f6b7a;   /* 标签文字（对比度 5.5:1） */
+
+  --ev-accent:      #0972d3; /* Cloudscape 主色 */
+  --ev-accent-hover:#065299;
+  --ev-accent-soft: #f1f8fd;
+
+  --ev-ok:      #037f0c;  --ev-ok-soft:   #f2fcf3;
+  --ev-warn:    #8d6605;  --ev-warn-soft: #fbf7e8;
+  --ev-bad:     #d91515;  --ev-bad-soft:  #fff5f5;
+  --ev-idle:    #5f6b7a;  --ev-idle-soft: #f2f3f3;
+
+  --ev-r:    8px;
+  --ev-r-sm: 4px;
+  --ev-mono: 'Monaco', 'Menlo', 'Consolas', 'Courier Prime', 'Courier New', monospace;
+
+}
+
+.ev-panel {
+  color: var(--ev-ink);
+  font-size: var(--ev-fs-body);
+  line-height: var(--ev-lh-body);
+  margin: 0 0 var(--ev-sp-m);
+  max-width: 1200px;              /* 宽屏约束，避免键值行横跨 1400px */
+  -webkit-font-smoothing: antialiased;
+}
+
+.ev-panel *, .ev-panel *::before, .ev-panel *::after { box-sizing: border-box; }
+.ev-panel p, .ev-panel dl, .ev-panel dd, .ev-panel h1, .ev-panel h3 { margin: 0; }
+.ev-panel table { border-collapse: collapse; width: 100%; }
+.ev-panel small { font-size: var(--ev-fs-small); line-height: var(--ev-lh-small); }
+
+/* ==========================================================================
+   头部：标题 + 状态指示器 + 操作
+   ========================================================================== */
+.ev-hero {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: var(--ev-sp-l); flex-wrap: wrap;
+  padding: var(--ev-sp-m) var(--ev-sp-l);
+  border: 1px solid var(--ev-line);
+  border-radius: var(--ev-r) var(--ev-r) 0 0;
+  border-bottom: none;
+  background: var(--ev-bg);
+}
+.ev-hero__id { min-width: 0; flex: 1 1 auto; }
+
+.ev-hero__title {
+  font-size: var(--ev-fs-h-large); line-height: var(--ev-lh-h-large); font-weight: 700;
+  display: flex; align-items: center; gap: var(--ev-sp-xs); flex-wrap: wrap;
+  word-break: break-word;
+}
+.ev-hero__sub {
+  display: flex; align-items: center; gap: var(--ev-sp-m); flex-wrap: wrap;
+  margin-top: var(--ev-sp-xxs);
+  font-size: var(--ev-fs-small); line-height: var(--ev-lh-small);
+  color: var(--ev-ink-2);
+}
+.ev-meta { display: inline-flex; align-items: center; gap: var(--ev-sp-xxs); min-width: 0; }
+.ev-meta i { font-size: 14px; color: var(--ev-ink-3); }
+.ev-meta--mono { font-family: var(--ev-mono); font-size: var(--ev-fs-code); }
+.ev-meta--os i.fa-os {
+  width: 16px; height: 16px; flex: 0 0 16px;
+  background-size: contain; background-repeat: no-repeat; background-position: center;
+  font-size: 0;
+}
+
+/* ---- 状态指示器（Cloudscape StatusIndicator：图标 + 文字） ---- */
+.ev-status {
+  display: inline-flex; align-items: center; gap: var(--ev-sp-xxs);
+  font-size: var(--ev-fs-small); line-height: var(--ev-lh-small); font-weight: 400;
+  white-space: nowrap;
+}
+.ev-status i { font-size: 14px; line-height: 1; }
+.ev-status--running  { color: var(--ev-ok); }
+.ev-status--stopped  { color: var(--ev-idle); }
+.ev-status--creating { color: var(--ev-accent); }
+.ev-status--error    { color: var(--ev-bad); }
+.ev-status--suspended{ color: var(--ev-warn); }
+.ev-status--unknown  { color: var(--ev-idle); }
+.ev-status--creating i { animation: ev-spin 1.4s linear infinite; display: inline-block; }
+@keyframes ev-spin { to { transform: rotate(360deg); } }
+
+/* ---- 徽标（运行时等中性标记） ---- */
+.ev-chip {
+  display: inline-flex; align-items: center;
+  height: 20px; padding: 0 var(--ev-sp-xs); border-radius: var(--ev-r-sm);
+  font-size: var(--ev-fs-small); line-height: 1; font-weight: 400;
+  background: var(--ev-idle-soft); color: var(--ev-ink-2);
+  border: 1px solid var(--ev-line); white-space: nowrap;
+}
+.ev-chip--kvm  { background: #f1f8fd; color: #065299; border-color: #c9e3f6; }
+.ev-chip--lxc  { background: #f5f2fb; color: #5b3ed6; border-color: #ded6f5; }
+
+/* ---- 操作区 ---- */
+.ev-actions { display: flex; align-items: center; gap: var(--ev-sp-xs); flex-wrap: wrap; }
+
+/* ==========================================================================
+   指标条
+   标签 + 数值横排；用 flex + 分隔线，避免 grid 末尾出现填不满的空白格
+   ========================================================================== */
+.ev-strip {
+  display: flex; flex-wrap: wrap;
+  border: 1px solid var(--ev-line);
+  border-radius: 0 0 var(--ev-r) var(--ev-r);
+  background: var(--ev-bg);
+  overflow: hidden;
+}
+.ev-stat {
+  flex: 1 1 0; min-width: 96px;
+  padding: var(--ev-sp-s) var(--ev-sp-m);
+  border-right: 1px solid var(--ev-line-soft);
+  border-top: 1px solid var(--ev-line-soft);
+}
+.ev-stat:last-child { border-right: none; }
+.ev-stat--grow { flex: 2 1 0; }
+.ev-stat--wide { flex: 1.5 1 0; }
+
+.ev-stat__k {
+  display: block;
+  font-size: var(--ev-fs-small); line-height: var(--ev-lh-small); font-weight: 400;
+  color: var(--ev-ink-3); margin-bottom: var(--ev-sp-xxs);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;  /* 换行会让整条参差 */
+}
+.ev-stat__v {
+  display: flex; align-items: baseline; gap: var(--ev-sp-xxs);
+  font-size: var(--ev-fs-h-small); line-height: var(--ev-lh-h-small); font-weight: 700;
+  color: var(--ev-ink); font-variant-numeric: tabular-nums;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ev-stat__v i {
+  font-style: normal; font-size: var(--ev-fs-small); font-weight: 400;
+  color: var(--ev-ink-3);
+}
+.ev-stat__v.is-mono { font-family: var(--ev-mono); font-size: var(--ev-fs-body); font-weight: 400; }
+.ev-stat__v.is-dim  { color: var(--ev-ink-3); font-weight: 400; }
+
+.ev-mini {
+  margin-top: var(--ev-sp-xs); height: 4px; border-radius: 2px;
+  background: var(--ev-line); overflow: hidden;
+}
+.ev-mini > span { display: block; height: 100%; background: var(--ev-accent); transition: width .3s; }
+.ev-mini > span.is-warn { background: #ff9900; }
+.ev-mini > span.is-danger { background: var(--ev-bad); }
+
+/* ==========================================================================
+   主体 / 页签
+   ========================================================================== */
+.ev-body {
+  margin-top: var(--ev-sp-m);
+  border: 1px solid var(--ev-line);
+  border-radius: var(--ev-r);
+  background: var(--ev-bg);
+  overflow: hidden;
+}
+.ev-tabs-wrap { position: relative; }
+.ev-tabs-wrap::after {
+  content: ''; position: absolute; top: 0; right: 0; bottom: 1px; width: 56px;
+  pointer-events: none; opacity: 0; transition: opacity .18s;
+  background: linear-gradient(to right, rgba(250,250,250,0) 0%, var(--ev-bg-sub) 55%);
+  box-shadow: inset -8px 0 10px -8px rgba(22,25,31,.16);
+}
+.ev-tabs-wrap::before {
+  content: ''; position: absolute; top: 0; left: 0; bottom: 1px; width: 56px; z-index: 1;
+  pointer-events: none; opacity: 0; transition: opacity .18s;
+  background: linear-gradient(to left, rgba(250,250,250,0) 0%, var(--ev-bg-sub) 55%);
+  box-shadow: inset 8px 0 10px -8px rgba(22,25,31,.16);
+}
+.ev-tabs-wrap.is-overflow::after { opacity: 1; }
+.ev-tabs-wrap.is-atend::after { opacity: 0; }
+.ev-tabs-wrap.is-scrolled::before { opacity: 1; }
+
+.ev-tabs {
+  display: flex; overflow-x: auto;
+  border-bottom: 1px solid var(--ev-line);
+  background: var(--ev-bg-sub);
+  scrollbar-width: none; scroll-behavior: smooth;
+}
+.ev-tabs::-webkit-scrollbar { display: none; }
+.ev-tabs a {
+  display: flex; align-items: center; gap: 6px;
+  padding: var(--ev-sp-s) var(--ev-sp-m);
+  font-size: var(--ev-fs-body); line-height: var(--ev-lh-body); color: var(--ev-ink-2);
+  text-decoration: none; white-space: nowrap;
+  border-bottom: 2px solid transparent; border-top: 2px solid transparent;
+  transition: color .12s, background .12s;
+}
+.ev-tabs a:hover { color: var(--ev-ink); background: rgba(0,0,0,.025); }
+.ev-tabs a.is-active {
+  color: var(--ev-accent); border-bottom-color: var(--ev-accent);
+  background: var(--ev-bg); font-weight: 700;
+}
+.ev-tabs a i { font-size: 14px; opacity: .85; }
+
+.ev-pane { padding: var(--ev-sp-l); }
+
+/* 小节标题 */
+.ev-sec {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: var(--ev-sp-m); margin: 0 0 var(--ev-sp-m);
+}
+.ev-sec:not(:first-child) { margin-top: var(--ev-sp-xl); }
+.ev-sec__t { font-size: var(--ev-fs-h-small); line-height: var(--ev-lh-h-small); font-weight: 700; }
+.ev-sec__hint { font-size: var(--ev-fs-small); line-height: var(--ev-lh-small); color: var(--ev-ink-3); }
+
+/* ==========================================================================
+   键值对（Cloudscape KeyValuePairs：多列网格，标签在上值在下）
+   ========================================================================== */
+.ev-kv {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--ev-sp-m) var(--ev-sp-l);
+}
+.ev-kv__item { min-width: 0; }
+.ev-kv__k {
+  font-size: var(--ev-fs-small); line-height: var(--ev-lh-small);
+  color: var(--ev-ink-3); margin-bottom: var(--ev-sp-xxs);
+}
+.ev-kv__v {
+  font-size: var(--ev-fs-body); line-height: var(--ev-lh-body);
+  color: var(--ev-ink); word-break: break-word;
+}
+.ev-kv__v.is-mono { font-family: var(--ev-mono); font-size: var(--ev-fs-code); line-height: var(--ev-lh-code); }
+.ev-kv__v > div + div { margin-top: 2px; }
+
+/* 兼容旧的「行」写法（表格型键值）：标签在左、值在右 */
+.ev-kv--rows { display: block; }
+.ev-kv--rows .ev-kv__item {
+  display: flex; gap: var(--ev-sp-m); padding: var(--ev-sp-xs) 0;
+  border-bottom: 1px solid var(--ev-line-soft);
+}
+.ev-kv--rows .ev-kv__item:last-child { border-bottom: none; }
+.ev-kv--rows .ev-kv__k { flex: 0 0 140px; margin-bottom: 0; }
+
+/* ==========================================================================
+   复制到剪贴板（Cloudscape CopyToClipboard variant=inline）
+   值旁边一个内联按钮，而不是把整段文字做成可点
+   ========================================================================== */
+.ev-copy { display: inline-flex; align-items: center; gap: var(--ev-sp-xxs); min-width: 0; }
+.ev-copy__btn {
+  flex: 0 0 auto; width: 28px; height: 28px;   /* 28 > WCAG 2.5.8 的 24px 下限 */
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--ev-r-sm); background: transparent;
+  color: var(--ev-ink-3); cursor: pointer; padding: 0;
+  transition: background .12s, color .12s;
+}
+.ev-copy__btn:hover { background: var(--ev-bg-hover); color: var(--ev-ink); }
+.ev-copy__btn:focus-visible { outline: 2px solid var(--ev-accent); outline-offset: 1px; }
+.ev-copy__btn i { font-size: 14px; }
+.ev-copy__btn.is-copied { color: var(--ev-ok); background: var(--ev-ok-soft); }
+
+/* ==========================================================================
+   按钮（Cloudscape Button：normal / primary / link，尺寸 normal+compact）
+   ========================================================================== */
+.ev-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 var(--ev-sp-m);
+  border: 1px solid var(--ev-line-hard); border-radius: var(--ev-r-sm);
+  background: var(--ev-bg); color: var(--ev-ink);
+  font-size: var(--ev-fs-body); line-height: 1; font-family: inherit;
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s, color .12s;
+}
+.ev-btn:hover:not(:disabled) { background: var(--ev-bg-hover); }
+.ev-btn:focus-visible { outline: 2px solid var(--ev-accent); outline-offset: 1px; }
+.ev-btn:disabled { color: #767e88; border-color: var(--ev-line); background: var(--ev-bg-sub); cursor: not-allowed; }
+.ev-btn i { font-size: 14px; }
+
+.ev-btn--primary { background: var(--ev-accent); border-color: var(--ev-accent); color: #fff; }
+.ev-btn--primary:hover:not(:disabled) { background: var(--ev-accent-hover); border-color: var(--ev-accent-hover); }
+.ev-btn--primary:disabled { background: #f0f1f1; border-color: var(--ev-line); color: #767e88; }
+.ev-btn--danger { background: var(--ev-bad); border-color: var(--ev-bad); color: #fff; }
+.ev-btn--danger:hover:not(:disabled) { filter: brightness(.92); }
+.ev-btn--quiet {
+  border-color: transparent; background: transparent; color: var(--ev-accent);
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.ev-btn--quiet:hover:not(:disabled) { background: var(--ev-accent-soft); color: var(--ev-accent-hover); }
+.ev-btn--sm { height: 28px; padding: 0 var(--ev-sp-s); font-size: var(--ev-fs-small); }
+.ev-btn--block { width: 100%; }
+
+/* ==========================================================================
+   表格（Cloudscape Table：表头小字灰色、行高紧凑、悬停高亮）
+   ========================================================================== */
+.ev-tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.ev-table { font-size: var(--ev-fs-body); min-width: 460px; }
+.ev-table th {
+  text-align: left; font-weight: 400;
+  font-size: var(--ev-fs-small); line-height: var(--ev-lh-small);
+  color: var(--ev-ink-3);
+  padding: var(--ev-sp-xs) var(--ev-sp-m) var(--ev-sp-xs) 0;
+  border-bottom: 1px solid var(--ev-line);
+  white-space: nowrap;
+}
+.ev-table td {
+  padding: var(--ev-sp-s) var(--ev-sp-m) var(--ev-sp-s) 0;
+  border-bottom: 1px solid var(--ev-line-soft);
+  vertical-align: middle;
+}
+.ev-table tr:last-child td { border-bottom: none; }
+.ev-table tbody tr:hover { background: var(--ev-bg-hover); }
+.ev-table .is-mono { font-family: var(--ev-mono); font-size: var(--ev-fs-code); }
+.ev-table .ev-r { text-align: right; padding-right: 0; white-space: nowrap; }
+
+/* ==========================================================================
+   表单（Cloudscape FormField：标签在控件上方，字段间距 20px）
+   ========================================================================== */
+.ev-field { margin-bottom: var(--ev-sp-l); }
+.ev-field > label {
+  display: block; font-size: var(--ev-fs-body); line-height: var(--ev-lh-body);
+  font-weight: 400; color: var(--ev-ink); margin-bottom: var(--ev-sp-xxs);
+}
+.ev-hint {
+  font-size: var(--ev-fs-small); line-height: var(--ev-lh-small);
+  color: var(--ev-ink-3); margin-top: var(--ev-sp-xxs);
+}
+.ev-input, .ev-select {
+  width: 100%; height: 32px; padding: 0 var(--ev-sp-xs);
+  border: 1px solid var(--ev-line-hard); border-radius: var(--ev-r-sm);
+  background: var(--ev-bg); color: var(--ev-ink);
+  font-size: var(--ev-fs-body); line-height: var(--ev-lh-body); font-family: inherit;
+  transition: border-color .12s, box-shadow .12s;
+}
+.ev-input:focus, .ev-select:focus {
+  outline: none; border-color: var(--ev-accent);
+  box-shadow: 0 0 0 2px var(--ev-accent-soft);
+}
+.ev-row2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0 var(--ev-sp-l); }
+
+/* ==========================================================================
+   提示（Cloudscape Alert）
+   ========================================================================== */
+.ev-note {
+  display: flex; gap: var(--ev-sp-xs); align-items: flex-start;
+  padding: var(--ev-sp-s) var(--ev-sp-m); border-radius: var(--ev-r-sm);
+  font-size: var(--ev-fs-body); line-height: var(--ev-lh-body);
+  margin-bottom: var(--ev-sp-m);
+}
+.ev-note i { font-size: 16px; margin-top: 2px; flex: 0 0 auto; }
+.ev-note--info   { background: var(--ev-accent-soft); color: #0a4d8c; }
+.ev-note--warn   { background: var(--ev-warn-soft);   color: var(--ev-warn); }
+.ev-note--danger { background: var(--ev-bad-soft);    color: #8c1a1a; }
+.ev-note--ok     { background: var(--ev-ok-soft);     color: var(--ev-ok); }
+
+/* ==========================================================================
+   空态 / 加载
+   ========================================================================== */
+.ev-empty {
+  display: flex; align-items: center; justify-content: center; gap: var(--ev-sp-xs);
+  padding: var(--ev-sp-xl) var(--ev-sp-m);
+  color: var(--ev-ink-3); font-size: var(--ev-fs-body);
+}
+.ev-empty i { font-size: 16px; opacity: .8; }
+.ev-loading { padding: var(--ev-sp-xl); text-align: center; color: var(--ev-ink-3); }
+
+/* ==========================================================================
+   弹层
+   ========================================================================== */
+.ev-overlay {
+  position: fixed; inset: 0; z-index: 9000;
+  background: rgba(22,25,31,.45);
+  display: flex; align-items: center; justify-content: center; padding: var(--ev-sp-l);
+}
+.ev-modal {
+  background: var(--ev-bg); border-radius: var(--ev-r);
+  box-shadow: 0 16px 48px rgba(22,25,31,.22);
+  width: 100%; max-width: 460px; max-height: 88vh;
+  display: flex; flex-direction: column;
+  animation: ev-pop .14s ease-out;
+}
+@keyframes ev-pop { from { opacity: 0; transform: translateY(6px); } }
+.ev-modal__head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--ev-sp-m) var(--ev-sp-l); border-bottom: 1px solid var(--ev-line);
+}
+.ev-modal__t { font-size: var(--ev-fs-h-small); line-height: var(--ev-lh-h-small); font-weight: 700; }
+.ev-modal__x {
+  border: none; background: none; cursor: pointer; color: var(--ev-ink-3);
+  font-size: 20px; line-height: 1; padding: 2px var(--ev-sp-xxs); border-radius: var(--ev-r-sm);
+}
+.ev-modal__x:hover { background: var(--ev-bg-hover); color: var(--ev-ink); }
+.ev-modal__b { padding: var(--ev-sp-l); overflow-y: auto; }
+.ev-modal__f {
+  display: flex; justify-content: flex-end; gap: var(--ev-sp-xs);
+  padding: var(--ev-sp-s) var(--ev-sp-l); border-top: 1px solid var(--ev-line);
+}
+
+/* ==========================================================================
+   Toast
+   ========================================================================== */
+.ev-toasts { position: fixed; top: var(--ev-sp-m); right: var(--ev-sp-m); z-index: 10000; display: flex; flex-direction: column; gap: var(--ev-sp-xs); }
+.ev-toast {
+  min-width: 200px; max-width: 380px; padding: var(--ev-sp-s) var(--ev-sp-m);
+  border-radius: var(--ev-r-sm); font-size: var(--ev-fs-body); line-height: var(--ev-lh-body);
+  background: var(--ev-ink); color: #fff; box-shadow: 0 8px 24px rgba(22,25,31,.24);
+  animation: ev-slide .16s ease-out;
+}
+.ev-toast--ok  { background: #037f0c; }
+.ev-toast--bad { background: #b31b1b; }
+@keyframes ev-slide { from { opacity: 0; transform: translateX(10px); } }
+
+/* ==========================================================================
+   控制台
+   ========================================================================== */
+.ev-console { padding: 0; overflow: hidden; border-radius: var(--ev-r-sm); border: 1px solid var(--ev-line); }
+.ev-console__bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: var(--ev-sp-xs) var(--ev-sp-m); background: var(--ev-bg-sub);
+  border-bottom: 1px solid var(--ev-line); font-size: var(--ev-fs-small);
+}
+.ev-console__screen { width: 100%; height: 600px; background: #0d1117; display: block; border: none; }
+
+/* ==========================================================================
+   响应式（断点：1080 / 760 / 480）
+   ========================================================================== */
+@media (max-width: 1080px) {
+  .ev-kv { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ev-stat { flex: 1 1 calc(33.333% - 1px); }
+}
+
+@media (max-width: 760px) {
+  .ev-btn { height: 40px; }               /* 触控目标 */
+  .ev-btn--sm { height: 32px; }
+  .ev-input, .ev-select { height: 40px; font-size: 16px; }
+
+  .ev-hero { padding: var(--ev-sp-m); gap: var(--ev-sp-m); }
+  .ev-hero__title { font-size: 18px; line-height: 22px; }
+  .ev-hero__sub { gap: var(--ev-sp-s); }
+  .ev-actions { width: 100%; }
+  .ev-actions .ev-btn { flex: 1 1 auto; }
+  .ev-actions .ev-btn--primary { flex: 1 1 100%; order: -1; }
+
+  .ev-stat { flex: 1 1 calc(50% - 1px); padding: var(--ev-sp-s); }
+  .ev-stat--grow { flex: 1 1 100%; }
+  .ev-stat--wide { flex: 1 1 calc(50% - 1px); }
+
+  .ev-pane { padding: var(--ev-sp-m); }
+  .ev-sec { flex-wrap: wrap; }
+  .ev-sec__t { flex: 1 1 100%; margin-bottom: var(--ev-sp-xs); }
+  .ev-sec__hint { display: none; }
+
+  /* 键值对改单列：两列在 375px 上会把值挤断 */
+  .ev-kv { grid-template-columns: minmax(0, 1fr); gap: var(--ev-sp-m); }
+  .ev-kv--rows .ev-kv__item { flex-direction: column; gap: 2px; }
+  .ev-kv--rows .ev-kv__k { flex: none; }
+
+  .ev-modal { max-width: none; }
+  .ev-console__screen { height: 420px; }
+
+  /* 表格改堆叠：横向滚动会让列名和值脱节 */
+  .ev-tablewrap { overflow-x: visible; }
+  .ev-table { min-width: 0; }
+  .ev-table thead { display: none; }
+  .ev-table tbody tr {
+    display: block; padding: var(--ev-sp-s) 0;
+    border-bottom: 1px solid var(--ev-line);
+  }
+  .ev-table tbody tr:last-child { border-bottom: none; }
+  .ev-table tbody tr:hover { background: transparent; }
+  /* 堆叠行：td 是 flex，内容必须能换行/收缩，
+     否则长文本会把整个表格撑得比视口还宽（实测 403px 撑在 320 视口里）。 */
+  .ev-table, .ev-table tbody, .ev-table tr, .ev-table td { max-width: 100%; }
+  .ev-table td {
+    display: flex; flex-wrap: wrap; align-items: baseline;
+    gap: 2px var(--ev-sp-s);
+    padding: 3px 0; border: none;
+    min-width: 0;
+  }
+  .ev-table td > * { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  .ev-table td::before {
+    content: attr(data-label);
+    flex: 0 0 104px;
+    font-size: var(--ev-fs-small); color: var(--ev-ink-3);
+  }
+  .ev-table td:not([data-label]) { justify-content: flex-end; padding-top: var(--ev-sp-xs); }
+  .ev-table td.ev-r { text-align: left; }
+  .ev-table td.ev-sel::before { content: none; }
+}
+
+@media (max-width: 480px) {
+  .ev-btn { height: 44px; font-size: 15px; }
+  .ev-btn--sm { height: 34px; font-size: var(--ev-fs-small); }
+  .ev-hero { padding: var(--ev-sp-s); }
+  .ev-pane { padding: var(--ev-sp-s); }
+  .ev-toasts { left: var(--ev-sp-s); right: var(--ev-sp-s); top: var(--ev-sp-s); }
+  .ev-toast { max-width: none; }
+  .ev-modal__b { padding: var(--ev-sp-m); }
+  .ev-modal__f { padding: var(--ev-sp-s) var(--ev-sp-m); }
+  .ev-console__screen { height: 340px; }
+  /* 复制按钮在触屏上要够大 */
+  .ev-copy__btn { width: 36px; height: 36px; }
+  .ev-copy__btn i { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ev-panel *, .ev-panel *::before, .ev-panel *::after {
+    animation-duration: .001ms !important; transition-duration: .001ms !important;
+  }
+}
+
+/* 键值网格中的整行项（如需要完整宽度的命令串） */
+.ev-kv__item--full { grid-column: 1 / -1; }
+/* 值旁边的内联复制（值本身是命令/地址时） */
+.ev-kv__v .ev-copy > span { word-break: break-all; }
+
+/* 状态徽标变体（crons/drive/iso/tasks 等页签用来标记启用/运行状态） */
+.ev-chip--ghost   { background: transparent; border-color: var(--ev-line); color: var(--ev-ink-2); }
+.ev-chip--running { background: var(--ev-ok-soft); color: var(--ev-ok); border-color: #c9e7cd; }
+.ev-chip--stopped { background: var(--ev-idle-soft); color: var(--ev-ink-2); border-color: var(--ev-line); }
+.ev-chip--creating{ background: var(--ev-accent-soft); color: #0a4d8c; border-color: #c9e3f6; }
+.ev-chip--error   { background: var(--ev-bad-soft); color: #8c1a1a; border-color: #f5cfcf; }
+.ev-chip--suspended { background: var(--ev-warn-soft); color: var(--ev-warn); border-color: #ecd9a8; }
+.ev-chip--locked  { background: #f5f2fb; color: #5b3ed6; border-color: #ded6f5; }
+
+/* ==========================================================================
+   脱离 .ev-panel 作用域的浮层（弹层 / Toast）基础样式
+   它们由 JS 挂到 <body> 下，拿不到 .ev-panel 的继承样式与盒模型重置
+   ========================================================================== */
+.ev-overlay, .ev-overlay *, .ev-overlay *::before, .ev-overlay *::after,
+.ev-toasts, .ev-toasts *, .ev-toasts *::before, .ev-toasts *::after { box-sizing: border-box; }
+.ev-overlay, .ev-toasts {
+  color: var(--ev-ink);
+  font-size: var(--ev-fs-body);
+  line-height: var(--ev-lh-body);
+}
+.ev-overlay p, .ev-toasts p { margin: 0; }
+
+/* 按钮组：窄屏要能换行，否则会把整行撑出屏幕 */
+.ev-btnrow { display: flex; gap: var(--ev-sp-xs); align-items: center; flex-wrap: wrap; }
+.ev-btncol { display: flex; flex-direction: column; gap: var(--ev-sp-xs); }
+
+/* 长文本单元格：桌面限宽避免表格被撑开，窄屏必须放开 */
+.ev-cell-msg { max-width: 280px; }
+.ev-cell-msg__err { color: var(--ev-bad); }
+@media (max-width: 760px) {
+  .ev-table td { min-width: 0; }
+  .ev-table td > * { min-width: 0; }
+  .ev-cell-msg { max-width: none; }
+}
