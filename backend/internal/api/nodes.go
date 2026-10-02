@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
@@ -701,7 +702,10 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 	}
 	token := tokenFromRequest(r)
 	node, ok := config.FindNode(nodeID)
-	if !ok || node.Token == "" || token != node.Token {
+	// 常量时间比较（审计 N-2）：同文件其它节点 token 校验都用
+	// subtle.ConstantTimeCompare，此处曾用 != 会泄漏前缀匹配长度。
+	if !ok || node.Token == "" ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(node.Token)) != 1 {
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid node token"})
 		return
 	}
@@ -915,7 +919,7 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 			}
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	for _, ch := range statusChanges {
 		config.FireContainerStatusHook(ch.id, ch.name, ch.old, ch.new)
 	}

@@ -7,7 +7,7 @@ import ResourceStatsPanel, {
   StatsRangeKey,
   statsRanges,
 } from '../components/ResourceStatsPanel'
-import { DashboardStats, getDashboard, getHostHistory, getHostInfo, HostInfo, HostMetricPoint as HostMetricSample } from '../services/api'
+import { DashboardStats, getDashboard, getHostHistory, getHostInfo, getSSLSettings, HostInfo, HostMetricPoint as HostMetricSample } from '../services/api'
 
 type HostMetricPoint = {
   ts: number
@@ -29,6 +29,10 @@ export default function Dashboard() {
   const [history, setHistory] = useState<HostMetricPoint[]>(readHostHistory)
   const [range, setRange] = useState<StatsRangeKey>('30m')
   const [loading, setLoading] = useState(true)
+  // 未启用 HTTPS 时在控制面板顶部如实提示。
+  // 只放在启动日志里没用——用户不会去看日志，而"管理凭据明文过网"这件事
+  // 必须在他们每次登录都会看到的地方出现。null = 未知（无权限或未取到）。
+  const [tlsEnabled, setTLSEnabled] = useState<boolean | null>(null)
 
   const fetchHistory = useCallback(async () => {
     try {
@@ -50,6 +54,13 @@ export default function Dashboard() {
       if (hostRes.data.data) {
         const nextHost = hostRes.data.data
         setHost(nextHost)
+      }
+      // TLS 状态单独取：非管理员访问 /api/ssl 会 403，失败时保持"未知"而不是报错。
+      try {
+        const sslRes = await getSSLSettings()
+        setTLSEnabled(!!sslRes.data.data?.enabled)
+      } catch {
+        setTLSEnabled(null)
       }
     } catch (err) {
       console.error(err)
@@ -137,6 +148,19 @@ export default function Dashboard() {
         <h1 className="text-2xl font-bold text-black">控制面板</h1>
         <p className="text-sm text-gray-500 mt-1">宿主机资源状态与容器概览</p>
       </div>
+
+      {tlsEnabled === false && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+          <div className="font-semibold">面板正在以明文 HTTP 运行</div>
+          <p className="mt-1">
+            管理密码、会话 Cookie、容器 root 口令都会以明文经过网络。若面板端口暴露在公网，等于把凭据公开挂在网上。
+          </p>
+          <p className="mt-2">
+            前往 <a href="/settings" className="font-medium underline">设置 → SSL 证书</a> 签发证书即可启用 HTTPS；
+            启用后可用「HTTP 跳转端口」把既有的 http:// 访问自动 301 到 HTTPS，不会中断现有访问。
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
         <SummaryCard icon={<Server className="w-5 h-5" />} title="实例总数" value={stats?.total_containers || 0} />

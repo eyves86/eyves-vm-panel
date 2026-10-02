@@ -437,7 +437,7 @@ func webhookDeliver(wh config.WebhookSubscription, evt webhookEvent) {
 			break
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 }
 
 // webhookDispatch 将事件分发给所有匹配的启用订阅（异步，不阻塞调用方）。

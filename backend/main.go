@@ -171,6 +171,21 @@ func main() {
 
 		// Clean up stale container configs (LXC dir was deleted but config remains)
 		config.CleanStaleContainers()
+
+		// 配置库自备份 + WAL 检查点。
+		//
+		// config.db 是平台唯一真相来源：它损坏时客户的容器还在跑，但面板再也
+		// 管不了它们。生产实测该目录下 backups/ 长期为空（零备份），且 -wal
+		// 涨到主库体积的 10 倍。传 0 使用内置默认（每 6 小时一份、保留 28 份）。
+		config.StartConfigBackupScheduler(0, 0)
+
+		// 安全组强制执行（默认关闭）。
+		//
+		// 安全组此前只有"编译"没有"下发"——界面上配好的规则从未生效。执行层已
+		// 补齐（internal/secgroup/iptables.go），但默认策略是 drop，规则不全的
+		// 容器一旦启用会立即断网，因此必须由管理员显式开启。
+		api.StartSecurityGroupEnforcer()
+
 		api.StartHostBootRestore()
 		api.InitSMTPSender()
 		lxc.EnsureAllRunningPortMappings()

@@ -51,7 +51,7 @@ func consumeAgentPairingKey() {
 	config.AppConfig.AgentPairingKey = ""
 	config.AppConfig.AgentPairingKeyExpiry = ""
 	config.AppConfigMu.Unlock()
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 }
 
 // scheduleNodeSideRestart 让"节点侧"在被控注册/切换主控后生效：

@@ -283,6 +283,14 @@ func v2RequiredStrings(values map[string]string) map[string]string {
 func v2Auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if claims, ok := claimsFromToken(tokenFromRequest(r)); ok {
+			// CSRF 纵深防御（审计 N-1）：v2 此前只有 SameSite=Lax 兜底，
+			// cookieCSRFGuard 全库仅 v1 的 AuthMiddleware 在调用。浏览器用 Cookie
+			// 认证时对写方法再校验一次 Origin/Referer；Bearer 与 X-API-Key 调用方
+			// 不带 Cookie，cookieCSRFGuard 直接放行，CLI / 集成方不受影响。
+			if !cookieCSRFGuard(r) {
+				v2Forbidden(w, r, "请求来源校验失败")
+				return
+			}
 			next(w, withAuthContext(r, authContextFromClaims(claims)))
 			return
 		}

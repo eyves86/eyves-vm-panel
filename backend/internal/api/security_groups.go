@@ -199,6 +199,36 @@ func listSecGroups(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: groups})
 }
 
+// HandleSecGroupEnforcement GET /api/security-group-enforcement
+//
+// 单独一个端点而不是塞进列表响应：列表返回的是裸数组（前端按数组消费），
+// 改成对象会破坏既有调用方兼容性。
+//
+// 存在的意义是「如实告知」——安全组规则在此之前**既不落库也不下发**，
+// 界面却显示成功。开启强制执行需要管理员显式决定（默认策略 drop，
+// 规则不全的容器会立刻断网），所以状态必须让用户看得见。
+func HandleSecGroupEnforcement(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	config.AppConfigMu.RLock()
+	groupCount, ruleCount := 0, 0
+	if config.AppConfig != nil {
+		groupCount = len(config.AppConfig.SecGroups)
+		ruleCount = len(config.AppConfig.SecGroupRules)
+	}
+	config.AppConfigMu.RUnlock()
+
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+		"enforced":    config.GetSecurityGroupEnforced(),
+		"group_count": groupCount,
+		"rule_count":  ruleCount,
+		"note": "强制执行默认关闭：规则会被保存但不影响流量。" +
+			"开启前请确认各容器的放行规则完整（默认策略为 drop，规则不全的容器会立即断网）。",
+	}})
+}
+
 func getSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 	g, ok := findSecGroup(id)
 	if !ok {

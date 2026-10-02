@@ -207,6 +207,8 @@ func setupRoutes(mux *http.ServeMux) {
 
 	// 安全组（Security Group）CRUD + 规则 + 容器绑定
 	mux.HandleFunc("/api/security-groups", corsMiddleware(api.AuthMiddleware(api.HandleSecGroups)))
+	// 安全组强制执行状态（如实告知：规则是否真的下发了）。
+	mux.HandleFunc("/api/security-group-enforcement", corsMiddleware(api.AuthMiddleware(api.HandleSecGroupEnforcement)))
 	mux.HandleFunc("/api/security-groups/", corsMiddleware(api.AuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/api/security-groups/")
 		if strings.Contains(path, "/rules") {
@@ -785,11 +787,64 @@ func Run() error {
 				return &cert, nil
 			},
 		}
+		// 可选：HTTP → HTTPS 跳转监听。
+		//
+		// 面板是单端口服务，启用 TLS 后原 HTTP 入口直接消失——用户的既有书签、
+		// 监控探针、计费系统 Webhook 回调会立刻连接失败，表现为"配了证书反而
+		// 打不开"。设了跳转端口就能把访问断裂变成透明升级。
+		if redirectPort := config.AppConfig.SSL.HTTPRedirectPort; redirectPort > 0 && redirectPort != config.AppConfig.Port {
+			go serveHTTPToHTTPSRedirect(redirectPort, config.AppConfig.Port)
+		}
 		log.Printf("EyvesCloud Web Server SSL enabled on https://0.0.0.0:%d", config.AppConfig.Port)
 		return server.ServeTLS(listener, "", "")
 	}
 
+	warnIfPlaintextExposed(addr)
 	return server.Serve(listener)
+}
+
+// serveHTTPToHTTPSRedirect 在 redirectPort 上提供 HTTP → HTTPS 的 301 跳转。
+func serveHTTPToHTTPSRedirect(redirectPort, panelPort int) {
+	srv := &http.Server{
+		Addr:              fmt.Sprintf("0.0.0.0:%d", redirectPort),
+		Handler:           httpToHTTPSRedirectHandler(panelPort),
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+	log.Printf("HTTP → HTTPS 跳转监听已启动：http://0.0.0.0:%d → https://<host>:%d", redirectPort, panelPort)
+	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Printf("HTTP → HTTPS 跳转监听退出（端口 %d）：%v", redirectPort, err)
+	}
+}
+
+// httpToHTTPSRedirectHandler 构造跳转处理器（独立成函数以便测试）。
+//
+// 跳转目标显式带上面板 HTTPS 端口：两个端口不同，不带端口浏览器会回落到 443，
+// 结果跳到一个没人监听的地址。
+func httpToHTTPSRedirectHandler(panelPort int) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := strings.TrimSpace(r.Host)
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
+		}
+		if host == "" {
+			host = "localhost"
+		}
+		target := fmt.Sprintf("https://%s:%d%s", host, panelPort, r.URL.RequestURI())
+		http.Redirect(w, r, target, http.StatusMovedPermanently)
+	})
+}
+
+// warnIfPlaintextExposed 在未启用 TLS 时打出显式告警。
+//
+// 面板默认监听 0.0.0.0，且没有反向代理时管理凭据、会话 Cookie、容器 root 口令
+// 全部以明文过网。此前这条状态只在"用户自己想起来"时才会被发现。
+func warnIfPlaintextExposed(addr string) {
+	log.Printf("WARNING: TLS 未启用，面板正以明文 HTTP 监听 %s。", addr)
+	log.Printf("WARNING:   管理凭据、会话 Cookie、容器 root 口令都会以明文传输。")
+	log.Printf("WARNING:   启用方式：面板「设置 → SSL」签发证书（自签 / Let's Encrypt / 上传自定义证书），")
+	log.Printf("WARNING:   并可同时设置 http_redirect_port，把既有 HTTP 访问透明跳转到 HTTPS。")
 }
 
 func sslEnabled() bool {

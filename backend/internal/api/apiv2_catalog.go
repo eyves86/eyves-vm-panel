@@ -996,7 +996,7 @@ func v2IPPoolsRemove(w http.ResponseWriter, r *http.Request) {
 	}
 	config.AppConfig.PublicIPv6Prefixes = keptIPv6
 	config.AppConfigMu.Unlock()
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	auditRequest(r, "api.v2.ip_pool.remove", "", "移除 IPv4 "+itoaV2(removedIPv4)+" / IPv6 "+itoaV2(removedIPv6), true, "")
 	v2OK(w, r, map[string]interface{}{"ipv4_removed": removedIPv4, "ipv6_removed": removedIPv6})
 }

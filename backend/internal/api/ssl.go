@@ -31,6 +31,8 @@ type sslSettingsRequest struct {
 	CertPEM  string `json:"cert_pem"`
 	KeyPEM   string `json:"key_pem"`
 	ApplyNow bool   `json:"apply_now"`
+	// HTTPRedirectPort 用指针：nil = 本次不改动该设置，0 = 显式关闭。
+	HTTPRedirectPort *int `json:"http_redirect_port"`
 }
 
 type sslCertificateInfo struct {
@@ -100,7 +102,7 @@ func updateSSLSettings(w http.ResponseWriter, r *http.Request) {
 
 	next, err := resolveSSLModeCertificate(mode, target, strings.TrimSpace(req.Email), req.CertPEM, req.KeyPEM)
 	if err != nil {
-		_ = config.SaveConfig()
+		config.SaveConfigLogged()
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error(), Data: sslSettingsStatus(r, false)})
 		return
 	}
@@ -109,6 +111,24 @@ func updateSSLSettings(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
+
+	// HTTP → HTTPS 跳转端口（可选）。启用 TLS 后面板单端口只服务 HTTPS，
+	// 没有跳转时既有 HTTP 访问会直接连接失败。
+	if req.HTTPRedirectPort != nil {
+		port := *req.HTTPRedirectPort
+		if port != 0 {
+			if port < 1 || port > 65535 {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "HTTP 跳转端口必须在 1-65535 之间"})
+				return
+			}
+			if port == config.AppConfig.Port {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "HTTP 跳转端口不能与面板端口相同"})
+				return
+			}
+		}
+		next.HTTPRedirectPort = port
+	}
+
 	next.LastIssuedAt = time.Now().Format(time.RFC3339)
 	next.Enabled = true
 	config.AppConfig.SSL = next
@@ -586,6 +606,6 @@ func renewSavedSSLCertificates() {
 		changed = true
 	}
 	if changed {
-		_ = config.SaveConfig()
+		config.SaveConfigLogged()
 	}
 }

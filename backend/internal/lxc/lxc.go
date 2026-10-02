@@ -2974,8 +2974,11 @@ func (m *Manager) DestroyContainer(id int) error {
 	if id <= 0 {
 		return fmt.Errorf("invalid container id: %d", id)
 	}
-	c := config.FindContainer(id)
-	if c == nil {
+	// 快照读取：FindContainer 返回全局切片内部指针，锁释放后在锁外解引用
+	// 会与并发写构成数据竞态（go test -race 实测）。这里只需要读名字与 IPv6
+	// 配置，用值拷贝即可。
+	c, ok := config.GetContainerSnapshot(id)
+	if !ok {
 		return fmt.Errorf("container not found: %d", id)
 	}
 	lxcName := c.LxcName()
@@ -3782,6 +3785,18 @@ func (m *Manager) refreshContainerIPv4Details(c *config.Container) {
 	if err != nil {
 		return
 	}
+	if applyContainerIPv4Details(c, ip, prefixLen, gateway) {
+		config.SaveConfig()
+	}
+}
+
+// applyContainerIPv4Details 把一次 IPv4 探测结果应用到容器上，返回是否有字段变化。
+// 抽出来是为了让「写回全局（持锁）」与「刷新本次响应副本」共用同一套字段规则，
+// 避免两处逻辑漂移。
+func applyContainerIPv4Details(c *config.Container, ip string, prefixLen int, gateway string) bool {
+	if c == nil {
+		return false
+	}
 	changed := false
 	if ip != "" && c.IP != ip {
 		c.IP = ip
@@ -3800,6 +3815,25 @@ func (m *Manager) refreshContainerIPv4Details(c *config.Container) {
 	if c.NormalizeNetworkAssignments() {
 		changed = true
 	}
+	return changed
+}
+
+// refreshListedContainerIPv4 把 IPv4 明细同时写入「本次响应副本」与「全局配置」。
+// 全局部分持写锁、且只在确有变化时落库——列表接口由此不再依赖"与全局切片共享
+// 底层数组"来顺手改内存态（那正是数据竞态的来源）。
+func (m *Manager) refreshListedContainerIPv4(c *config.Container) {
+	if c == nil || c.IsKVM() {
+		return
+	}
+	ip, prefixLen, gateway, err := m.GetContainerIPv4Details(c.LxcName())
+	if err != nil {
+		return
+	}
+	applyContainerIPv4Details(c, ip, prefixLen, gateway)
+	changed := false
+	config.MutateContainerNoSave(c.ID, func(g *config.Container) {
+		changed = applyContainerIPv4Details(g, ip, prefixLen, gateway)
+	})
 	if changed {
 		config.SaveConfig()
 	}
@@ -3807,7 +3841,11 @@ func (m *Manager) refreshContainerIPv4Details(c *config.Container) {
 
 // ListContainers lists all LXC containers and updates statuses
 func (m *Manager) ListContainers() ([]config.Container, error) {
-	containers := config.AppConfig.Containers
+	// 锁内快照：列表语义必须只读。此前这里直接引用全局切片，与任务队列
+	// （持锁改容器状态）和创建路径（append 替换切片头）并发时构成数据竞态
+	// ——go test -race 实测（v2.2.42）。探测结果通过持锁 API 写回全局，
+	// 不再依赖"共享底层数组"的副作用。
+	containers := config.GetContainers()
 	for i := range containers {
 		// 节点容器：本地无法探测（不在本机 LXC 里），状态/网络由主控心跳同步
 		// 维护。此前未跳过：本地同名 LXC 的探测结果会把心跳维护的状态
@@ -3820,16 +3858,17 @@ func (m *Manager) ListContainers() ([]config.Container, error) {
 		}
 		status, err := m.GetContainerStatus(containers[i].LxcName())
 		if err == nil {
-			// slice 共享底层数组：这里改的是内存 config，接入钩子，
-			// 否则会吞掉后续真实事件（下次 Update 时 old 已被改写）。
-			config.SetContainerStatusAndNotify(&containers[i], status)
+			containers[i].Status = status
+			// 状态写回全局走持锁 API（含状态钩子），避免吞掉后续真实事件
+			// （下次探测时 old 已被改写）。
+			config.UpdateContainerStatusNotify(containers[i].ID, status)
 		}
 		if status == "running" {
 			ip, err := m.GetContainerIP(containers[i].LxcName())
 			if err == nil {
 				containers[i].IP = ip
-				m.refreshContainerIPv4Details(&containers[i])
 			}
+			m.refreshListedContainerIPv4(&containers[i])
 		}
 	}
 	return containers, nil

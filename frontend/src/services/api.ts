@@ -859,6 +859,9 @@ export interface SSLSettings {
   certificate?: SSLCertificateInfo
   mode_certificates?: Record<string, SSLSettings>
   needs_restart?: boolean
+  // 启用 TLS 后额外监听一个 HTTP 端口做 301 跳转到 HTTPS；
+  // 0 或未设置 = 不启用（既有 HTTP 访问会在启用 TLS 后失效）。
+  http_redirect_port?: number
 }
 
 export interface UpdateSSLSettingsRequest {
@@ -869,6 +872,7 @@ export interface UpdateSSLSettingsRequest {
   cert_pem?: string
   key_pem?: string
   apply_now?: boolean
+  http_redirect_port?: number
 }
 
 export const getSSLSettings = () =>
@@ -2184,6 +2188,19 @@ export interface SecGroupDetail {
 
 export const listSecGroups = () =>
   api.get<APIResponse<SecGroup[]>>('/security-groups')
+
+// 安全组强制执行状态。
+// 规则默认只保存不下发（默认策略 drop，规则不全的容器会立即断网），
+// 因此界面必须如实呈现「是否真的生效」，而不是让用户以为配了就有效。
+export interface SecGroupEnforcement {
+  enforced: boolean
+  group_count: number
+  rule_count: number
+  note: string
+}
+
+export const getSecGroupEnforcement = () =>
+  api.get<APIResponse<SecGroupEnforcement>>('/security-group-enforcement')
 
 export const createSecGroup = (payload: { name: string; tenant_id?: string; default_action?: string }) =>
   api.post<APIResponse<SecGroup>>('/security-groups', payload)

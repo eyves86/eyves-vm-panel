@@ -1002,7 +1002,7 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "区域不存在："+regionID)
 		return
 	}
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	auditRequest(r, "api.v2.region.update", updated.Name, "", true, "")
 	v2OK(w, r, v2RegionView(updated))
 }
@@ -1041,7 +1041,7 @@ func v2RegionDelete(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "区域不存在："+regionID)
 		return
 	}
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	auditRequest(r, "api.v2.region.delete", regionID, "", true, "")
 	v2NoContent(w, r)
 }

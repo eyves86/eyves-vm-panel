@@ -492,7 +492,10 @@ func HandleSubUserLogin(w http.ResponseWriter, r *http.Request) {
 
 	ip := clientIP(r)
 	clientUA := r.Header.Get("User-Agent")
-	rateKey := ip + "|user:" + req.Username
+	// 限流桶键只用 IP：用户名是攻击者可控输入（且下方匹配用 EqualFold + 邮箱
+	// 归一化，同一个账号有多种输入形式），把它含进键名等于给攻击者一把
+	// "换个写法就重置配额"的钥匙。对齐 v2 登录的做法（apiv2_auth.go）。
+	rateKey := ip + "|subuser-login"
 	if loginRateLimited(w, rateKey) {
 		return
 	}
@@ -572,7 +575,10 @@ func HandleSubUserAccessCode(w http.ResponseWriter, r *http.Request) {
 	// Find sub-user by access code
 	ip := clientIP(r)
 	clientUA := r.Header.Get("User-Agent")
-	rateKey := ip + "|code:" + req.Code
+	// 访问码是"被猜测的秘密"，绝不可作为限流桶键——否则攻击者每换一个猜测值
+	// 就得到一个全新配额，等于无限爆破（渗透实测：47 个随机码 0 次 429）。
+	// 桶键只保留 IP，与子用户密码登录同口径。
+	rateKey := ip + "|subuser-accesscode"
 	if loginRateLimited(w, rateKey) {
 		return
 	}

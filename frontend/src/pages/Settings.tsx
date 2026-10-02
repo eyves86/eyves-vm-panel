@@ -98,6 +98,9 @@ export default function Settings() {
   const [sslMode, setSSLMode] = useState<SSLSettings['mode']>('disabled')
   const [sslTarget, setSSLTarget] = useState('')
   const [sslEmail, setSSLEmail] = useState('')
+  // 启用 HTTPS 后额外监听的 HTTP 跳转端口（0 = 不启用）。没有它的话，
+  // 开启证书后既有的 http:// 访问会直接失效。
+  const [sslRedirectPort, setSSLRedirectPort] = useState(0)
   const [certPEM, setCertPEM] = useState('')
   const [keyPEM, setKeyPEM] = useState('')
   const [applyNow, setApplyNow] = useState(true)
@@ -216,6 +219,7 @@ export default function Settings() {
       setSSLMode(data.mode || 'disabled')
       setSSLTarget(data.target || data.detected_host || '')
       setSSLEmail(data.email || '')
+      setSSLRedirectPort(data.http_redirect_port || 0)
     } catch (err) {
       console.error(err)
     }
@@ -588,6 +592,7 @@ export default function Settings() {
         cert_pem: certPEM,
         key_pem: keyPEM,
         apply_now: applyNow,
+        http_redirect_port: sslRedirectPort,
       })
       if (res.data.data) {
         setSSL(res.data.data)
@@ -1335,11 +1340,13 @@ export default function Settings() {
               keyPEM={keyPEM}
               applyNow={applyNow}
               savingSSL={savingSSL}
+              sslRedirectPort={sslRedirectPort}
               onRefresh={fetchSSL}
               onEnabledChange={setSSLEnabled}
               onModeChange={handleSSLModeChange}
               onTargetChange={setSSLTarget}
               onEmailChange={setSSLEmail}
+              onRedirectPortChange={setSSLRedirectPort}
               onCertChange={setCertPEM}
               onKeyChange={setKeyPEM}
               onApplyNowChange={setApplyNow}
@@ -1568,11 +1575,14 @@ interface SSLCardProps {
   keyPEM: string
   applyNow: boolean
   savingSSL: boolean
+  // 启用 HTTPS 后额外监听的 HTTP 跳转端口（0 = 不启用）
+  sslRedirectPort: number
   onRefresh: () => void
   onEnabledChange: (enabled: boolean) => void
   onModeChange: (mode: SSLSettings['mode']) => void
   onTargetChange: (target: string) => void
   onEmailChange: (email: string) => void
+  onRedirectPortChange: (port: number) => void
   onCertChange: (cert: string) => void
   onKeyChange: (key: string) => void
   onApplyNowChange: (apply: boolean) => void
@@ -2249,6 +2259,25 @@ function SSLCard(props: SSLCardProps) {
             </div>
           )}
         </div>
+
+        {props.sslEnabled && props.sslMode !== 'disabled' && (
+          <div>
+            <label className="mb-1 block text-xs text-gray-500">HTTP 跳转端口（可选）</label>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={props.sslRedirectPort || ''}
+              onChange={(e) => props.onRedirectPortChange(Math.max(0, Math.min(65535, Math.floor(Number(e.target.value) || 0))))}
+              className="w-full max-w-xs rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black"
+              placeholder="如 8998，留空则不启用"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              面板是单端口服务：启用 HTTPS 后原 http:// 入口会直接消失，既有书签、监控探针与计费回调会连接失败。
+              在这里填一个端口（如 8998），该端口上的 http:// 访问会自动 301 跳转到 HTTPS。
+            </p>
+          </div>
+        )}
 
         {props.sslMode === 'letsencrypt' && (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">

@@ -1333,6 +1333,6 @@ func (q *TaskQueue) Cancel(taskID string) (canceled bool, running bool) {
 			return
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	return true, false
 }

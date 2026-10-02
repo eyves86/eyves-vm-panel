@@ -1073,7 +1073,7 @@ func (m *Manager) AttachISO(id int, isoPath string) error {
 			}
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	return nil
 }
 
@@ -1108,7 +1108,7 @@ func (m *Manager) DetachISO(id int) error {
 			}
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	return nil
 }
 
@@ -1125,7 +1125,7 @@ func clearOptionalISO(id int) {
 			}
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 }
 
 func (m *Manager) DestroyContainer(id int) error {
@@ -2254,9 +2254,9 @@ func (m *Manager) ListContainers(containers []config.Container) []config.Contain
 		}
 		status, err := m.GetContainerStatus(containers[i].VirshName())
 		if err == nil && status != "" {
-			// slice 共享底层数组：这里改的是内存 config，接入钩子，
-			// 否则会吞掉后续真实事件（下次 Update 时 old 已被改写）。
-			config.SetContainerStatusAndNotify(&containers[i], status)
+			containers[i].Status = status
+			// 同 lxc.ListContainers：状态写回全局走持锁 API，不靠共享底层数组。
+			config.UpdateContainerStatusNotify(containers[i].ID, status)
 		}
 		if status == "running" {
 			if _, err := m.RefreshVNCPort(containers[i].ID); err == nil {

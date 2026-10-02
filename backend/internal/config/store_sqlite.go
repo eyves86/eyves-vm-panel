@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -715,11 +716,15 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var k, v string
+		var k string
+		// value 用 NullString 兜底：任一行的 value 为 NULL 时，
+		// 直接 Scan 进 string 会报错并让整个配置加载失败（面板起不来）。
+		var v sql.NullString
 		if err := rows.Scan(&k, &v); err != nil {
-			return nil, false, err
+			log.Printf("Warning: skipping unreadable app_meta row (key=%q): %v", k, err)
+			continue
 		}
-		meta[k] = v
+		meta[k] = v.String
 	}
 	if err := rows.Err(); err != nil {
 		return nil, false, err
@@ -848,6 +853,20 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["panel_access_policy"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.PanelAccessPolicy)
 	}
+	// 安全组（此前未落库：重启后配置全丢）。反序列化失败时保持为空而不是报错，
+	// 避免一条损坏的安全组记录把整个面板拖得起不来。
+	if raw := strings.TrimSpace(meta["sec_groups"]); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.SecGroups); err != nil {
+			log.Printf("Warning: 解析已存安全组失败（按空处理）: %v", err)
+		}
+	}
+	if raw := strings.TrimSpace(meta["sec_group_rules"]); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg.SecGroupRules); err != nil {
+			log.Printf("Warning: 解析已存安全组规则失败（按空处理）: %v", err)
+		}
+	}
+	cfg.SecurityGroupEnforced = atob(meta["security_group_enforced"])
+
 	if raw := strings.TrimSpace(meta["storage_pools"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.StoragePools)
 	}
@@ -1048,6 +1067,10 @@ func saveMeta(tx *sql.Tx) error {
 	customLXCImagesJSON, _ := json.Marshal(AppConfig.CustomLXCImages)
 	policyRulesJSON, _ := json.Marshal(AppConfig.PolicyRules)
 	policyHistoryJSON, _ := json.Marshal(AppConfig.PolicyHistory)
+	// 安全组此前**完全没有落库**——字段只存在于内存，面板一重启所有安全组与
+	// 规则凭空消失（生产 DB 的 78 个 app_meta 键里没有任何 sec_group*）。
+	secGroupsJSON, _ := json.Marshal(AppConfig.SecGroups)
+	secGroupRulesJSON, _ := json.Marshal(AppConfig.SecGroupRules)
 	// F7/P2-11：落库前对节点 Token 副本做 AES-GCM 加密（内存态不改动，
 	// 业务层心跳校验/agent 转发仍用明文）。加密失败时拒绝落库——静默
 	// 落明文等于关掉该保护。install_key 同为密钥（一次性、24h TTL），
@@ -1191,6 +1214,9 @@ func saveMeta(tx *sql.Tx) error {
 		"custom_lxc_images":           string(customLXCImagesJSON),
 		"policy_rules":                string(policyRulesJSON),
 		"policy_history":              string(policyHistoryJSON),
+		"sec_groups":                  string(secGroupsJSON),
+		"sec_group_rules":             string(secGroupRulesJSON),
+		"security_group_enforced":     btoa(AppConfig.SecurityGroupEnforced),
 		"nodes":                       string(nodesJSON),
 		"regions":                     string(regionsJSON),
 		"ip_groups":                   string(ipGroupsJSON),
@@ -1650,6 +1676,7 @@ func loadContainers() ([]Container, error) {
 	defer rows.Close()
 
 	result := []Container{}
+	skipped := 0
 	for rows.Next() {
 		var c Container
 		var scheduleEnabled, policyBlocked, firewallEnabled, imageLimitConfigured, restoreOnHostBoot int
@@ -1695,7 +1722,13 @@ func loadContainers() ([]Container, error) {
 			&rootVolumeID, &dataVolumeIDs,
 			&suspended, &suspendedAt, &suspendedReason, &remarkCol, &lockedCol, &recycledCol,
 		); err != nil {
-			return nil, err
+			// 单条容器记录损坏不应让整个面板起不来：跳过并留下可定位的日志。
+			// 此前这里直接 return err → 整个 config 加载失败 → 面板无法启动。
+			// （生产踩坑：mac_address 等列只要有一行为 NULL 就会触发。）
+			// 被跳过的容器仍存在于宿主机上，可用 CLI 的「导入现有容器」重新纳管。
+			log.Printf("Warning: skipping unreadable container row (id=%d): %v", c.ID, err)
+			skipped++
+			continue
 		}
 		c.CloudInitUserData = cloudInitUserData.String
 		// SSH 口令：解密 enc:v1: 密文；存量明文原样通过；解密失败置空
@@ -1760,6 +1793,11 @@ func loadContainers() ([]Container, error) {
 			return nil, err
 		}
 		result[i].NormalizeNetworkAssignments()
+	}
+	if skipped > 0 {
+		log.Printf("Warning: %d container record(s) were skipped due to unreadable data; "+
+			"the panel started with the remaining records. Run `eyvescloud cli` → 导入现有容器 "+
+			"to re-adopt the affected instances, then repair the database.", skipped)
 	}
 	return result, nil
 }

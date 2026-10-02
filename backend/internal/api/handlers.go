@@ -2186,7 +2186,7 @@ func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *co
 			break
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 
 	detail := fmt.Sprintf("vcpu=%d ram_mb=%d disk_gb=%.1f", req.VCPU, req.RAMMB, req.DiskGB)
 	auditRequest(r, "container.resize", c.Name, detail, true, "")

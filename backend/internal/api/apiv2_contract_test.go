@@ -30,9 +30,11 @@ func newV2TestMux() *http.ServeMux {
 // withV2TestConfig 准备一个最小可用的全局配置（管理员 + JWT 密钥 + 空容器集）。
 func withV2TestConfig(t *testing.T) string {
 	t.Helper()
-	previous := config.AppConfig
-	t.Cleanup(func() { config.AppConfig = previous })
-	config.AppConfig = &config.EyvescloudConfig{
+	previous := config.GetTestConfig()
+	t.Cleanup(func() { config.RestoreTestConfig(previous) })
+	// 持锁替换：后台任务队列协程（包级 init 启动）会并发持锁读全局配置，
+	// 裸赋值 config.AppConfig = ... 是无锁写，go test -race 会报数据竞态。
+	testCfg := &config.EyvescloudConfig{
 		AdminUser:     "root-admin",
 		AdminPassHash: "unused",
 		JWTSecret:     "v2-contract-secret",
@@ -41,6 +43,7 @@ func withV2TestConfig(t *testing.T) string {
 			{ID: 8, UUID: "uuid-beta", Name: "beta", Status: "stopped", Suspended: true, VCPU: 1, RAMMB: 512, DiskGB: 10, Template: "alpine-3.21"},
 		},
 	}
+	config.SetTestConfig(testCfg)
 	token, err := signAdminToken("root-admin", "", "", 0)
 	if err != nil {
 		t.Fatalf("signAdminToken: %v", err)

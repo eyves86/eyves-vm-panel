@@ -197,7 +197,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			})
-			_ = config.SaveConfig()
+			config.SaveConfigLogged()
 		} else {
 			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 				for i := range cfg.Containers {
@@ -209,7 +209,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			})
-			_ = config.SaveConfig()
+			config.SaveConfigLogged()
 			_ = startByRuntime(id)
 		}
 	case "reset-password":
@@ -255,7 +255,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 				config.MutateContainerNoSave(id, func(cc *config.Container) {
 					cc.VNCPassword = req.Password
 				})
-				_ = config.SaveConfig()
+				config.SaveConfigLogged()
 			} else {
 				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "VNC password is only applicable to KVM VMs"})
 				return
@@ -350,7 +350,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		})
-		_ = config.SaveConfig()
+		config.SaveConfigLogged()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "resized", Data: map[string]interface{}{"vcpu": container.VCPU, "ram_mb": container.RAMMB, "disk_gb": container.DiskGB}})
 		return
 	case "snapshot":
@@ -456,7 +456,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			newC.Status = "stopped"
 			cfg.Containers = append(cfg.Containers, newC)
 		})
-		_ = config.SaveConfig()
+		config.SaveConfigLogged()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "container cloned on agent node"})
 		return
 	case "recipes/execute":

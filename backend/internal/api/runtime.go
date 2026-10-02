@@ -352,13 +352,16 @@ func applyLimitsByRuntime(c *config.Container) error {
 func listByRuntime() ([]config.Container, error) {
 	containers, err := lxcManager.ListContainers()
 	if err != nil {
-		containers = config.AppConfig.Containers
+		// 锁内快照：此前直接引用全局切片，下游过滤（filtered[:0]）会就地
+		// 写坏内存态。
+		containers = config.GetContainers()
 	}
 	containers = kvmManager.ListContainers(containers)
 	// 防御性拷贝（实测踩坑）：下游所有列表过滤普遍使用 `filtered := containers[:0]`
 	// 原地复用底层数组；若这里与全局 config 共享切片，任何一次带过滤的列表请求
 	// 都会原地写坏内存态全局配置（回收站视图过滤曾触发：被回收实例的记录被
 	// 后续元素覆写消失）。列表语义必须只读，这里统一拷贝隔离。
+	// 注：上游 ListContainers 现已改为锁内快照返回，这层拷贝是二次保险。
 	out := make([]config.Container, len(containers))
 	copy(out, containers)
 	return out, err

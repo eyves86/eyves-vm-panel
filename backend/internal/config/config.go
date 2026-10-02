@@ -804,7 +804,7 @@ func DeleteApiKey(id string) {
 		}
 	}
 	AppConfig.ApiKeys = filtered
-	_ = saveConfigToDB()
+	SaveConfigToDBLogged()
 }
 
 // DefaultAdminPath 是管理员入口路径的默认值（挂在根路径，保持历史行为）。
@@ -1090,6 +1090,12 @@ type SSLConfig struct {
 	KeyPath      string `json:"key_path,omitempty"`
 	LastIssuedAt string `json:"last_issued_at,omitempty"`
 	LastError    string `json:"last_error,omitempty"`
+	// HTTPRedirectPort：启用 TLS 后额外监听一个 HTTP 端口做 301 跳转到 HTTPS。
+	//
+	// 存在的理由：面板是单端口服务，启用 TLS 后原 HTTP 入口直接消失——用户的
+	// 既有书签、监控探针、计费系统回调会立刻连接失败，表现为"开了证书反而打不开"。
+	// 设一个跳转端口（如 8998）可把"访问断裂"变成透明升级。0 = 不启用。
+	HTTPRedirectPort int `json:"http_redirect_port,omitempty"`
 }
 
 const (
@@ -1606,6 +1612,12 @@ type EyvescloudConfig struct {
 	ISOFiles               []ISOFile              `json:"iso_files,omitempty"`
 	SecGroups              []secgroup.Group       `json:"sec_groups,omitempty"`
 	SecGroupRules          []secgroup.Rule        `json:"sec_group_rules,omitempty"`
+	// SecurityGroupEnforced 控制安全组规则是否真正下发到防火墙。
+	//
+	// 默认 false：规则会被保存但不生效。默认策略是 drop，某个容器的放行规则
+	// 配得不全时一旦启用就会直接断网——这个风险必须由管理员显式承担，不能由
+	// 升级动作替他决定。开启后由 api.StartSecurityGroupEnforcer 周期同步。
+	SecurityGroupEnforced bool `json:"security_group_enforced,omitempty"`
 	MetricRetentionDays    int                    `json:"metric_retention_days"`
 	AuditRetentionDays     int                    `json:"audit_retention_days"`
 	BackupSettings         BackupSettings         `json:"backup_settings"`
@@ -2899,7 +2911,7 @@ func AddContainer(c Container) {
 	c.Virtualization = NormalizeVirtualization(c.Virtualization)
 	NormalizeContainerResourceAliases(&c)
 	AppConfig.Containers = append(AppConfig.Containers, c)
-	_ = saveConfigToDB()
+	SaveConfigToDBLogged()
 }
 
 // MutateGlobal applies fn to the live configuration under the write lock and
@@ -3009,6 +3021,54 @@ func GetContainers() []Container {
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
 	return append([]Container(nil), AppConfig.Containers...)
+}
+
+// ---------------------------------------------------------------------------
+// 测试辅助：持锁访问全局配置
+//
+// 直接写 `config.AppConfig = ...` 是无锁写，与后台协程（任务队列 dispatcher、
+// 到期扫描器等，均由包级 init 启动）的持锁读构成数据竞态——`go test -race`
+// 实测会连带把产品代码路径标红，掩盖真正的缺陷。测试一律走下面三个入口。
+// ---------------------------------------------------------------------------
+
+// GetSecurityGroupEnforced 持锁读取安全组强制执行开关。
+func GetSecurityGroupEnforced() bool {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	return AppConfig != nil && AppConfig.SecurityGroupEnforced
+}
+
+// SetSecurityGroupEnforced 持锁写入安全组强制执行开关并落库。
+func SetSecurityGroupEnforced(enabled bool) error {
+	AppConfigMu.Lock()
+	if AppConfig == nil {
+		AppConfigMu.Unlock()
+		return fmt.Errorf("config is not initialized")
+	}
+	AppConfig.SecurityGroupEnforced = enabled
+	AppConfigMu.Unlock()
+	return SaveConfig()
+}
+
+// SetTestConfig 持锁替换全局配置（测试专用）。
+func SetTestConfig(cfg *EyvescloudConfig) {
+	AppConfigMu.Lock()
+	AppConfig = cfg
+	AppConfigMu.Unlock()
+}
+
+// GetTestConfig 持锁读取当前全局配置指针（测试专用）。
+func GetTestConfig() *EyvescloudConfig {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	return AppConfig
+}
+
+// RestoreTestConfig 持锁恢复先前保存的全局配置指针（测试专用）。
+func RestoreTestConfig(previous *EyvescloudConfig) {
+	AppConfigMu.Lock()
+	AppConfig = previous
+	AppConfigMu.Unlock()
 }
 
 // GetAPIRateLimit returns a snapshot of the versioned-API rate-limit config.
@@ -3458,7 +3518,7 @@ func RemoveContainer(id int) bool {
 			// Clear snapshot schedule for this container
 			clearContainerSnapshotSchedule(&AppConfig.Containers[i])
 			AppConfig.Containers = append(AppConfig.Containers[:i], AppConfig.Containers[i+1:]...)
-			_ = saveConfigToDB()
+			SaveConfigToDBLogged()
 			return true
 		}
 	}
@@ -3686,6 +3746,33 @@ func FindContainer(id int) *Container {
 	return findContainerUnlocked(id)
 }
 
+// GetContainerSnapshot 返回容器的**值拷贝**（含易被就地修改的切片字段的深拷贝）。
+//
+// 使用场景：调用方需要"持锁读一次、之后在锁外长期使用"时，必须用本函数。
+// FindContainer 返回的是全局切片元素的内部指针，锁一释放就不再受保护，
+// 锁外再解引用即与并发写构成数据竞态（`go test -race` 实测：DestroyContainer
+// 读 c.LxcName()/c.IPv6Addresses 与任务队列写状态相撞）。
+func GetContainerSnapshot(id int) (Container, bool) {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	c := findContainerUnlocked(id)
+	if c == nil {
+		return Container{}, false
+	}
+	snap := *c
+	// 深拷贝会被就地修改的切片，避免快照上的写入污染全局（也避免反向污染）。
+	if c.IPv6Addresses != nil {
+		snap.IPv6Addresses = append([]IPv6Assignment(nil), c.IPv6Addresses...)
+	}
+	if c.PublicIPv4s != nil {
+		snap.PublicIPv4s = append([]PublicIPv4Assignment(nil), c.PublicIPv4s...)
+	}
+	if c.PortMappings != nil {
+		snap.PortMappings = append([]PortMapping(nil), c.PortMappings...)
+	}
+	return snap, true
+}
+
 // FindContainerByUUID finds a container by UUID.
 func FindContainerByUUID(uuid string) *Container {
 	AppConfigMu.RLock()
@@ -3821,7 +3908,7 @@ func UpdateContainerStatus(id int, status string) {
 		if c := findContainerUnlocked(id); c != nil {
 			name, oldStatus = c.Name, c.Status
 			c.Status = status
-			_ = saveConfigToDB()
+			SaveConfigToDBLogged()
 		}
 	}()
 	// 锁外触发钩子（Webhook 投递可能耗时，不能占住全局配置锁）。
@@ -3851,6 +3938,29 @@ func SetContainerStatusAndNotify(c *Container, newStatus string) {
 	FireContainerStatusHook(c.ID, c.Name, old, newStatus)
 }
 
+// UpdateContainerStatusNotify 持锁按 ID 更新状态，并在状态确有变化时于锁外触发
+// 状态钩子（与 UpdateContainerStatus 同款语义，但不落库——状态由其它路径持久化）。
+//
+// 存在的理由：SetContainerStatusAndNotify 直接改调用方传入的指针，要求该指针指向
+// 全局切片元素且调用方自己持锁；运行时探测路径拿到的是「快照副本」，不能再用它
+// 写回内存态，否则要么改不到全局、要么构成数据竞态（go test -race 实测）。
+func UpdateContainerStatusNotify(id int, newStatus string) {
+	var name, oldStatus string
+	func() {
+		AppConfigMu.Lock()
+		defer AppConfigMu.Unlock()
+		c := findContainerUnlocked(id)
+		if c == nil || c.Status == newStatus {
+			return
+		}
+		name, oldStatus = c.Name, c.Status
+		c.Status = newStatus
+	}()
+	if ContainerStatusHook != nil && name != "" && oldStatus != newStatus {
+		ContainerStatusHook(id, name, oldStatus, newStatus)
+	}
+}
+
 func UpdateContainerStatusAndRestore(id int, status string, restoreOnHostBoot bool) {
 	var name, oldStatus string
 	func() {
@@ -3860,7 +3970,7 @@ func UpdateContainerStatusAndRestore(id int, status string, restoreOnHostBoot bo
 			name, oldStatus = c.Name, c.Status
 			c.Status = status
 			c.RestoreOnHostBoot = restoreOnHostBoot
-			_ = saveConfigToDB()
+			SaveConfigToDBLogged()
 		}
 	}()
 	if ContainerStatusHook != nil && name != "" && oldStatus != status {
@@ -3874,7 +3984,7 @@ func SetContainerRestoreOnHostBoot(id int, restore bool) {
 	c := findContainerUnlocked(id)
 	if c != nil {
 		c.RestoreOnHostBoot = restore
-		_ = saveConfigToDB()
+		SaveConfigToDBLogged()
 	}
 }
 
@@ -3893,7 +4003,7 @@ func SetContainerPolicyBlock(id int, blocked bool, reason string) {
 		c.PolicyBlockedReason = ""
 		c.PolicyBlockedAt = ""
 	}
-	_ = saveConfigToDB()
+	SaveConfigToDBLogged()
 }
 
 // SetContainerTenant assigns a container to a tenant group.
@@ -3905,7 +4015,7 @@ func SetContainerTenant(id int, tenant string) {
 		return
 	}
 	c.Tenant = strings.TrimSpace(tenant)
-	_ = saveConfigToDB()
+	SaveConfigToDBLogged()
 }
 
 // UpdateVNC refreshes all container statuses
@@ -3913,7 +4023,7 @@ func UpdateVNC(containers []Container) {
 	AppConfigMu.Lock()
 	defer AppConfigMu.Unlock()
 	AppConfig.Containers = containers
-	_ = saveConfigToDB()
+	SaveConfigToDBLogged()
 }
 
 // MutateContainerByID applies fn to the live container under the write lock
@@ -4190,10 +4300,13 @@ func auditLogHash(log AuditLog) string {
 
 // SaveTasks persists the task queue to config
 func SaveTasks(tasks []SavedTask) {
+	// nil 检查必须在锁内：锁外读 AppConfig 与持锁替换（启动/测试夹具）
+	// 构成数据竞态（go test -race 实测）。
+	AppConfigMu.Lock()
 	if AppConfig == nil {
+		AppConfigMu.Unlock()
 		return
 	}
-	AppConfigMu.Lock()
 	AppConfig.Tasks = tasks
 	AppConfigMu.Unlock()
 	SaveConfig()

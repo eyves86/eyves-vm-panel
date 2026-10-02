@@ -9,6 +9,7 @@ import {
   getContainerSecGroups,
   getContainers,
   getSecGroup,
+  getSecGroupEnforcement,
   getTenants,
   listSecGroupRules,
   listSecGroups,
@@ -16,6 +17,7 @@ import {
   updateSecGroup,
   type Container,
   type SecGroup,
+  type SecGroupEnforcement,
   type SecGroupRule,
   type Tenant,
 } from '../services/api'
@@ -138,6 +140,8 @@ export default function SecurityGroups() {
   const [groups, setGroups] = useState<SecGroup[]>([])
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [ruleCounts, setRuleCounts] = useState<Record<string, number>>({})
+  // 安全组是否真的下发到防火墙（默认 false：规则只保存、不生效）。
+  const [enforcement, setEnforcement] = useState<SecGroupEnforcement | null>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState('')
@@ -195,6 +199,13 @@ export default function SecurityGroups() {
       const list = res.data.data || []
       setGroups(list)
       setError('')
+      // 强制执行状态：失败时不阻断列表展示，只是不出提示条。
+      try {
+        const enf = await getSecGroupEnforcement()
+        setEnforcement(enf.data.data || null)
+      } catch {
+        setEnforcement(null)
+      }
       const results = await Promise.all(
         list.map((g) => listSecGroupRules(g.id).then((r) => (r.data.data || []).length).catch(() => -1)),
       )
@@ -475,6 +486,16 @@ export default function SecurityGroups() {
 
       {error && (
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{error}</div>
+      )}
+
+      {enforcement && !enforcement.enforced && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+          <strong>规则已保存，但尚未下发到防火墙。</strong>
+          {' '}
+          当前共有 {enforcement.group_count} 个安全组、{enforcement.rule_count} 条规则，它们不会影响实际流量。
+          如需真正生效，请在设置中开启「安全组强制执行」——
+          开启前请确认各容器的放行规则完整（默认策略为 drop，规则不全的容器会立即断网）。
+        </div>
       )}
 
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">

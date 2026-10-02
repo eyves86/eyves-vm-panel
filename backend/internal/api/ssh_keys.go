@@ -186,7 +186,7 @@ func createSSHKey(w http.ResponseWriter, r *http.Request) {
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.SSHKeys = append(cfg.SSHKeys, newKey)
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	auditRequest(r, "ssh_key.create", newKey.Name, fmt.Sprintf("fingerprint=%s", fingerprint), true, "")
 
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: newKey})
@@ -243,7 +243,7 @@ func updateSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	auditRequest(r, "ssh_key.update", key.Name, fmt.Sprintf("id=%s", id), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -281,7 +281,7 @@ func deleteSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 	})
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 	auditRequest(r, "ssh_key.delete", key.Name, fmt.Sprintf("id=%s", id), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }

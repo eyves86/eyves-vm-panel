@@ -67,7 +67,7 @@ func runDueInstanceBackups() {
 			fmt.Printf("Warning: scheduled instance backup failed for %s: %v\n", c.Name, err)
 		}
 	}
-	_ = config.SaveConfig()
+	config.SaveConfigLogged()
 }
 
 // HandleInstanceBackupSettings 读取/更新实例磁盘自动备份设置。

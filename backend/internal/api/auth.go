@@ -353,7 +353,10 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	ip := clientIP(r)
 	ua := r.Header.Get("User-Agent")
-	rateKey := ip + "|admin:" + req.Username
+	// 限流桶键只用 IP：用户名是攻击者可控输入，含进键名有两个后果——
+	// ① 匹配语义一旦放宽（EqualFold/邮箱归一化）就能靠变体绕过阈值；
+	// ② 攻击者可用无限变体名把限流器的内存桶表刷爆（DoS）。对齐 v2 的做法。
+	rateKey := ip + "|admin"
 	if loginRateLimited(w, rateKey) {
 		return
 	}
