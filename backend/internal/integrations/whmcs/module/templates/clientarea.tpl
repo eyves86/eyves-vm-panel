@@ -60,7 +60,7 @@
 .eyvescloud-modal-actions{display:flex;justify-content:flex-end;gap:10px}
 .eyvescloud-modal-lg .eyvescloud-modal-actions{padding:8px 22px 20px}
 .eyvescloud-modal-body .eyvescloud-field{margin-bottom:12px}
-.eyvescloud-field-help{color:#9ca3af;font-size:12px;line-height:1.5;margin-top:6px}
+.eyvescloud-field-help{color:#6b7280;font-size:12px;line-height:1.5;margin-top:6px}
 /* 实例信息 */
 .eyvescloud-head{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:12px}
 .eyvescloud-mini{background:#fff;border:1px solid #e5e7eb;border-radius:6px;padding:10px}
@@ -123,11 +123,20 @@
 .eyvescloud-badge-net{background:#f3f4f6;color:#374151}
 .eyvescloud-badge-mounted{background:#dcfce7;color:#15803d}
 .eyvescloud-badge-free{background:#f3f4f6;color:#6b7280}
-.eyvescloud-icon-btn{width:30px;height:30px;border:0;border-radius:4px;background:transparent;color:#9ca3af;cursor:pointer;font-size:17px;line-height:30px;padding:0;text-align:center}
+.eyvescloud-icon-btn{width:30px;height:30px;border:0;border-radius:4px;background:transparent;color:#6b7280;cursor:pointer;font-size:17px;line-height:30px;padding:0;text-align:center}
 .eyvescloud-icon-btn:hover{background:#f3f4f6;color:#374151}
 .eyvescloud-rule-ops{display:flex;align-items:center;gap:8px;justify-content:flex-end}
 .eyvescloud-warn{border:1px solid #fecaca;background:#fef2f2;color:#b91c1c;border-radius:6px;padding:10px 12px;margin-top:12px;font-size:13px;line-height:1.6}
+.eyvescloud-btn:focus-visible,.eyvescloud-tab:focus-visible,.eyvescloud-icon-btn:focus-visible,
+.eyvescloud-input:focus-visible,.eyvescloud-select:focus-visible,.eyvescloud-modal-close:focus-visible{outline:2px solid #2563eb;outline-offset:1px}
+/* 触控目标：30px 的图标按钮在手机上偏小，抬到 34px */
 @media (max-width:640px){
+    .eyvescloud-icon-btn{width:34px;height:34px;line-height:34px}
+    /* 表格堆叠后需要字段名，否则只剩一串值 */
+    .eyvescloud-table th{background:#f3f4f6;border-bottom:0}
+    .eyvescloud-table tr{border:1px solid #e5e7eb;display:block;margin-bottom:10px;border-radius:6px;overflow:hidden}
+    .eyvescloud-table td{border:0;border-top:1px solid #f3f4f6}
+
     .eyvescloud-app{padding:10px}
     .eyvescloud-charts{grid-template-columns:1fr}
     .eyvescloud-table th,.eyvescloud-table td{display:block;width:100%}
