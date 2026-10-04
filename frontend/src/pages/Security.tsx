@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Activity, FileText, Power, RefreshCw, SearchCheck, ShieldAlert, ShieldCheck, X } from 'lucide-react'
 import { checkContainerSecurity, getAbuseSummary, getContainers, getSecurityAlerts, getSecurityLogs, getSecuritySettings, getSecuritySummary, AbuseSummary, Container, SecurityAlert, SecurityLog, updateSecuritySettings } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const typeLabels: Record<string, string> = {
   port_scan: '端口扫描',
@@ -31,6 +32,7 @@ const severityLabels: Record<string, string> = {
 }
 
 export default function Security() {
+  const { t } = useLanguage()
   const [alerts, setAlerts] = useState<SecurityAlert[]>([])
   const [autoShutdown, setAutoShutdown] = useState(false)
   const [arpProtection, setArpProtection] = useState(false)
@@ -215,7 +217,7 @@ export default function Security() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-black">安全告警</h1>
+        <h1 className="text-xl font-semibold text-black">{t("安全告警")}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
@@ -223,7 +225,7 @@ export default function Security() {
             aria-checked={abuseDetection}
             onClick={handleAbuseDetectionChange}
             disabled={savingSettings}
-            title="滥用行为检测：检测挖矿、BT/PT、VPN/代理/Tor、25端口垃圾邮件、DDoS/CC、爆破、后门、内网横向移动与疑似被入侵等行为"
+            title={t("滥用行为检测：检测挖矿、BT/PT、VPN/代理/Tor、25端口垃圾邮件、DDoS/CC、爆破、后门、内网横向移动与疑似被入侵等行为")}
             className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors disabled:opacity-60 ${
               abuseDetection
                 ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
@@ -239,7 +241,7 @@ export default function Security() {
             aria-checked={autoShutdown}
             onClick={handleAutoShutdownChange}
             disabled={savingSettings}
-            title="告警自动关机"
+            title={t("告警自动关机")}
             className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors disabled:opacity-60 ${
               autoShutdown
                 ? 'border-red-200 bg-red-50 text-red-700 hover:bg-red-100'
@@ -255,7 +257,7 @@ export default function Security() {
             aria-checked={arpProtection}
             onClick={handleArpProtectionChange}
             disabled={savingSettings}
-            title="公网 IP-MAC 绑定防护（检测 ARP 地址冲突/欺骗）"
+            title={t("公网 IP-MAC 绑定防护（检测 ARP 地址冲突/欺骗）")}
             className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors disabled:opacity-60 ${
               arpProtection
                 ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
@@ -271,7 +273,7 @@ export default function Security() {
             aria-checked={ipAntiSpoof}
             onClick={handleIpAntiSpoofChange}
             disabled={savingSettings}
-            title="IP 防盗：把平台分配的公网 IP 与容器 MAC 绑定，阻止容器盗用其它 IP"
+            title={t("IP 防盗：把平台分配的公网 IP 与容器 MAC 绑定，阻止容器盗用其它 IP")}
             className={`inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm transition-colors disabled:opacity-60 ${
               ipAntiSpoof
                 ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
@@ -286,51 +288,51 @@ export default function Security() {
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
           >
             <SearchCheck className="w-4 h-4" />
-            容器安全检查
+            {t("容器安全检查")}
           </button>
           <button
             onClick={fetchData}
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
           >
             <RefreshCw className="w-4 h-4" />
-            刷新
+            {t("刷新")}
           </button>
         </div>
       </div>
 
       {!abuseDetection && (
         <div className="rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-600">
-          滥用行为检测已关闭：不会再产生挖矿、BT/PT、VPN/代理、25 端口、DDoS/CC、爆破、后门、内网横向移动等告警。
+          {t("滥用行为检测已关闭：不会再产生挖矿、BT/PT、VPN/代理、25 端口、DDoS/CC、爆破、后门、内网横向移动等告警。")}
         </div>
       )}
 
       {abuseDetection && conntrackAvailable === false && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          未检测到连接跟踪数据源（conntrack / <span className="font-mono">/proc/net/nf_conntrack</span>）。
-          基于出站/入站连接的滥用检测（挖矿、VPN/代理、BT/PT、CC、25 端口、爆破、后门等）<strong>当前不会生效</strong>，
-          请安装 <span className="font-mono">conntrack</span> 工具或启用内核 nf_conntrack 模块。
+          {t("未检测到连接跟踪数据源（conntrack /")} <span className="font-mono">/proc/net/nf_conntrack</span>）。
+          基于出站/入站连接的滥用检测（挖矿、VPN/代理、BT/PT、CC、25 端口、爆破、后门等）<strong>{t("当前不会生效")}</strong>，
+          请安装 <span className="font-mono">conntrack</span> {t("工具或启用内核 nf_conntrack 模块。")}
         </div>
       )}
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-black">滥用用户记录（按用户 / 租户归因）</h2>
-          <span className="text-xs text-gray-500">共 {abuse?.total_alerts ?? 0} 条告警</span>
+          <h2 className="text-sm font-semibold text-black">{t("滥用用户记录（按用户 / 租户归因）")}</h2>
+          <span className="text-xs text-gray-500">{t("共")} {abuse?.total_alerts ?? 0} {t("条告警")}</span>
         </div>
         {!abuse || abuse.by_owner.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无滥用记录</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无滥用记录")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
-                  <th className="px-4 py-2.5 whitespace-nowrap">用户</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">租户</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">最高等级</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">告警数</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">类型分布</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">涉及容器</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">最近</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("用户")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("租户")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("最高等级")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("告警数")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("类型分布")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("涉及容器")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("最近")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -359,23 +361,23 @@ export default function Security() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-          <h2 className="text-sm font-semibold text-black">告警列表 ({alerts.length})</h2>
+          <h2 className="text-sm font-semibold text-black">{t("告警列表 (")}{alerts.length})</h2>
         </div>
         {alerts.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无安全告警</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无安全告警")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
-                  <th className="px-4 py-2.5 whitespace-nowrap">时间</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">等级</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">类型</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">容器</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">源IP</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">目标</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">次数</th>
-                  <th className="px-4 py-2.5">详情</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("时间")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("等级")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("类型")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("容器")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("源IP")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("目标")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("次数")}</th>
+                  <th className="px-4 py-2.5">{t("详情")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -405,10 +407,10 @@ export default function Security() {
                         <button
                           onClick={() => openLogs(alert)}
                           className="inline-flex shrink-0 items-center gap-1 rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
-                          title="查看相关记录"
+                          title={t("查看相关记录")}
                         >
                           <FileText className="h-3.5 w-3.5" />
-                          查看
+                          {t("查看")}
                         </button>
                       </div>
                     </td>
@@ -425,7 +427,7 @@ export default function Security() {
           <div className="w-full max-w-4xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <div>
-                <h3 className="text-sm font-semibold text-black">相关连接记录</h3>
+                <h3 className="text-sm font-semibold text-black">{t("相关连接记录")}</h3>
                 <p className="mt-1 text-xs text-gray-500">
                   {logAlert.container_name} · {typeLabels[logAlert.type] || logAlert.type} · {formatTarget(logAlert)}
                 </p>
@@ -433,7 +435,7 @@ export default function Security() {
               <button
                 onClick={() => setLogAlert(null)}
                 className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black"
-                title="关闭"
+                title={t("关闭")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -442,24 +444,24 @@ export default function Security() {
             <div className="max-h-[70vh] overflow-auto">
               {logAlert.log_line && (
                 <div className="border-b border-gray-100 bg-gray-50 px-4 py-3">
-                  <div className="mb-1 text-xs font-medium text-gray-600">告警原始记录</div>
+                  <div className="mb-1 text-xs font-medium text-gray-600">{t("告警原始记录")}</div>
                   <pre className="whitespace-pre-wrap break-all rounded border border-gray-200 bg-white p-3 text-xs text-gray-700">{logAlert.log_line}</pre>
                 </div>
               )}
               {logsLoading ? (
-                <div className="p-8 text-center text-sm text-gray-500">正在加载连接记录...</div>
+                <div className="p-8 text-center text-sm text-gray-500">{t("正在加载连接记录...")}</div>
               ) : logs.length === 0 ? (
                 <div className="p-8 text-center text-sm text-gray-500">
-                  暂无可用连接记录。历史告警对应的 conntrack 记录可能已经过期。
+                  {t("暂无可用连接记录。历史告警对应的 conntrack 记录可能已经过期。")}
                 </div>
               ) : (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium text-gray-500">
-                      <th className="px-4 py-2.5">协议</th>
-                      <th className="px-4 py-2.5">状态</th>
-                      <th className="px-4 py-2.5">源地址</th>
-                      <th className="px-4 py-2.5">目标地址</th>
+                      <th className="px-4 py-2.5">{t("协议")}</th>
+                      <th className="px-4 py-2.5">{t("状态")}</th>
+                      <th className="px-4 py-2.5">{t("源地址")}</th>
+                      <th className="px-4 py-2.5">{t("目标地址")}</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
@@ -488,13 +490,13 @@ export default function Security() {
           <div className="w-full max-w-2xl overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl">
             <div className="flex items-start justify-between gap-3 border-b border-gray-200 px-4 py-3">
               <div>
-                <h3 className="text-sm font-semibold text-black">容器安全检查</h3>
-                <p className="mt-1 text-xs text-gray-500">选择运行中的容器，立即执行一次滥用行为检测并查看风险项</p>
+                <h3 className="text-sm font-semibold text-black">{t("容器安全检查")}</h3>
+                <p className="mt-1 text-xs text-gray-500">{t("选择运行中的容器，立即执行一次滥用行为检测并查看风险项")}</p>
               </div>
               <button
                 onClick={() => setCheckOpen(false)}
                 className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black"
-                title="关闭"
+                title={t("关闭")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -506,7 +508,7 @@ export default function Security() {
               )}
               <div className="flex flex-wrap items-end gap-3">
                 <div className="min-w-[240px] flex-1">
-                  <label className="mb-1 block text-xs font-medium text-gray-500">容器</label>
+                  <label className="mb-1 block text-xs font-medium text-gray-500">{t("容器")}</label>
                   <select
                     value={checkTarget}
                     onChange={(e) => setCheckTarget(e.target.value)}
@@ -515,7 +517,7 @@ export default function Security() {
                   >
                     <option value="">{checkContainersLoading ? '加载容器中...' : '请选择容器'}</option>
                     {checkContainers.map((c) => (
-                      <option key={c.id} value={c.name}>{c.name}（运行中）</option>
+                      <option key={c.id} value={c.name}>{c.name}{t("（运行中）")}</option>
                     ))}
                   </select>
                 </div>
@@ -529,7 +531,7 @@ export default function Security() {
                 </button>
               </div>
               {checkContainers.length === 0 && !checkContainersLoading && !checkLoadError && (
-                <div className="rounded-md border border-gray-200 px-3 py-6 text-center text-sm text-gray-500">暂无运行中的容器</div>
+                <div className="rounded-md border border-gray-200 px-3 py-6 text-center text-sm text-gray-500">{t("暂无运行中的容器")}</div>
               )}
               {checkResult && (
                 <div className={`rounded-md border px-3 py-2 text-sm ${checkResult.ok ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
@@ -538,18 +540,18 @@ export default function Security() {
               )}
               {checkAlerts !== null && (
                 <div>
-                  <div className="mb-2 text-xs font-medium text-gray-500">该容器当前风险项（{checkAlerts.length}）</div>
+                  <div className="mb-2 text-xs font-medium text-gray-500">{t("该容器当前风险项（")}{checkAlerts.length}）</div>
                   {checkAlerts.length === 0 ? (
-                    <div className="rounded-md border border-gray-200 px-3 py-6 text-center text-sm text-gray-500">未发现风险项</div>
+                    <div className="rounded-md border border-gray-200 px-3 py-6 text-center text-sm text-gray-500">{t("未发现风险项")}</div>
                   ) : (
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead>
                           <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium text-gray-500">
-                            <th className="px-3 py-2 whitespace-nowrap">等级</th>
-                            <th className="px-3 py-2 whitespace-nowrap">类型</th>
-                            <th className="px-3 py-2">详情</th>
-                            <th className="px-3 py-2 whitespace-nowrap">时间</th>
+                            <th className="px-3 py-2 whitespace-nowrap">{t("等级")}</th>
+                            <th className="px-3 py-2 whitespace-nowrap">{t("类型")}</th>
+                            <th className="px-3 py-2">{t("详情")}</th>
+                            <th className="px-3 py-2 whitespace-nowrap">{t("时间")}</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">

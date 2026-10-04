@@ -8,8 +8,10 @@ import {
   updateIPGroup,
   type IPGroup,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 export default function IPGroups() {
+  const { t } = useLanguage()
   const [groups, setGroups] = useState<IPGroup[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -119,9 +121,9 @@ export default function IPGroups() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <Network className="h-5 w-5" />IP 组 / 故障切换
+            <Network className="h-5 w-5" />{t("IP 组 / 故障切换")}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">分组管理公网 IP，支持主备 IP 手动故障切换</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t("分组管理公网 IP，支持主备 IP 手动故障切换")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -129,10 +131,10 @@ export default function IPGroups() {
             disabled={refreshing}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{t("刷新")}
           </button>
           <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
-            <Plus className="h-4 w-4" />新建 IP 组
+            <Plus className="h-4 w-4" />{t("新建 IP 组")}
           </button>
         </div>
       </div>
@@ -143,20 +145,20 @@ export default function IPGroups() {
           {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
               <input type="text" value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="web-lb" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">生效 IP（逗号分隔）</label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("生效 IP（逗号分隔）")}</label>
               <input type="text" value={draft.enable} onChange={(e) => setDraft((d) => ({ ...d, enable: e.target.value }))} placeholder="1.2.3.4, 1.2.3.5" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">备用 IP（逗号分隔）</label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("备用 IP（逗号分隔）")}</label>
               <input type="text" value={draft.standby} onChange={(e) => setDraft((d) => ({ ...d, standby: e.target.value }))} placeholder="1.2.3.6, 1.2.3.7" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
           </div>
           <div className="mt-4 flex justify-end gap-2">
-            <button onClick={cancel} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">取消</button>
+            <button onClick={cancel} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">{t("取消")}</button>
             <button onClick={submit} className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">{editingId ? '保存修改' : '创建 IP 组'}</button>
           </div>
         </div>
@@ -166,19 +168,19 @@ export default function IPGroups() {
         {groups.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Network className="h-7 w-7" /></div>
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无 IP 组</div>
-            <div className="mt-1 text-xs text-gray-400">点击「新建 IP 组」创建第一个 IP 组</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{t("暂无 IP 组")}</div>
+            <div className="mt-1 text-xs text-gray-400">{t("点击「新建 IP 组」创建第一个 IP 组")}</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[960px] text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">名称</th>
-                  <th className="px-4 py-3 text-left font-medium">生效 IP</th>
-                  <th className="px-4 py-3 text-left font-medium">备用 IP</th>
-                  <th className="px-4 py-3 text-left font-medium">当前状态</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("名称")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("生效 IP")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("备用 IP")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("当前状态")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -189,10 +191,10 @@ export default function IPGroups() {
                     <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{(g.standby || []).join(', ') || '—'}</td>
                     <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{g.fault_open || '—'}</td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => openEdit(g)} className="mr-2 inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300"><Pencil className="h-3 w-3" />编辑</button>
-                      <button onClick={() => remove(g.id, g.name)} className="mr-2 inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"><Trash2 className="h-3 w-3" />删除</button>
+                      <button onClick={() => openEdit(g)} className="mr-2 inline-flex items-center gap-1 rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300"><Pencil className="h-3 w-3" />{t("编辑")}</button>
+                      <button onClick={() => remove(g.id, g.name)} className="mr-2 inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"><Trash2 className="h-3 w-3" />{t("删除")}</button>
                       {(g.standby || []).map((ip) => (
-                        <button key={ip} onClick={() => failover(g.id, ip)} className="inline-flex items-center gap-1 rounded border border-blue-200 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400"><ArrowLeftRight className="h-3 w-3" />切换到 {ip}</button>
+                        <button key={ip} onClick={() => failover(g.id, ip)} className="inline-flex items-center gap-1 rounded border border-blue-200 px-2 py-1 text-xs text-blue-600 hover:bg-blue-50 dark:border-blue-800 dark:text-blue-400"><ArrowLeftRight className="h-3 w-3" />{t("切换到")} {ip}</button>
                       ))}
                     </td>
                   </tr>

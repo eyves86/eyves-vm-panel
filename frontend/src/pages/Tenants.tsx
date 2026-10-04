@@ -7,10 +7,12 @@ import {
   updateTenant,
   type Tenant,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const emptyDraft = { id: '', name: '', description: '', container_quota: 0, vcpu_quota: 0, ram_quota_mb: 0, disk_quota_gb: 0 }
 
 export default function Tenants() {
+  const { t } = useLanguage()
   const [tenants, setTenants] = useState<Tenant[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -129,9 +131,9 @@ export default function Tenants() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <Building2 className="h-5 w-5" />多租户管理
+            <Building2 className="h-5 w-5" />{t("多租户管理")}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">创建租户并设定资源配额，容器归属租户后将受配额约束</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t("创建租户并设定资源配额，容器归属租户后将受配额约束")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -139,10 +141,10 @@ export default function Tenants() {
             disabled={refreshing}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{t("刷新")}
           </button>
           <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
-            <Plus className="h-4 w-4" />新建租户
+            <Plus className="h-4 w-4" />{t("新建租户")}
           </button>
         </div>
       </div>
@@ -153,24 +155,24 @@ export default function Tenants() {
           {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <div className="grid gap-4 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">租户 ID</label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("租户 ID")}</label>
               <input type="text" value={draft.id} disabled={!!editingId} onChange={(e) => setDraft((d) => ({ ...d, id: e.target.value.trim() }))} placeholder="tenant-a" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black disabled:bg-gray-50 disabled:text-gray-400 dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称</label>
-              <input type="text" value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="租户 A" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")}</label>
+              <input type="text" value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder={t("租户 A")} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
             <div className="md:col-span-2">
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">描述</label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("描述")}</label>
               <input type="text" value={draft.description} onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
-            <Field label="容器配额（0=不限）" value={draft.container_quota} onChange={(v) => setNum('container_quota', v)} />
-            <Field label="vCPU 配额（0=不限）" value={draft.vcpu_quota} onChange={(v) => setNum('vcpu_quota', v)} />
-            <Field label="内存配额 MB（0=不限）" value={draft.ram_quota_mb} onChange={(v) => setNum('ram_quota_mb', v)} />
-            <Field label="磁盘配额 GB（0=不限）" value={draft.disk_quota_gb} onChange={(v) => setNum('disk_quota_gb', v)} />
+            <Field label={t("容器配额（0=不限）")} value={draft.container_quota} onChange={(v) => setNum('container_quota', v)} />
+            <Field label={t("vCPU 配额（0=不限）")} value={draft.vcpu_quota} onChange={(v) => setNum('vcpu_quota', v)} />
+            <Field label={t("内存配额 MB（0=不限）")} value={draft.ram_quota_mb} onChange={(v) => setNum('ram_quota_mb', v)} />
+            <Field label={t("磁盘配额 GB（0=不限）")} value={draft.disk_quota_gb} onChange={(v) => setNum('disk_quota_gb', v)} />
           </div>
           <div className="mt-4 flex justify-end gap-2">
-            <button onClick={cancel} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">取消</button>
+            <button onClick={cancel} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300">{t("取消")}</button>
             <button onClick={submit} className="rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">{editingId ? '保存修改' : '创建租户'}</button>
           </div>
         </div>
@@ -180,8 +182,8 @@ export default function Tenants() {
         {tenants.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Building2 className="h-7 w-7" /></div>
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无租户</div>
-            <div className="mt-1 text-xs text-gray-400">点击「新建租户」创建第一个租户</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{t("暂无租户")}</div>
+            <div className="mt-1 text-xs text-gray-400">{t("点击「新建租户」创建第一个租户")}</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -189,13 +191,13 @@ export default function Tenants() {
               <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                 <tr>
                   <th className="px-4 py-3 text-left font-medium">ID</th>
-                  <th className="px-4 py-3 text-left font-medium">名称</th>
-                  <th className="px-4 py-3 text-left font-medium">容器</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("名称")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("容器")}</th>
                   <th className="px-4 py-3 text-left font-medium">vCPU</th>
-                  <th className="px-4 py-3 text-left font-medium">内存</th>
-                  <th className="px-4 py-3 text-left font-medium">磁盘</th>
-                  <th className="px-4 py-3 text-left font-medium">状态</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("内存")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("磁盘")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("状态")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">

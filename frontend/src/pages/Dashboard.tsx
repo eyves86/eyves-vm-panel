@@ -8,6 +8,7 @@ import ResourceStatsPanel, {
   statsRanges,
 } from '../components/ResourceStatsPanel'
 import { DashboardStats, getDashboard, getHostHistory, getHostInfo, getSSLSettings, HostInfo, HostMetricPoint as HostMetricSample } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 type HostMetricPoint = {
   ts: number
@@ -24,6 +25,7 @@ type HostMetricPoint = {
 const hostHistoryKey = 'eyvescloud_host_metric_history_v2'
 
 export default function Dashboard() {
+  const { t } = useLanguage()
   const [stats, setStats] = useState<DashboardStats | null>(null)
   const [host, setHost] = useState<HostInfo | null>(null)
   const [history, setHistory] = useState<HostMetricPoint[]>(readHostHistory)
@@ -145,29 +147,29 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-black">控制面板</h1>
-        <p className="text-sm text-gray-500 mt-1">宿主机资源状态与容器概览</p>
+        <h1 className="text-2xl font-bold text-black">{t("控制面板")}</h1>
+        <p className="text-sm text-gray-500 mt-1">{t("宿主机资源状态与容器概览")}</p>
       </div>
 
       {tlsEnabled === false && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
-          <div className="font-semibold">面板正在以明文 HTTP 运行</div>
+          <div className="font-semibold">{t("面板正在以明文 HTTP 运行")}</div>
           <p className="mt-1">
-            管理密码、会话 Cookie、容器 root 口令都会以明文经过网络。若面板端口暴露在公网，等于把凭据公开挂在网上。
+            {t("管理密码、会话 Cookie、容器 root 口令都会以明文经过网络。若面板端口暴露在公网，等于把凭据公开挂在网上。")}
           </p>
           <p className="mt-2">
-            前往 <a href="/settings" className="font-medium underline">设置 → SSL 证书</a> 签发证书即可启用 HTTPS；
+            {t("前往")} <a href="/settings" className="font-medium underline">{t("设置 → SSL 证书")}</a> 签发证书即可启用 HTTPS；
             启用后可用「HTTP 跳转端口」把既有的 http:// 访问自动 301 到 HTTPS，不会中断现有访问。
           </p>
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-5">
-        <SummaryCard icon={<Server className="w-5 h-5" />} title="实例总数" value={stats?.total_containers || 0} />
-        <SummaryCard dot="bg-green-500" title="运行中" value={stats?.running || 0} />
-        <SummaryCard dot="bg-red-500" title="已停止" value={stats?.stopped || 0} muted />
-        <SummaryCard dot="bg-amber-500" title="已挂起" value={stats?.suspended || 0} muted />
-        <SummaryCard dot="bg-blue-500" title="在线节点" value={`${stats?.nodes_online || 0}/${stats?.nodes_total || 0}`} />
+        <SummaryCard icon={<Server className="w-5 h-5" />} title={t("实例总数")} value={stats?.total_containers || 0} />
+        <SummaryCard dot="bg-green-500" title={t("运行中")} value={stats?.running || 0} />
+        <SummaryCard dot="bg-red-500" title={t("已停止")} value={stats?.stopped || 0} muted />
+        <SummaryCard dot="bg-amber-500" title={t("已挂起")} value={stats?.suspended || 0} muted />
+        <SummaryCard dot="bg-blue-500" title={t("在线节点")} value={`${stats?.nodes_online || 0}/${stats?.nodes_total || 0}`} />
       </div>
 
       {host && (

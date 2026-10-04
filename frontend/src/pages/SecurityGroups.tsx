@@ -21,6 +21,7 @@ import {
   type SecGroupRule,
   type Tenant,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const inputCls = 'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white'
 
@@ -136,6 +137,7 @@ function parsePort(value: string): number {
 }
 
 export default function SecurityGroups() {
+  const { t } = useLanguage()
   const dialog = useDialog()
   const [groups, setGroups] = useState<SecGroup[]>([])
   const [tenants, setTenants] = useState<Tenant[]>([])
@@ -463,9 +465,9 @@ export default function SecurityGroups() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <ShieldCheck className="h-5 w-5" />安全组
+            <ShieldCheck className="h-5 w-5" />{t("安全组")}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">管理安全组与出入站规则，并绑定到容器控制流量策略</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t("管理安全组与出入站规则，并绑定到容器控制流量策略")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -473,13 +475,13 @@ export default function SecurityGroups() {
             disabled={refreshing}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{t("刷新")}
           </button>
           <button onClick={openBind} className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
-            <Link2 className="h-4 w-4" />容器绑定
+            <Link2 className="h-4 w-4" />{t("容器绑定")}
           </button>
           <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
-            <Plus className="h-4 w-4" />新建安全组
+            <Plus className="h-4 w-4" />{t("新建安全组")}
           </button>
         </div>
       </div>
@@ -490,9 +492,9 @@ export default function SecurityGroups() {
 
       {enforcement && !enforcement.enforced && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
-          <strong>规则已保存，但尚未下发到防火墙。</strong>
+          <strong>{t("规则已保存，但尚未下发到防火墙。")}</strong>
           {' '}
-          当前共有 {enforcement.group_count} 个安全组、{enforcement.rule_count} 条规则，它们不会影响实际流量。
+          {t("当前共有")} {enforcement.group_count} {t("个安全组、")}{enforcement.rule_count} 条规则，它们不会影响实际流量。
           如需真正生效，请在设置中开启「安全组强制执行」——
           开启前请确认各容器的放行规则完整（默认策略为 drop，规则不全的容器会立即断网）。
         </div>
@@ -502,19 +504,19 @@ export default function SecurityGroups() {
         {groups.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><ShieldCheck className="h-7 w-7" /></div>
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无安全组</div>
-            <div className="mt-1 text-xs text-gray-400">点击「新建安全组」创建第一个安全组</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{t("暂无安全组")}</div>
+            <div className="mt-1 text-xs text-gray-400">{t("点击「新建安全组」创建第一个安全组")}</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">名称</th>
-                  <th className="px-4 py-3 text-left font-medium">租户</th>
-                  <th className="px-4 py-3 text-left font-medium">默认动作</th>
-                  <th className="px-4 py-3 text-left font-medium">规则数</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("名称")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("租户")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("默认动作")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("规则数")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -538,19 +540,19 @@ export default function SecurityGroups() {
                           onClick={(e) => { e.stopPropagation(); openDetail(g) }}
                           className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                         >
-                          规则
+                          {t("规则")}
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); openEdit(g) }}
                           className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                         >
-                          <Pencil className="h-3 w-3" />编辑
+                          <Pencil className="h-3 w-3" />{t("编辑")}
                         </button>
                         <button
                           onClick={(e) => { e.stopPropagation(); void removeGroup(g) }}
                           className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
                         >
-                          <Trash2 className="h-3 w-3" />删除
+                          <Trash2 className="h-3 w-3" />{t("删除")}
                         </button>
                       </div>
                     </td>
@@ -567,7 +569,7 @@ export default function SecurityGroups() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
           <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">新建安全组</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("新建安全组")}</h3>
               <button onClick={() => setCreateOpen(false)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
@@ -576,7 +578,7 @@ export default function SecurityGroups() {
               {createError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{createError}</div>}
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={createForm.name}
@@ -586,20 +588,20 @@ export default function SecurityGroups() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">租户（可选）</label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("租户（可选）")}</label>
                   <select
                     value={createForm.tenant_id}
                     onChange={(e) => setCreateForm((d) => ({ ...d, tenant_id: e.target.value }))}
                     className={inputCls}
                   >
-                    <option value="">不指定</option>
+                    <option value="">{t("不指定")}</option>
                     {tenants.map((t) => (
                       <option key={t.id} value={t.id}>{t.name}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">默认动作 <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("默认动作")} <span className="text-red-500">*</span></label>
                   <select
                     value={createForm.default_action}
                     onChange={(e) => setCreateForm((d) => ({ ...d, default_action: e.target.value }))}
@@ -613,7 +615,7 @@ export default function SecurityGroups() {
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
-              <button onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
+              <button onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("取消")}</button>
               <button onClick={submitCreate} disabled={creating} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {creating && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {creating ? '创建中…' : '创建'}
@@ -628,7 +630,7 @@ export default function SecurityGroups() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
           <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">编辑安全组</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("编辑安全组")}</h3>
               <button onClick={() => setEditGroup(null)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
@@ -637,7 +639,7 @@ export default function SecurityGroups() {
               {editError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{editError}</div>}
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={editForm.name}
@@ -646,7 +648,7 @@ export default function SecurityGroups() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">默认动作 <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("默认动作")} <span className="text-red-500">*</span></label>
                   <select
                     value={editForm.default_action}
                     onChange={(e) => setEditForm((d) => ({ ...d, default_action: e.target.value }))}
@@ -660,7 +662,7 @@ export default function SecurityGroups() {
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
-              <button onClick={() => setEditGroup(null)} disabled={savingEdit} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
+              <button onClick={() => setEditGroup(null)} disabled={savingEdit} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("取消")}</button>
               <button onClick={submitEdit} disabled={savingEdit} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {savingEdit && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {savingEdit ? '保存中…' : '保存'}
@@ -676,7 +678,7 @@ export default function SecurityGroups() {
           <div className="flex max-h-[85vh] w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
-                安全组详情{detail ? ` - ${detail.group.name}` : ''}
+                {t("安全组详情")}{detail ? ` - ${detail.group.name}` : ''}
               </h3>
               <button onClick={closeDetail} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
@@ -692,13 +694,13 @@ export default function SecurityGroups() {
               ) : detail ? (
                 <>
                   <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
-                    <span>租户：<span className="font-medium text-black dark:text-white">{tenantLabel(detail.group.tenant_id)}</span></span>
-                    <span>默认动作：<ActionBadge action={detail.group.default_action} /></span>
+                    <span>{t("租户：")}<span className="font-medium text-black dark:text-white">{tenantLabel(detail.group.tenant_id)}</span></span>
+                    <span>{t("默认动作：")}<ActionBadge action={detail.group.default_action} /></span>
                     <span className="font-mono text-gray-400">{detail.group.id}</span>
                   </div>
 
                   <div className="mb-2 flex items-center justify-between">
-                    <h4 className="text-sm font-semibold text-black dark:text-white">规则（{detail.rules.length}）</h4>
+                    <h4 className="text-sm font-semibold text-black dark:text-white">{t("规则（")}{detail.rules.length}）</h4>
                     <button onClick={() => { setShowRuleForm((v) => !v); setRuleError('') }} className="inline-flex items-center gap-1.5 rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-700 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">
                       <Plus className="h-3.5 w-3.5" />{showRuleForm ? '收起表单' : '添加规则'}
                     </button>
@@ -709,52 +711,52 @@ export default function SecurityGroups() {
                       {ruleError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{ruleError}</div>}
                       <div className="grid gap-3 md:grid-cols-3">
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">方向 <span className="text-red-500">*</span></label>
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("方向")} <span className="text-red-500">*</span></label>
                           <select value={ruleDraft.direction} onChange={(e) => setRuleDraft((d) => ({ ...d, direction: e.target.value }))} className={inputCls}>
                             {DIRECTIONS.map((d) => (<option key={d.value} value={d.value}>{d.label}</option>))}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">协议 <span className="text-red-500">*</span></label>
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("协议")} <span className="text-red-500">*</span></label>
                           <select value={ruleDraft.protocol} onChange={(e) => setRuleDraft((d) => ({ ...d, protocol: e.target.value }))} className={inputCls}>
                             {PROTOCOLS.map((p) => (<option key={p.value} value={p.value}>{p.label}</option>))}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">动作 <span className="text-red-500">*</span></label>
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("动作")} <span className="text-red-500">*</span></label>
                           <select value={ruleDraft.action} onChange={(e) => setRuleDraft((d) => ({ ...d, action: e.target.value }))} className={inputCls}>
                             {RULE_ACTIONS.map((a) => (<option key={a.value} value={a.value}>{a.label}</option>))}
                           </select>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">源掩码</label>
-                          <input type="text" value={ruleDraft.src_mask} onChange={(e) => setRuleDraft((d) => ({ ...d, src_mask: e.target.value }))} placeholder="0.0.0.0/0，留空表示任意" className={inputCls} />
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("源掩码")}</label>
+                          <input type="text" value={ruleDraft.src_mask} onChange={(e) => setRuleDraft((d) => ({ ...d, src_mask: e.target.value }))} placeholder={t("0.0.0.0/0，留空表示任意")} className={inputCls} />
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">目的掩码</label>
-                          <input type="text" value={ruleDraft.dst_mask} onChange={(e) => setRuleDraft((d) => ({ ...d, dst_mask: e.target.value }))} placeholder="0.0.0.0/0，留空表示任意" className={inputCls} />
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("目的掩码")}</label>
+                          <input type="text" value={ruleDraft.dst_mask} onChange={(e) => setRuleDraft((d) => ({ ...d, dst_mask: e.target.value }))} placeholder={t("0.0.0.0/0，留空表示任意")} className={inputCls} />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
-                            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">源端口</label>
-                            <input type="number" min={0} value={ruleDraft.src_port} onChange={(e) => setRuleDraft((d) => ({ ...d, src_port: e.target.value }))} placeholder="0 = 任意" className={inputCls} />
+                            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("源端口")}</label>
+                            <input type="number" min={0} value={ruleDraft.src_port} onChange={(e) => setRuleDraft((d) => ({ ...d, src_port: e.target.value }))} placeholder={t("0 = 任意")} className={inputCls} />
                           </div>
                           <div>
-                            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">目的端口</label>
-                            <input type="number" min={0} value={ruleDraft.dst_port} onChange={(e) => setRuleDraft((d) => ({ ...d, dst_port: e.target.value }))} placeholder="0 = 任意" className={inputCls} />
+                            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("目的端口")}</label>
+                            <input type="number" min={0} value={ruleDraft.dst_port} onChange={(e) => setRuleDraft((d) => ({ ...d, dst_port: e.target.value }))} placeholder={t("0 = 任意")} className={inputCls} />
                           </div>
                         </div>
                         <div>
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">优先级 <span className="text-red-500">*</span></label>
-                          <input type="number" value={ruleDraft.priority} onChange={(e) => setRuleDraft((d) => ({ ...d, priority: e.target.value }))} placeholder="100（数值小优先）" className={inputCls} />
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("优先级")} <span className="text-red-500">*</span></label>
+                          <input type="number" value={ruleDraft.priority} onChange={(e) => setRuleDraft((d) => ({ ...d, priority: e.target.value }))} placeholder={t("100（数值小优先）")} className={inputCls} />
                         </div>
                         <div className="md:col-span-2">
-                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">说明</label>
-                          <input type="text" value={ruleDraft.description} onChange={(e) => setRuleDraft((d) => ({ ...d, description: e.target.value }))} placeholder="放行 HTTP 流量" className={inputCls} />
+                          <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("说明")}</label>
+                          <input type="text" value={ruleDraft.description} onChange={(e) => setRuleDraft((d) => ({ ...d, description: e.target.value }))} placeholder={t("放行 HTTP 流量")} className={inputCls} />
                         </div>
                       </div>
                       <div className="mt-3 flex justify-end gap-2">
-                        <button onClick={() => { setShowRuleForm(false); setRuleError('') }} disabled={addingRule} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
+                        <button onClick={() => { setShowRuleForm(false); setRuleError('') }} disabled={addingRule} className="rounded-md border border-gray-300 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("取消")}</button>
                         <button onClick={addRule} disabled={addingRule} className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                           {addingRule && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
                           {addingRule ? '添加中…' : '添加规则'}
@@ -767,21 +769,21 @@ export default function SecurityGroups() {
                     <table className="w-full min-w-[760px] text-sm">
                       <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                         <tr>
-                          <th className="px-3 py-2.5 text-left font-medium">方向</th>
-                          <th className="px-3 py-2.5 text-left font-medium">协议</th>
-                          <th className="px-3 py-2.5 text-left font-medium">源掩码</th>
-                          <th className="px-3 py-2.5 text-left font-medium">目的掩码</th>
-                          <th className="px-3 py-2.5 text-left font-medium">端口</th>
-                          <th className="px-3 py-2.5 text-left font-medium">动作</th>
-                          <th className="px-3 py-2.5 text-left font-medium">优先级</th>
-                          <th className="px-3 py-2.5 text-left font-medium">说明</th>
-                          <th className="px-3 py-2.5 text-right font-medium">操作</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("方向")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("协议")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("源掩码")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("目的掩码")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("端口")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("动作")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("优先级")}</th>
+                          <th className="px-3 py-2.5 text-left font-medium">{t("说明")}</th>
+                          <th className="px-3 py-2.5 text-right font-medium">{t("操作")}</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                         {detail.rules.length === 0 ? (
                           <tr>
-                            <td colSpan={9} className="px-3 py-8 text-center text-sm text-gray-400">暂无规则，点击「添加规则」创建第一条规则</td>
+                            <td colSpan={9} className="px-3 py-8 text-center text-sm text-gray-400">{t("暂无规则，点击「添加规则」创建第一条规则")}</td>
                           </tr>
                         ) : detail.rules.map((rule) => (
                           <tr key={rule.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
@@ -795,7 +797,7 @@ export default function SecurityGroups() {
                             <td className="px-3 py-2.5 text-xs text-gray-600 dark:text-gray-300">{rule.description || '—'}</td>
                             <td className="px-3 py-2.5 text-right">
                               <button onClick={() => void removeRule(rule)} className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950">
-                                <Trash2 className="h-3 w-3" />删除
+                                <Trash2 className="h-3 w-3" />{t("删除")}
                               </button>
                             </td>
                           </tr>
@@ -815,20 +817,20 @@ export default function SecurityGroups() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
           <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">容器安全组绑定</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("容器安全组绑定")}</h3>
               <button onClick={closeBind} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
             </div>
             <div className="flex-1 overflow-auto px-5 py-4">
               {bindError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{bindError}</div>}
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">选择容器</label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("选择容器")}</label>
               <select value={bindContainerId} onChange={(e) => void pickContainer(e.target.value)} className={inputCls} disabled={bindContainersLoading}>
                 {bindContainersLoading ? (
-                  <option value="">容器列表加载中…</option>
+                  <option value="">{t("容器列表加载中…")}</option>
                 ) : (
                   <>
-                    <option value="">请选择容器</option>
+                    <option value="">{t("请选择容器")}</option>
                     {bindContainers.map((c) => (
                       <option key={c.id} value={String(c.id)}>{c.name || c.uuid}</option>
                     ))}
@@ -839,14 +841,14 @@ export default function SecurityGroups() {
               {bindContainerId && (
                 <div className="mt-4">
                   <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">
-                    勾选要绑定的安全组（取消勾选即解绑，保存后生效）
+                    {t("勾选要绑定的安全组（取消勾选即解绑，保存后生效）")}
                   </label>
                   {bindLoadingCurrent ? (
                     <div className="flex items-center justify-center py-6">
                       <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-brand-600 dark:border-white" />
                     </div>
                   ) : groups.length === 0 ? (
-                    <div className="py-4 text-center text-xs text-gray-400">暂无安全组，请先创建安全组</div>
+                    <div className="py-4 text-center text-xs text-gray-400">{t("暂无安全组，请先创建安全组")}</div>
                   ) : (
                     <div className="space-y-2">
                       {groups.map((g) => (
@@ -867,7 +869,7 @@ export default function SecurityGroups() {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
-              <button onClick={closeBind} disabled={bindSaving} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
+              <button onClick={closeBind} disabled={bindSaving} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("取消")}</button>
               <button onClick={submitBind} disabled={bindSaving || !bindContainerId} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {bindSaving && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {bindSaving ? '保存中…' : '保存绑定'}

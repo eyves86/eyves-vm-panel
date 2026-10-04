@@ -21,6 +21,7 @@ import {
 } from '../services/api'
 
 export default function Routing() {
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const { language } = useLanguage()
   const text = routingText[language]
@@ -702,7 +703,7 @@ export default function Routing() {
                   <th className="px-4 py-3 text-left font-medium">{text.container}</th>
                   <th className="px-4 py-3 text-left font-medium">{text.runtimeName}</th>
                   <th className="px-4 py-3 text-left font-medium">{text.guestIPv4}</th>
-                  <th className="px-4 py-3 text-left font-medium">模式</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("模式")}</th>
                   <th className="px-4 py-3 text-left font-medium">{text.gateway}</th>
                   <th className="px-4 py-3 text-left font-medium">MAC</th>
                   <th className="px-4 py-3 text-left font-medium">{text.interface}</th>

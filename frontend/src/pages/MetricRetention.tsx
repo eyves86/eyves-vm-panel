@@ -5,8 +5,10 @@ import {
   setMetricRetention,
   type MetricRetentionSettings,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 export default function MetricRetention() {
+  const { t } = useLanguage()
   const [settings, setSettings] = useState<MetricRetentionSettings | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -57,9 +59,9 @@ export default function MetricRetention() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <Database className="h-5 w-5" />指标留存策略
+            <Database className="h-5 w-5" />{t("指标留存策略")}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">控制采样指标的保留天数与原始数据保留策略</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t("控制采样指标的保留天数与原始数据保留策略")}</p>
         </div>
       </div>
 
@@ -67,13 +69,13 @@ export default function MetricRetention() {
         {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">保留天数</label>
+            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("保留天数")}</label>
             <input type="number" min={0} max={3650} value={days} onChange={(e) => setDays(e.target.value)} className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
           </div>
           <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-600 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
-            <div>当前保留：{settings?.retention_days ?? 0} 天（0=永久）</div>
-            <div>采样间隔：{settings?.sample_interval_secs ?? '—'} 秒</div>
-            <div>原始采样保留：{settings?.raw_history_secs ?? 0} 秒（{Math.round((settings?.raw_history_secs ?? 0) / 3600)} 小时）</div>
+            <div>{t("当前保留：")}{settings?.retention_days ?? 0} {t("天（0=永久）")}</div>
+            <div>{t("采样间隔：")}{settings?.sample_interval_secs ?? '—'} {t("秒")}</div>
+            <div>{t("原始采样保留：")}{settings?.raw_history_secs ?? 0} {t("秒（")}{Math.round((settings?.raw_history_secs ?? 0) / 3600)} {t("小时）")}</div>
           </div>
         </div>
         {settings?.retention_notes && (

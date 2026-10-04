@@ -10,8 +10,10 @@ import {
   type Container,
   type ISOFile,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 export default function ISOs() {
+  const { t } = useLanguage()
   const [isos, setIsos] = useState<ISOFile[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -194,9 +196,9 @@ export default function ISOs() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <Disc3 className="h-5 w-5" />ISO 镜像
+            <Disc3 className="h-5 w-5" />{t("ISO 镜像")}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">管理 KVM 安装/驱动 ISO，可挂载到虚拟机</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t("管理 KVM 安装/驱动 ISO，可挂载到虚拟机")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -204,49 +206,49 @@ export default function ISOs() {
             disabled={refreshing}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{t("刷新")}
           </button>
           <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
-            <Plus className="h-4 w-4" />添加 ISO
+            <Plus className="h-4 w-4" />{t("添加 ISO")}
           </button>
         </div>
       </div>
 
       {creating && (
         <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
-          <h2 className="mb-4 text-sm font-semibold text-black dark:text-white">添加 ISO</h2>
+          <h2 className="mb-4 text-sm font-semibold text-black dark:text-white">{t("添加 ISO")}</h2>
           {error && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
           <div className="mb-4 flex gap-2">
             <button
               onClick={() => switchMode('url')}
               className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${mode === 'url' ? 'bg-brand-600 text-white dark:bg-brand-500 dark:text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'}`}
             >
-              <ArrowDownToLine className="h-4 w-4" />在线下载
+              <ArrowDownToLine className="h-4 w-4" />{t("在线下载")}
             </button>
             <button
               onClick={() => switchMode('upload')}
               className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm ${mode === 'upload' ? 'bg-brand-600 text-white dark:bg-brand-500 dark:text-white' : 'border border-gray-300 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300'}`}
             >
-              <Upload className="h-4 w-4" />本地上传
+              <Upload className="h-4 w-4" />{t("本地上传")}
             </button>
           </div>
           <div className="grid gap-4 md:grid-cols-3">
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
               <input type="text" value={draft.name} onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} placeholder="ubuntu-server-24" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">OS（可选）</label>
+              <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("OS（可选）")}</label>
               <input type="text" value={draft.os} onChange={(e) => setDraft((d) => ({ ...d, os: e.target.value }))} placeholder="linux" className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
             </div>
             {mode === 'url' ? (
               <div>
-                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">下载地址 <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("下载地址")} <span className="text-red-500">*</span></label>
                 <input type="text" value={draft.url} onChange={(e) => setDraft((d) => ({ ...d, url: e.target.value }))} placeholder="https://..." className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white" />
               </div>
             ) : (
               <div>
-                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">选择文件 <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("选择文件")} <span className="text-red-500">*</span></label>
                 <input
                   type="file"
                   onChange={(e) => setFile(e.target.files?.[0] || null)}
@@ -256,7 +258,7 @@ export default function ISOs() {
             )}
           </div>
           <div className="mt-4 flex justify-end gap-2">
-            <button onClick={cancel} disabled={busy} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">取消</button>
+            <button onClick={cancel} disabled={busy} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300">{t("取消")}</button>
             <button onClick={mode === 'url' ? submitUrl : submitUpload} disabled={busy} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
               {busy && <RefreshCw className="h-4 w-4 animate-spin" />}
               {busy ? (mode === 'url' ? '下载中…' : '上传中…') : (mode === 'url' ? '创建并下载' : '上传')}
@@ -269,19 +271,19 @@ export default function ISOs() {
         {isos.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><Disc3 className="h-7 w-7" /></div>
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无 ISO</div>
-            <div className="mt-1 text-xs text-gray-400">点击「新建 ISO」添加第一个镜像</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{t("暂无 ISO")}</div>
+            <div className="mt-1 text-xs text-gray-400">{t("点击「新建 ISO」添加第一个镜像")}</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[720px] text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">名称</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("名称")}</th>
                   <th className="px-4 py-3 text-left font-medium">OS</th>
-                  <th className="px-4 py-3 text-left font-medium">大小</th>
-                  <th className="px-4 py-3 text-left font-medium">创建时间</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("大小")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("创建时间")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -295,7 +297,7 @@ export default function ISOs() {
                     <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{formatSize(iso.size_bytes)}</td>
                     <td className="px-4 py-3 text-xs text-gray-600 dark:text-gray-300">{iso.created_at || '—'}</td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => remove(iso.id, iso.name)} className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"><Trash2 className="h-3 w-3" />删除</button>
+                      <button onClick={() => remove(iso.id, iso.name)} className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400"><Trash2 className="h-3 w-3" />{t("删除")}</button>
                     </td>
                   </tr>
                 ))}
@@ -308,10 +310,10 @@ export default function ISOs() {
       <div className="rounded-xl border border-gray-200 bg-white p-5 dark:border-gray-700 dark:bg-gray-900">
         <h2 className="mb-1 flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
           <LifeBuoy className="h-4 w-4" />
-          挂载到容器（救援模式）
+          {t("挂载到容器（救援模式）")}
         </h2>
         <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
-          将 ISO 挂载到 KVM 虚拟机并从 ISO 引导进入救援模式；卸载后恢复系统盘引导。仅支持 KVM 虚拟机。
+          {t("将 ISO 挂载到 KVM 虚拟机并从 ISO 引导进入救援模式；卸载后恢复系统盘引导。仅支持 KVM 虚拟机。")}
         </p>
         {mountError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-900/30 dark:text-red-400">{mountError}</div>}
         {mountNotice && <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700 dark:border-green-800 dark:bg-green-900/30 dark:text-green-400">{mountNotice}</div>}
@@ -324,21 +326,21 @@ export default function ISOs() {
               disabled={mounting || unmounting}
               className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
             >
-              <option value="">选择 ISO</option>
+              <option value="">{t("选择 ISO")}</option>
               {isos.map((iso) => (
                 <option key={iso.id} value={iso.id}>{iso.name}</option>
               ))}
             </select>
           </div>
           <div>
-            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">容器（仅 KVM）</label>
+            <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("容器（仅 KVM）")}</label>
             <select
               value={mountContainerId}
               onChange={(e) => setMountContainerId(e.target.value)}
               disabled={mounting || unmounting}
               className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
             >
-              <option value="">选择容器</option>
+              <option value="">{t("选择容器")}</option>
               {containers.map((c) => (
                 <option key={c.id} value={String(c.id)}>
                   {c.name}{c.rescue_enabled ? '（救援模式中）' : ''}
@@ -368,7 +370,7 @@ export default function ISOs() {
           </div>
         </div>
         {containers.length === 0 && (
-          <div className="mt-3 text-xs text-gray-400">暂无 KVM 虚拟机可挂载</div>
+          <div className="mt-3 text-xs text-gray-400">{t("暂无 KVM 虚拟机可挂载")}</div>
         )}
       </div>
     </div>

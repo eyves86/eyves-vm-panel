@@ -29,6 +29,7 @@ import {
 } from '../services/api'
 import { copyToClipboard } from '../utils/clipboard'
 import { useDialog } from '../components/Dialog'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const INPUT_CLASS =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white'
@@ -80,6 +81,7 @@ function formatDuration(ms: number) {
 }
 
 export default function BackupPlans() {
+  const { t } = useLanguage()
   const { confirm, alert } = useDialog()
   const [plans, setPlans] = useState<BackupPlan[]>([])
   const [containers, setContainers] = useState<Container[]>([])
@@ -251,10 +253,10 @@ export default function BackupPlans() {
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
             <CalendarClock className="h-5 w-5" />
-            备份计划
+            {t("备份计划")}
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            按 cron 定时为指定容器或全部运行中容器创建磁盘备份，并按保留份数自动轮换
+            {t("按 cron 定时为指定容器或全部运行中容器创建磁盘备份，并按保留份数自动轮换")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -267,14 +269,14 @@ export default function BackupPlans() {
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
           >
             <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-            刷新
+            {t("刷新")}
           </button>
           <button
             onClick={openCreate}
             className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
           >
             <Plus className="h-4 w-4" />
-            新建计划
+            {t("新建计划")}
           </button>
         </div>
       </div>
@@ -291,10 +293,10 @@ export default function BackupPlans() {
             <div>
               <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
                 <CloudUpload className="h-4 w-4" />
-                异地备份（SSH/SCP）
+                {t("异地备份（SSH/SCP）")}
               </h2>
               <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                把每份实例备份额外复制到自备的备份服务器，应对本机磁盘损坏 / 整机丢失
+                {t("把每份实例备份额外复制到自备的备份服务器，应对本机磁盘损坏 / 整机丢失")}
               </p>
             </div>
             <label className="flex shrink-0 items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
@@ -304,14 +306,14 @@ export default function BackupPlans() {
                 onChange={(e) => setRemote({ ...remote, enabled: e.target.checked })}
                 className="h-4 w-4"
               />
-              启用
+              {t("启用")}
             </label>
           </div>
 
           <div className="space-y-3 px-4 py-4 text-xs">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">主机</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("主机")}</label>
                 <input
                   type="text"
                   value={remote.host}
@@ -321,7 +323,7 @@ export default function BackupPlans() {
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">端口</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("端口")}</label>
                 <input
                   type="number"
                   min={1}
@@ -332,7 +334,7 @@ export default function BackupPlans() {
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">SSH 用户</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("SSH 用户")}</label>
                 <input
                   type="text"
                   value={remote.user}
@@ -342,7 +344,7 @@ export default function BackupPlans() {
                 />
               </div>
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">远端目录</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("远端目录")}</label>
                 <input
                   type="text"
                   value={remote.remote_dir}
@@ -355,13 +357,13 @@ export default function BackupPlans() {
 
             <div>
               <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">
-                私钥路径（可选，留空使用面板数据目录内的默认密钥）
+                {t("私钥路径（可选，留空使用面板数据目录内的默认密钥）")}
               </label>
               <input
                 type="text"
                 value={remote.key_path || ''}
                 onChange={(e) => setRemote({ ...remote, key_path: e.target.value })}
-                placeholder="默认：数据目录/ssh/backup_ed25519"
+                placeholder={t("默认：数据目录/ssh/backup_ed25519")}
                 className={`${INPUT_CLASS} font-mono`}
               />
             </div>
@@ -371,14 +373,14 @@ export default function BackupPlans() {
                 <div className="flex items-center justify-between gap-2">
                   <span className="flex items-center gap-1.5 font-medium text-gray-700 dark:text-gray-200">
                     <KeyRound className="h-3.5 w-3.5" />
-                    请把下面公钥加入远端 ~/.ssh/authorized_keys
+                    {t("请把下面公钥加入远端 ~/.ssh/authorized_keys")}
                   </span>
                   <button
                     type="button"
                     onClick={copyRemoteKey}
                     className="shrink-0 rounded border border-gray-200 px-2 py-0.5 text-[11px] text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                   >
-                    复制
+                    {t("复制")}
                   </button>
                 </div>
                 <p className="mt-1.5 break-all font-mono text-[11px] text-gray-600 dark:text-gray-300">
@@ -395,7 +397,7 @@ export default function BackupPlans() {
                     : 'bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300'
                 }`}
               >
-                最近一次同步：{remote.last_result === 'success' ? '成功' : '失败'} · {formatTime(remote.last_run_at)}
+                {t("最近一次同步：")}{remote.last_result === 'success' ? '成功' : '失败'} · {formatTime(remote.last_run_at)}
                 {remote.last_error ? ` · ${remote.last_error}` : ''}
               </div>
             )}
@@ -426,21 +428,21 @@ export default function BackupPlans() {
       <div className="overflow-hidden rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         {plans.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-gray-400">
-            暂无备份计划，点击「新建计划」创建第一个定时备份任务
+            {t("暂无备份计划，点击「新建计划」创建第一个定时备份任务")}
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
-                  <th className="whitespace-nowrap px-4 py-2.5">名称</th>
-                  <th className="whitespace-nowrap px-4 py-2.5">目标</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">{t("名称")}</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">{t("目标")}</th>
                   <th className="whitespace-nowrap px-4 py-2.5">cron</th>
-                  <th className="whitespace-nowrap px-4 py-2.5">保留</th>
-                  <th className="whitespace-nowrap px-4 py-2.5">启用</th>
-                  <th className="whitespace-nowrap px-4 py-2.5">上次运行</th>
-                  <th className="whitespace-nowrap px-4 py-2.5">下次运行</th>
-                  <th className="whitespace-nowrap px-4 py-2.5 text-right">操作</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">{t("保留")}</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">{t("启用")}</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">{t("上次运行")}</th>
+                  <th className="whitespace-nowrap px-4 py-2.5">{t("下次运行")}</th>
+                  <th className="whitespace-nowrap px-4 py-2.5 text-right">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -458,7 +460,7 @@ export default function BackupPlans() {
                         {plan.cron}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5 text-xs text-gray-600 dark:text-gray-300">
-                        {plan.keep} 份
+                        {plan.keep} {t("份")}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5">
                         <span
@@ -491,28 +493,28 @@ export default function BackupPlans() {
                         <div className="flex items-center justify-end gap-1">
                           <button
                             onClick={() => runNow(plan)}
-                            title="立即运行"
+                            title={t("立即运行")}
                             className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white"
                           >
                             <Play className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => setHistoryPlan(plan)}
-                            title="运行记录"
+                            title={t("运行记录")}
                             className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white"
                           >
                             <History className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => openEdit(plan)}
-                            title="编辑"
+                            title={t("编辑")}
                             className="rounded p-1.5 text-gray-500 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white"
                           >
                             <Pencil className="h-4 w-4" />
                           </button>
                           <button
                             onClick={() => remove(plan)}
-                            title="删除"
+                            title={t("删除")}
                             className="rounded p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
                           >
                             <Trash2 className="h-4 w-4" />
@@ -542,7 +544,7 @@ export default function BackupPlans() {
               <button
                 onClick={() => setForm(null)}
                 className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white"
-                aria-label="关闭"
+                aria-label={t("关闭")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -550,24 +552,24 @@ export default function BackupPlans() {
 
             <div className="mt-4 space-y-3 text-xs">
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">名称</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("名称")}</label>
                 <input
                   type="text"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="留空自动生成"
+                  placeholder={t("留空自动生成")}
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 />
               </div>
 
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">备份目标</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("备份目标")}</label>
                 <select
                   value={form.containerId}
                   onChange={(e) => setForm({ ...form, containerId: Number(e.target.value) })}
                   className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white"
                 >
-                  <option value={0}>全部运行中容器</option>
+                  <option value={0}>{t("全部运行中容器")}</option>
                   {containers.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}（#{c.id}）
@@ -577,7 +579,7 @@ export default function BackupPlans() {
               </div>
 
               <div>
-                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">cron 表达式（分 时 日 月 周）</label>
+                <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("cron 表达式（分 时 日 月 周）")}</label>
                 <input
                   type="text"
                   value={form.cron}
@@ -605,7 +607,7 @@ export default function BackupPlans() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">保留份数</label>
+                  <label className="mb-1 block font-medium text-gray-700 dark:text-gray-200">{t("保留份数")}</label>
                   <input
                     type="number"
                     min={1}
@@ -623,7 +625,7 @@ export default function BackupPlans() {
                       onChange={(e) => setForm({ ...form, enabled: e.target.checked })}
                       className="h-4 w-4"
                     />
-                    启用该计划
+                    {t("启用该计划")}
                   </label>
                 </div>
               </div>
@@ -636,7 +638,7 @@ export default function BackupPlans() {
                 disabled={saving}
                 className="rounded-md border border-gray-200 px-3 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
               >
-                取消
+                {t("取消")}
               </button>
               <button
                 type="button"
@@ -661,12 +663,12 @@ export default function BackupPlans() {
           >
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-gray-700">
               <h3 className="text-sm font-semibold text-black dark:text-white">
-                运行记录 · {historyPlan.name}
+                {t("运行记录 ·")} {historyPlan.name}
               </h3>
               <button
                 onClick={() => setHistoryPlan(null)}
                 className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white"
-                aria-label="关闭"
+                aria-label={t("关闭")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -674,7 +676,7 @@ export default function BackupPlans() {
             <div className="max-h-[70vh] overflow-y-auto px-5 py-4">
               {!historyPlan.runs || historyPlan.runs.length === 0 ? (
                 <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-400 dark:border-gray-700 dark:bg-gray-800">
-                  该计划还没有运行记录
+                  {t("该计划还没有运行记录")}
                 </div>
               ) : (
                 <ul className="space-y-2">
@@ -692,10 +694,10 @@ export default function BackupPlans() {
                             </span>
                             <span className="font-mono text-gray-500">{formatTime(run.at)}</span>
                           </div>
-                          <span className="text-gray-500">耗时 {formatDuration(run.duration_ms)}</span>
+                          <span className="text-gray-500">{t("耗时")} {formatDuration(run.duration_ms)}</span>
                         </div>
                         <div className="mt-1 text-gray-600 dark:text-gray-300">
-                          成功 {run.backups} 份{run.failed > 0 ? ` · 失败 ${run.failed} 份` : ''}
+                          {t("成功")} {run.backups} {t("份")}{run.failed > 0 ? ` · 失败 ${run.failed} 份` : ''}
                         </div>
                         {run.error && (
                           <p className="mt-1 break-all text-[11px] text-red-600 dark:text-red-400">{run.error}</p>

@@ -10,6 +10,7 @@ import {
   type WebhookSubscription,
 } from '../services/api'
 import { copyToClipboard } from '../utils/clipboard'
+import { useLanguage } from '../contexts/LanguageContext'
 
 interface WebhookForm {
   name: string
@@ -32,6 +33,7 @@ function isDeliverySuccess(status: string | undefined): boolean {
 }
 
 export default function Webhooks() {
+  const { t } = useLanguage()
   const dialog = useDialog()
   const [webhooks, setWebhooks] = useState<WebhookSubscription[]>([])
   const [loading, setLoading] = useState(true)
@@ -208,10 +210,10 @@ export default function Webhooks() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <Webhook className="h-5 w-5" />Webhook 事件订阅
+            <Webhook className="h-5 w-5" />{t("Webhook 事件订阅")}
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            管理事件回调订阅；连续失败达 10 次将被自动停用
+            {t("管理事件回调订阅；连续失败达 10 次将被自动停用")}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -220,10 +222,10 @@ export default function Webhooks() {
             disabled={refreshing}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{t("刷新")}
           </button>
           <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm font-medium text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400">
-            <Plus className="h-4 w-4" />新建订阅
+            <Plus className="h-4 w-4" />{t("新建订阅")}
           </button>
         </div>
       </div>
@@ -238,20 +240,20 @@ export default function Webhooks() {
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400">
               <Webhook className="h-7 w-7" />
             </div>
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">暂无 Webhook 订阅</div>
-            <div className="mt-1 text-xs text-gray-400">点击右上角「新建订阅」创建第一个事件回调</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-300">{t("暂无 Webhook 订阅")}</div>
+            <div className="mt-1 text-xs text-gray-400">{t("点击右上角「新建订阅」创建第一个事件回调")}</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">名称</th>
-                  <th className="px-4 py-3 text-left font-medium">事件类型</th>
-                  <th className="px-4 py-3 text-left font-medium">状态</th>
-                  <th className="px-4 py-3 text-left font-medium">连续失败</th>
-                  <th className="px-4 py-3 text-left font-medium">最近投递</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("名称")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("事件类型")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("状态")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("连续失败")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("最近投递")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -269,7 +271,7 @@ export default function Webhooks() {
                           ))}
                         </div>
                       ) : (
-                        <span className="text-xs text-gray-400">全部事件</span>
+                        <span className="text-xs text-gray-400">{t("全部事件")}</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -278,12 +280,12 @@ export default function Webhooks() {
                           className="inline-flex items-center gap-1 rounded bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600 dark:bg-red-900/30 dark:text-red-400"
                           title={hook.auto_disabled_reason}
                         >
-                          <AlertTriangle className="h-3 w-3" />已自动停用
+                          <AlertTriangle className="h-3 w-3" />{t("已自动停用")}
                         </span>
                       ) : hook.enabled ? (
-                        <span className="inline-flex items-center rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">启用</span>
+                        <span className="inline-flex items-center rounded bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">{t("启用")}</span>
                       ) : (
-                        <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">已停用</span>
+                        <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-500 dark:bg-gray-800 dark:text-gray-400">{t("已停用")}</span>
                       )}
                       {hook.auto_disabled_reason && (
                         <div className="mt-1 max-w-[200px] truncate text-xs text-red-500 dark:text-red-400" title={hook.auto_disabled_reason}>{hook.auto_disabled_reason}</div>
@@ -291,7 +293,7 @@ export default function Webhooks() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-medium ${(hook.consecutive_failures || 0) >= 10 ? 'text-red-600 dark:text-red-400' : (hook.consecutive_failures || 0) > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'}`}>
-                        {hook.consecutive_failures || 0} 次
+                        {hook.consecutive_failures || 0} {t("次")}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -305,7 +307,7 @@ export default function Webhooks() {
                           )}
                         </div>
                       ) : (
-                        <span className="text-xs text-gray-400">尚未投递</span>
+                        <span className="text-xs text-gray-400">{t("尚未投递")}</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
@@ -314,7 +316,7 @@ export default function Webhooks() {
                           onClick={() => { void test(hook) }}
                           disabled={testingId === hook.id}
                           className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-blue-600 hover:bg-blue-50 dark:text-blue-400 dark:hover:bg-blue-900/30 transition-colors disabled:opacity-50"
-                          title="发送一次测试事件"
+                          title={t("发送一次测试事件")}
                         >
                           <Send className={`h-3.5 w-3.5 ${testingId === hook.id ? 'animate-pulse' : ''}`} />
                           {testingId === hook.id ? '投递中…' : '测试'}
@@ -322,18 +324,18 @@ export default function Webhooks() {
                         <button
                           onClick={() => openEdit(hook)}
                           className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 transition-colors"
-                          title="编辑订阅"
+                          title={t("编辑订阅")}
                         >
                           <Pencil className="h-3.5 w-3.5" />
-                          编辑
+                          {t("编辑")}
                         </button>
                         <button
                           onClick={() => { void remove(hook) }}
                           className="inline-flex items-center gap-1 px-2 py-1.5 rounded text-xs text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-900/30 transition-colors"
-                          title="删除订阅"
+                          title={t("删除订阅")}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
-                          删除
+                          {t("删除")}
                         </button>
                       </div>
                     </td>
@@ -350,7 +352,7 @@ export default function Webhooks() {
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">新建 Webhook 订阅</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("新建 Webhook 订阅")}</h3>
               <button onClick={() => { if (!createdSecret) closeCreate() }} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
                 <X className="w-4 h-4" />
               </button>
@@ -359,10 +361,10 @@ export default function Webhooks() {
             {createdSecret ? (
               <div className="flex-1 overflow-y-auto p-5 space-y-4">
                 <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-700 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300">
-                  订阅「{createdSecret.name}」已创建。以下签名密钥（Secret）<span className="font-semibold">仅显示这一次</span>，请立即妥善保存，之后将不会再显示。
+                  {t("订阅「")}{createdSecret.name}{t("」已创建。以下签名密钥（Secret）")}<span className="font-semibold">{t("仅显示这一次")}</span>{t("，请立即妥善保存，之后将不会再显示。")}
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">签名密钥（Secret）</label>
+                  <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("签名密钥（Secret）")}</label>
                   <div className="flex items-center gap-2">
                     <code className="min-w-0 flex-1 break-all rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-xs text-black dark:border-gray-700 dark:bg-gray-800 dark:text-white">
                       {createdSecret.secret}
@@ -370,9 +372,9 @@ export default function Webhooks() {
                     <button
                       onClick={() => { void copySecret(createdSecret.secret) }}
                       className="shrink-0 inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-2 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
-                      title="复制 Secret"
+                      title={t("复制 Secret")}
                     >
-                      <Copy className="h-3.5 w-3.5" />复制
+                      <Copy className="h-3.5 w-3.5" />{t("复制")}
                     </button>
                   </div>
                 </div>
@@ -381,17 +383,17 @@ export default function Webhooks() {
               <>
                 <div className="flex-1 overflow-y-auto p-5 space-y-4">
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
                     <input
                       type="text"
                       value={createForm.name}
                       onChange={(e) => setCreateForm((f) => ({ ...f, name: e.target.value }))}
-                      placeholder="部署通知"
+                      placeholder={t("部署通知")}
                       className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 text-sm outline-none focus:border-gray-400"
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">回调 URL <span className="text-red-500">*</span></label>
+                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("回调 URL")} <span className="text-red-500">*</span></label>
                     <input
                       type="text"
                       value={createForm.url}
@@ -401,7 +403,7 @@ export default function Webhooks() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">事件类型（逗号分隔，留空 = 订阅全部事件）</label>
+                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("事件类型（逗号分隔，留空 = 订阅全部事件）")}</label>
                     <input
                       type="text"
                       value={createForm.eventTypes}
@@ -412,8 +414,8 @@ export default function Webhooks() {
                   </div>
                   <div className="flex items-center justify-between rounded-md border border-gray-200 dark:border-gray-700 px-3 py-2.5">
                     <div>
-                      <div className="text-sm text-black dark:text-white">创建后立即启用</div>
-                      <div className="mt-0.5 text-xs text-gray-400">关闭则创建为停用状态，稍后可在编辑中开启</div>
+                      <div className="text-sm text-black dark:text-white">{t("创建后立即启用")}</div>
+                      <div className="mt-0.5 text-xs text-gray-400">{t("关闭则创建为停用状态，稍后可在编辑中开启")}</div>
                     </div>
                     <button
                       type="button"
@@ -426,7 +428,7 @@ export default function Webhooks() {
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-700 px-5 py-3">
-                  <button onClick={closeCreate} disabled={creating} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">取消</button>
+                  <button onClick={closeCreate} disabled={creating} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">{t("取消")}</button>
                   <button
                     onClick={() => { void submitCreate() }}
                     disabled={creating}
@@ -445,7 +447,7 @@ export default function Webhooks() {
                   onClick={() => { void finishCreate() }}
                   className="inline-flex items-center gap-1.5 px-3 py-2 text-sm bg-brand-600 text-white rounded-md hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
                 >
-                  我已保存，关闭
+                  {t("我已保存，关闭")}
                 </button>
               </div>
             )}
@@ -458,14 +460,14 @@ export default function Webhooks() {
         <div className="fixed inset-0 bg-black/50 dark:bg-black/70 flex items-center justify-center z-50 p-4">
           <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-700 shadow-xl w-full max-w-lg max-h-[85vh] overflow-hidden flex flex-col">
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">编辑 Webhook 订阅</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("编辑 Webhook 订阅")}</h3>
               <button onClick={() => setEditTarget(null)} className="p-1 text-gray-400 hover:text-black dark:hover:text-white rounded">
                 <X className="w-4 h-4" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-5 space-y-4">
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={editForm.name}
@@ -474,7 +476,7 @@ export default function Webhooks() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">回调 URL <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("回调 URL")} <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={editForm.url}
@@ -483,7 +485,7 @@ export default function Webhooks() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">事件类型（逗号分隔，清空 = 恢复订阅全部事件）</label>
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("事件类型（逗号分隔，清空 = 恢复订阅全部事件）")}</label>
                 <input
                   type="text"
                   value={editForm.eventTypes}
@@ -494,8 +496,8 @@ export default function Webhooks() {
               </div>
               <div className="flex items-center justify-between rounded-md border border-gray-200 dark:border-gray-700 px-3 py-2.5">
                 <div>
-                  <div className="text-sm text-black dark:text-white">启用订阅</div>
-                  <div className="mt-0.5 text-xs text-gray-400">重新启用时，后端会自动清零连续失败计数</div>
+                  <div className="text-sm text-black dark:text-white">{t("启用订阅")}</div>
+                  <div className="mt-0.5 text-xs text-gray-400">{t("重新启用时，后端会自动清零连续失败计数")}</div>
                 </div>
                 <button
                   type="button"
@@ -508,7 +510,7 @@ export default function Webhooks() {
               </div>
             </div>
             <div className="flex items-center justify-end gap-2 border-t border-gray-200 dark:border-gray-700 px-5 py-3">
-              <button onClick={() => setEditTarget(null)} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">取消</button>
+              <button onClick={() => setEditTarget(null)} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800 rounded-md">{t("取消")}</button>
               <button
                 onClick={() => { void submitEdit() }}
                 disabled={savingEdit}

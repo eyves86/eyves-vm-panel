@@ -11,8 +11,10 @@ import {
   migrateImport,
   MigrateBundle,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 export default function NodeMigration() {
+  const { t } = useLanguage()
   const { isSubUser } = useAuth()
   const [containers, setContainers] = useState<Container[]>([])
   const [loading, setLoading] = useState(true)
@@ -153,25 +155,25 @@ export default function NodeMigration() {
 
   if (isSubUser) {
     return (
-      <div className="p-8 text-center text-sm text-gray-500">子用户无权访问节点迁移功能</div>
+      <div className="p-8 text-center text-sm text-gray-500">{t("子用户无权访问节点迁移功能")}</div>
     )
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-black">节点迁移</h1>
+        <h1 className="text-xl font-semibold text-black">{t("节点迁移")}</h1>
         <button
           onClick={() => { fetchContainers(); fetchNodes() }}
           className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
         >
           <RefreshCw className="w-4 h-4" />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
       {/* 方式一：在线迁移 */}
-      <h2 className="text-sm font-semibold text-black">在线迁移</h2>
+      <h2 className="text-sm font-semibold text-black">{t("在线迁移")}</h2>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
           <Info className="w-4 h-4 text-gray-500" />
@@ -183,7 +185,7 @@ export default function NodeMigration() {
         <div className="p-4 space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
             <div>
-              <label className="mb-1 block text-xs text-gray-500">选择容器</label>
+              <label className="mb-1 block text-xs text-gray-500">{t("选择容器")}</label>
               <select
                 value={selectedContainerId}
                 onChange={(e) => changeContainer(e.target.value)}
@@ -198,7 +200,7 @@ export default function NodeMigration() {
               </select>
             </div>
             <div>
-              <label className="mb-1 block text-xs text-gray-500">目标节点</label>
+              <label className="mb-1 block text-xs text-gray-500">{t("目标节点")}</label>
               <select
                 value={targetNodeId}
                 onChange={(e) => setTargetNodeId(e.target.value)}
@@ -225,7 +227,7 @@ export default function NodeMigration() {
               onChange={(e) => setForceMigrate(e.target.checked)}
               className="h-4 w-4"
             />
-            强制迁移（源节点与目标节点不属于同一集群时仍继续）
+            {t("强制迁移（源节点与目标节点不属于同一集群时仍继续）")}
           </label>
           <button
             onClick={handleMigrate}
@@ -244,7 +246,7 @@ export default function NodeMigration() {
       </div>
 
       {/* 方式二：文件迁移 */}
-      <h2 className="text-sm font-semibold text-black">文件迁移</h2>
+      <h2 className="text-sm font-semibold text-black">{t("文件迁移")}</h2>
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
           <Info className="w-4 h-4 text-gray-500" />
@@ -254,20 +256,20 @@ export default function NodeMigration() {
           </p>
         </div>
         {loading ? (
-          <div className="p-8 text-center text-sm text-gray-500">加载中...</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("加载中...")}</div>
         ) : containers.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无容器</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无容器")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
-                  <th className="px-4 py-2.5">名称</th>
-                  <th className="px-4 py-2.5">类型</th>
-                  <th className="px-4 py-2.5">模板</th>
-                  <th className="px-4 py-2.5">CPU/内存</th>
+                  <th className="px-4 py-2.5">{t("名称")}</th>
+                  <th className="px-4 py-2.5">{t("类型")}</th>
+                  <th className="px-4 py-2.5">{t("模板")}</th>
+                  <th className="px-4 py-2.5">{t("CPU/内存")}</th>
                   <th className="px-4 py-2.5">IP</th>
-                  <th className="px-4 py-2.5">操作</th>
+                  <th className="px-4 py-2.5">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -276,17 +278,17 @@ export default function NodeMigration() {
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-800">{c.name}</td>
                     <td className="px-4 py-2.5 text-xs text-gray-600">{c.virtualization?.toUpperCase()}</td>
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{c.template}</td>
-                    <td className="px-4 py-2.5 text-xs text-gray-600">{c.vcpu}核/{c.ram_mb}MB</td>
+                    <td className="px-4 py-2.5 text-xs text-gray-600">{c.vcpu}{t("核/")}{c.ram_mb}MB</td>
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-600">{c.ip || '-'}</td>
                     <td className="px-4 py-2.5">
                       <button
                         onClick={() => handleExport(c)}
                         disabled={busy}
                         className="inline-flex items-center gap-1 rounded-md border border-gray-300 px-2.5 py-1.5 text-xs text-gray-700 hover:bg-gray-50 disabled:opacity-60"
-                        title="导出迁移包"
+                        title={t("导出迁移包")}
                       >
                         <Download className="h-3.5 w-3.5" />
-                        导出迁移包
+                        {t("导出迁移包")}
                       </button>
                     </td>
                   </tr>
@@ -299,12 +301,12 @@ export default function NodeMigration() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-          <h2 className="text-sm font-semibold text-black">导入迁移包</h2>
+          <h2 className="text-sm font-semibold text-black">{t("导入迁移包")}</h2>
         </div>
         <div className="p-4 space-y-3">
           <label className="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed border-gray-300 px-4 py-6 text-sm text-gray-500 hover:border-gray-400 hover:bg-gray-50 cursor-pointer">
             <FileJson className="w-5 h-5" />
-            {fileName ? <span className="font-mono">{fileName}</span> : <span>点击选择 .migrate.json 迁移包文件</span>}
+            {fileName ? <span className="font-mono">{fileName}</span> : <span>{t("点击选择 .migrate.json 迁移包文件")}</span>}
             <input
               type="file"
               accept=".json,application/json"
@@ -317,8 +319,8 @@ export default function NodeMigration() {
           </label>
           {importBundle && (
             <div className="rounded-md border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-800">
-              待导入：<span className="font-mono">{importBundle.container.name}</span>（{importBundle.container.virtualization?.toUpperCase()}，
-              {importBundle.container.vcpu}核/{importBundle.container.ram_mb}MB，
+              {t("待导入：")}<span className="font-mono">{importBundle.container.name}</span>（{importBundle.container.virtualization?.toUpperCase()}，
+              {importBundle.container.vcpu}{t("核/")}{importBundle.container.ram_mb}MB，
               模板 <span className="font-mono">{importBundle.container.template}</span>）
             </div>
           )}
@@ -328,7 +330,7 @@ export default function NodeMigration() {
             className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50"
           >
             <Upload className="w-4 h-4" />
-            导入容器
+            {t("导入容器")}
           </button>
           {message && (
             <p className={`text-xs ${message.type === 'ok' ? 'text-emerald-600' : 'text-red-600'}`}>{message.text}</p>

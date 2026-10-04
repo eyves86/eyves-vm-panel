@@ -11,6 +11,7 @@ import {
   type SSHKey,
   type SSHKeySummary,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const inputCls = 'w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black dark:border-gray-700 dark:bg-gray-950 dark:text-white'
 
@@ -19,16 +20,18 @@ function errMessage(err: unknown, fallback: string): string {
 }
 
 function TypeBadge({ type }: { type: string }) {
+  const { t } = useLanguage()
   if (type === 'admin') {
-    return <span className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">管理员</span>
+    return <span className="inline-flex items-center rounded bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">{t("管理员")}</span>
   }
   if (type === 'subuser') {
-    return <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">子用户</span>
+    return <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">{t("子用户")}</span>
   }
   return <span className="inline-flex items-center rounded bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">{type || '—'}</span>
 }
 
 export default function SSHKeys() {
+  const { t } = useLanguage()
   const dialog = useDialog()
   const [keys, setKeys] = useState<SSHKeySummary[]>([])
   const [loading, setLoading] = useState(true)
@@ -179,9 +182,9 @@ export default function SSHKeys() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
-            <KeyRound className="h-5 w-5" />SSH 公钥
+            <KeyRound className="h-5 w-5" />{t("SSH 公钥")}
           </h1>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">托管 SSH 公钥，用于虚拟机/容器 SSH 登录授权</p>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">{t("托管 SSH 公钥，用于虚拟机/容器 SSH 登录授权")}</p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -189,10 +192,10 @@ export default function SSHKeys() {
             disabled={refreshing}
             className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
           >
-            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />刷新
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />{t("刷新")}
           </button>
           <button onClick={openCreate} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700 dark:bg-brand-500 dark:text-white">
-            <Plus className="h-4 w-4" />新建公钥
+            <Plus className="h-4 w-4" />{t("新建公钥")}
           </button>
         </div>
       </div>
@@ -205,20 +208,20 @@ export default function SSHKeys() {
         {keys.length === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400"><KeyRound className="h-7 w-7" /></div>
-            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">暂无 SSH 公钥</div>
-            <div className="mt-1 text-xs text-gray-400">点击「新建公钥」添加第一个公钥</div>
+            <div className="text-sm font-medium text-gray-700 dark:text-gray-200">{t("暂无 SSH 公钥")}</div>
+            <div className="mt-1 text-xs text-gray-400">{t("点击「新建公钥」添加第一个公钥")}</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[820px] text-sm">
               <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">名称</th>
-                  <th className="px-4 py-3 text-left font-medium">指纹</th>
-                  <th className="px-4 py-3 text-left font-medium">类型</th>
-                  <th className="px-4 py-3 text-left font-medium">创建时间</th>
-                  <th className="px-4 py-3 text-left font-medium">最近使用</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("名称")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("指纹")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("类型")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("创建时间")}</th>
+                  <th className="px-4 py-3 text-left font-medium">{t("最近使用")}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -239,19 +242,19 @@ export default function SSHKeys() {
                           onClick={() => void openView(k)}
                           className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                         >
-                          <Eye className="h-3 w-3" />查看
+                          <Eye className="h-3 w-3" />{t("查看")}
                         </button>
                         <button
                           onClick={() => openRename(k)}
                           className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                         >
-                          <Pencil className="h-3 w-3" />重命名
+                          <Pencil className="h-3 w-3" />{t("重命名")}
                         </button>
                         <button
                           onClick={() => void removeKey(k)}
                           className="inline-flex items-center gap-1 rounded border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-950"
                         >
-                          <Trash2 className="h-3 w-3" />删除
+                          <Trash2 className="h-3 w-3" />{t("删除")}
                         </button>
                       </div>
                     </td>
@@ -268,7 +271,7 @@ export default function SSHKeys() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
           <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">新建 SSH 公钥</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("新建 SSH 公钥")}</h3>
               <button onClick={() => setCreateOpen(false)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
@@ -277,7 +280,7 @@ export default function SSHKeys() {
               {createError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{createError}</div>}
               <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={createForm.name}
@@ -287,7 +290,7 @@ export default function SSHKeys() {
                   />
                 </div>
                 <div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">公钥内容 <span className="text-red-500">*</span></label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("公钥内容")} <span className="text-red-500">*</span></label>
                   <textarea
                     value={createForm.public_key}
                     onChange={(e) => setCreateForm((d) => ({ ...d, public_key: e.target.value }))}
@@ -295,12 +298,12 @@ export default function SSHKeys() {
                     rows={5}
                     className={`${inputCls} font-mono text-xs`}
                   />
-                  <p className="mt-1 text-xs text-gray-400">支持 ssh-rsa / ssh-ed25519 等格式的公钥</p>
+                  <p className="mt-1 text-xs text-gray-400">{t("支持 ssh-rsa / ssh-ed25519 等格式的公钥")}</p>
                 </div>
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
-              <button onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
+              <button onClick={() => setCreateOpen(false)} disabled={creating} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("取消")}</button>
               <button onClick={submitCreate} disabled={creating} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {creating && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {creating ? '创建中…' : '创建'}
@@ -315,7 +318,7 @@ export default function SSHKeys() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
           <div className="flex w-full max-w-md flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">重命名公钥</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("重命名公钥")}</h3>
               <button onClick={() => setRenameKey(null)} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
@@ -323,18 +326,18 @@ export default function SSHKeys() {
             <div className="flex-1 overflow-auto px-5 py-4">
               {renameError && <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">{renameError}</div>}
               <div>
-                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">名称 <span className="text-red-500">*</span></label>
+                <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("名称")} <span className="text-red-500">*</span></label>
                 <input
                   type="text"
                   value={renameName}
                   onChange={(e) => setRenameName(e.target.value)}
                   className={inputCls}
                 />
-                <p className="mt-1 text-xs text-gray-400">仅支持修改名称，公钥内容不可变更</p>
+                <p className="mt-1 text-xs text-gray-400">{t("仅支持修改名称，公钥内容不可变更")}</p>
               </div>
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
-              <button onClick={() => setRenameKey(null)} disabled={savingRename} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">取消</button>
+              <button onClick={() => setRenameKey(null)} disabled={savingRename} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("取消")}</button>
               <button onClick={submitRename} disabled={savingRename} className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white">
                 {savingRename && <RefreshCw className="h-4 w-4 animate-spin" />}
                 {savingRename ? '保存中…' : '保存'}
@@ -349,7 +352,7 @@ export default function SSHKeys() {
         <div className="fixed inset-0 flex items-center justify-center bg-black/50 p-4 dark:bg-black/70 z-50">
           <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
             <div className="flex items-center justify-between border-b border-gray-200 px-5 py-3 dark:border-gray-700">
-              <h3 className="text-sm font-semibold text-black dark:text-white">公钥详情 - {viewTarget.name}</h3>
+              <h3 className="text-sm font-semibold text-black dark:text-white">{t("公钥详情 -")} {viewTarget.name}</h3>
               <button onClick={closeView} className="rounded p-1 text-gray-400 hover:text-black dark:hover:text-white">
                 <X className="h-4 w-4" />
               </button>
@@ -365,23 +368,23 @@ export default function SSHKeys() {
                 <>
                   <div className="mb-4 grid gap-x-6 gap-y-2 rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-xs text-gray-600 sm:grid-cols-2 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-400">指纹：</span>
+                      <span className="text-gray-400">{t("指纹：")}</span>
                       <span className="font-mono">{viewDetail.fingerprint || '—'}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-400">类型：</span>
+                      <span className="text-gray-400">{t("类型：")}</span>
                       <TypeBadge type={viewDetail.type} />
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-400">创建时间：</span>
+                      <span className="text-gray-400">{t("创建时间：")}</span>
                       <span>{viewDetail.created_at || '—'}</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-400">最近使用：</span>
+                      <span className="text-gray-400">{t("最近使用：")}</span>
                       <span>{viewDetail.last_used_at || '从未使用'}</span>
                     </div>
                   </div>
-                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">公钥内容</label>
+                  <label className="mb-1 block text-xs text-gray-500 dark:text-gray-400">{t("公钥内容")}</label>
                   <div className="relative">
                     <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 font-mono text-xs text-gray-800 dark:border-gray-700 dark:bg-gray-950 dark:text-gray-200">{viewDetail.public_key}</pre>
                   </div>
@@ -389,13 +392,13 @@ export default function SSHKeys() {
               ) : null}
             </div>
             <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
-              <button onClick={closeView} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">关闭</button>
+              <button onClick={closeView} className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-700">{t("关闭")}</button>
               <button
                 onClick={() => void copyPublicKey()}
                 disabled={!viewDetail?.public_key}
                 className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white"
               >
-                <Copy className="h-4 w-4" />复制公钥
+                <Copy className="h-4 w-4" />{t("复制公钥")}
               </button>
             </div>
           </div>

@@ -2,10 +2,12 @@ import { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, FileJson, RefreshCw, ShieldCheck } from 'lucide-react'
 import { AuditLog, exportAuditLogs, getAuditLogsPaged, verifyAuditChain } from '../services/api'
 import { actionLabel } from '../utils/labels'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const PAGE_SIZE = 10
 
 export default function AuditLogs() {
+  const { t } = useLanguage()
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -99,8 +101,8 @@ export default function AuditLogs() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-black">操作日志</h1>
-          <p className="text-sm text-gray-500 mt-1">共 {total} 条操作记录</p>
+          <h1 className="text-xl font-semibold text-black">{t("操作日志")}</h1>
+          <p className="text-sm text-gray-500 mt-1">{t("共")} {total} {t("条操作记录")}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -132,7 +134,7 @@ export default function AuditLogs() {
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
           >
             <RefreshCw className="w-4 h-4" />
-            刷新
+            {t("刷新")}
           </button>
         </div>
       </div>
@@ -145,18 +147,18 @@ export default function AuditLogs() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         {total === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无操作日志</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无操作日志")}</div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium text-gray-500">
-                    <th className="px-4 py-2.5 whitespace-nowrap">时间</th>
-                    <th className="px-4 py-2.5 whitespace-nowrap">用户</th>
-                    <th className="px-4 py-2.5 whitespace-nowrap">操作</th>
-                    <th className="px-4 py-2.5 whitespace-nowrap">目标</th>
-                    <th className="px-4 py-2.5">详情</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">{t("时间")}</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">{t("用户")}</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">{t("操作")}</th>
+                    <th className="px-4 py-2.5 whitespace-nowrap">{t("目标")}</th>
+                    <th className="px-4 py-2.5">{t("详情")}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
@@ -165,9 +167,9 @@ export default function AuditLogs() {
                       <td className="px-4 py-2.5 font-mono text-xs text-gray-500 whitespace-nowrap">{log.time}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         {log.user === 'admin' ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-brand-600 text-white">管理员</span>
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-brand-600 text-white">{t("管理员")}</span>
                         ) : log.user?.startsWith('user:') ? (
-                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-gray-100 text-gray-700">用户</span>
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-medium bg-gray-100 text-gray-700">{t("用户")}</span>
                         ) : (
                           <span className="text-xs text-gray-500">{log.user || '-'}</span>
                         )}
@@ -182,15 +184,15 @@ export default function AuditLogs() {
             </div>
             {total > PAGE_SIZE && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
-                <span className="text-xs text-gray-400">第 {safePage}/{totalPages} 页</span>
+                <span className="text-xs text-gray-400">{t("第")} {safePage}/{totalPages}</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setPage(1)} disabled={safePage === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="首页"><ChevronsLeft className="w-4 h-4" /></button>
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="上一页"><ChevronLeft className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(1)} disabled={safePage === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title={t("首页")}><ChevronsLeft className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title={t("上一页")}><ChevronLeft className="w-4 h-4" /></button>
                   {getPageNumbers(safePage, totalPages).map(n => (
                     <button key={n} onClick={() => setPage(n)} className={`w-7 h-7 text-xs rounded ${n === safePage ? 'bg-brand-600 text-white' : 'border border-gray-200 hover:bg-gray-100'}`}>{n}</button>
                   ))}
-                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="下一页"><ChevronRight className="w-4 h-4" /></button>
-                  <button onClick={() => setPage(totalPages)} disabled={safePage >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="末页"><ChevronsRight className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title={t("下一页")}><ChevronRight className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(totalPages)} disabled={safePage >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title={t("末页")}><ChevronsRight className="w-4 h-4" /></button>
                 </div>
               </div>
             )}

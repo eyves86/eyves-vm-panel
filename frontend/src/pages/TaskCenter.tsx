@@ -25,6 +25,7 @@ import {
   type TaskStats,
 } from '../services/api'
 import { useDialog } from '../components/Dialog'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const PAGE_SIZE = 20
 const STATUS_FILTERS = [
@@ -96,6 +97,7 @@ function formatTime(value?: string) {
 }
 
 export default function TaskCenter() {
+  const { t } = useLanguage()
   const { confirm, alert } = useDialog()
   const [stats, setStats] = useState<TaskStats | null>(null)
   const [liveTasks, setLiveTasks] = useState<Task[]>([])
@@ -212,10 +214,10 @@ export default function TaskCenter() {
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold text-black dark:text-white">
             <ListChecks className="h-5 w-5" />
-            任务中心
+            {t("任务中心")}
           </h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            查看任务队列实时进度、历史执行记录与过程日志
+            {t("查看任务队列实时进度、历史执行记录与过程日志")}
           </p>
         </div>
         <button
@@ -224,7 +226,7 @@ export default function TaskCenter() {
           className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
@@ -236,11 +238,11 @@ export default function TaskCenter() {
 
       {/* 统计概览 */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <StatCard label="历史任务" value={historyStats?.total ?? 0} />
-        <StatCard label="已完成" value={historyStats?.by_status?.completed ?? 0} tone="ok" />
-        <StatCard label="失败" value={historyStats?.by_status?.failed ?? 0} tone="bad" />
-        <StatCard label="已取消" value={historyStats?.by_status?.cancelled ?? 0} />
-        <StatCard label="平均耗时" value={formatDuration(historyStats?.avg_duration_ms ?? 0)} icon={Timer} />
+        <StatCard label={t("历史任务")} value={historyStats?.total ?? 0} />
+        <StatCard label={t("已完成")} value={historyStats?.by_status?.completed ?? 0} tone="ok" />
+        <StatCard label={t("失败")} value={historyStats?.by_status?.failed ?? 0} tone="bad" />
+        <StatCard label={t("已取消")} value={historyStats?.by_status?.cancelled ?? 0} />
+        <StatCard label={t("平均耗时")} value={formatDuration(historyStats?.avg_duration_ms ?? 0)} icon={Timer} />
         <StatCard
           label={`队列（并发 ${live.concurrency ?? '-'}）`}
           value={`${live.active ?? 0} 运行 / ${live.pending ?? 0} 排队`}
@@ -252,12 +254,12 @@ export default function TaskCenter() {
         <div className="flex items-center justify-between border-b border-gray-100 px-4 py-3 dark:border-gray-700">
           <h2 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
             <Loader2 className={`h-4 w-4 ${activeTasks.length ? 'animate-spin text-blue-500' : 'text-gray-400'}`} />
-            队列中的任务
+            {t("队列中的任务")}
           </h2>
-          <span className="text-xs text-gray-400">{activeTasks.length} 个</span>
+          <span className="text-xs text-gray-400">{activeTasks.length} {t("个")}</span>
         </div>
         {activeTasks.length === 0 ? (
-          <div className="px-4 py-6 text-center text-sm text-gray-400">当前没有运行或排队的任务</div>
+          <div className="px-4 py-6 text-center text-sm text-gray-400">{t("当前没有运行或排队的任务")}</div>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-gray-800">
             {activeTasks.map((task) => {
@@ -294,14 +296,14 @@ export default function TaskCenter() {
                       onClick={() => openDetail(task.id)}
                       className="rounded-md border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
                     >
-                      详情
+                      {t("详情")}
                     </button>
                     <button
                       onClick={() => doCancel(task)}
                       className="inline-flex items-center gap-1 rounded-md border border-red-200 px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 dark:border-red-800 dark:text-red-300 dark:hover:bg-red-950"
                     >
                       <Ban className="h-3.5 w-3.5" />
-                      取消
+                      {t("取消")}
                     </button>
                   </div>
                 </li>
@@ -314,7 +316,7 @@ export default function TaskCenter() {
       {/* 历史记录 */}
       <section className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-          <h2 className="text-sm font-semibold text-black dark:text-white">历史执行记录</h2>
+          <h2 className="text-sm font-semibold text-black dark:text-white">{t("历史执行记录")}</h2>
           <div className="flex items-center gap-2">
             <select
               value={statusFilter}
@@ -348,20 +350,20 @@ export default function TaskCenter() {
         </div>
 
         {history.length === 0 ? (
-          <div className="px-4 py-8 text-center text-sm text-gray-400">暂无历史任务记录</div>
+          <div className="px-4 py-8 text-center text-sm text-gray-400">{t("暂无历史任务记录")}</div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-100 bg-gray-50 text-left text-xs font-medium text-gray-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-400">
-                    <th className="whitespace-nowrap px-4 py-2.5">任务</th>
-                    <th className="whitespace-nowrap px-4 py-2.5">类型</th>
-                    <th className="whitespace-nowrap px-4 py-2.5">目标</th>
-                    <th className="whitespace-nowrap px-4 py-2.5">状态</th>
-                    <th className="whitespace-nowrap px-4 py-2.5">触发者</th>
-                    <th className="whitespace-nowrap px-4 py-2.5">耗时</th>
-                    <th className="whitespace-nowrap px-4 py-2.5">结束时间</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("任务")}</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("类型")}</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("目标")}</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("状态")}</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("触发者")}</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("耗时")}</th>
+                    <th className="whitespace-nowrap px-4 py-2.5">{t("结束时间")}</th>
                     <th className="whitespace-nowrap px-4 py-2.5"></th>
                   </tr>
                 </thead>
@@ -404,7 +406,7 @@ export default function TaskCenter() {
                             className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-black dark:hover:text-white"
                           >
                             <FileText className="h-3.5 w-3.5" />
-                            日志
+                            {t("日志")}
                           </button>
                         </td>
                       </tr>
@@ -417,14 +419,14 @@ export default function TaskCenter() {
             {total > PAGE_SIZE && (
               <div className="flex items-center justify-between border-t border-gray-100 bg-gray-50 px-4 py-3 dark:border-gray-700 dark:bg-gray-800">
                 <span className="text-xs text-gray-400">
-                  共 {total} 条 · 第 {safePage}/{totalPages} 页
+                  {t("共")} {total} {t("条 · 第")} {safePage}/{totalPages}
                 </span>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setPage(1)}
                     disabled={safePage === 1}
                     className="p-1 text-gray-400 hover:text-black disabled:opacity-20 dark:hover:text-white"
-                    title="首页"
+                    title={t("首页")}
                   >
                     <ChevronsLeft className="h-4 w-4" />
                   </button>
@@ -432,7 +434,7 @@ export default function TaskCenter() {
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={safePage === 1}
                     className="p-1 text-gray-400 hover:text-black disabled:opacity-20 dark:hover:text-white"
-                    title="上一页"
+                    title={t("上一页")}
                   >
                     <ChevronLeft className="h-4 w-4" />
                   </button>
@@ -441,7 +443,7 @@ export default function TaskCenter() {
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={safePage >= totalPages}
                     className="p-1 text-gray-400 hover:text-black disabled:opacity-20 dark:hover:text-white"
-                    title="下一页"
+                    title={t("下一页")}
                   >
                     <ChevronRight className="h-4 w-4" />
                   </button>
@@ -449,7 +451,7 @@ export default function TaskCenter() {
                     onClick={() => setPage(totalPages)}
                     disabled={safePage >= totalPages}
                     className="p-1 text-gray-400 hover:text-black disabled:opacity-20 dark:hover:text-white"
-                    title="末页"
+                    title={t("末页")}
                   >
                     <ChevronsRight className="h-4 w-4" />
                   </button>
@@ -473,12 +475,12 @@ export default function TaskCenter() {
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-gray-700">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-black dark:text-white">
                 <ListChecks className="h-4 w-4" />
-                任务详情
+                {t("任务详情")}
               </h3>
               <button
                 onClick={() => setDetail(null)}
                 className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white"
-                aria-label="关闭"
+                aria-label={t("关闭")}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -528,10 +530,10 @@ export default function TaskCenter() {
                 )}
 
                 <div className="mt-5">
-                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">过程日志</h4>
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">{t("过程日志")}</h4>
                   {detail.logs.length === 0 ? (
                     <div className="rounded-md border border-gray-200 bg-gray-50 px-3 py-3 text-xs text-gray-400 dark:border-gray-700 dark:bg-gray-800">
-                      该任务没有记录过程日志
+                      {t("该任务没有记录过程日志")}
                     </div>
                   ) : (
                     <ul className="space-y-1">

@@ -4,8 +4,10 @@ import { Camera, RefreshCw, Server, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { deleteContainerSnapshot, getSnapshots, Snapshot } from '../services/api'
 import { useDialog } from '../components/Dialog'
+import { useLanguage } from '../contexts/LanguageContext'
 
 export default function Snapshots() {
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const dialog = useDialog()
   const [snapshots, setSnapshots] = useState<Snapshot[]>([])
@@ -58,8 +60,8 @@ export default function Snapshots() {
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-semibold text-black">快照管理</h1>
-          <p className="mt-1 text-sm text-gray-500">全局快照列表，共 {snapshots.length} 个</p>
+          <h1 className="text-xl font-semibold text-black">{t("快照管理")}</h1>
+          <p className="mt-1 text-sm text-gray-500">{t("全局快照列表，共")} {snapshots.length} {t("个")}</p>
         </div>
         <button
           onClick={() => { setRefreshing(true); fetchData() }}
@@ -67,7 +69,7 @@ export default function Snapshots() {
           className="inline-flex items-center gap-2 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-          刷新
+          {t("刷新")}
         </button>
       </div>
 
@@ -77,19 +79,19 @@ export default function Snapshots() {
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100">
               <Camera className="h-7 w-7 text-gray-400" />
             </div>
-            <div className="text-sm font-medium text-gray-700">暂无快照</div>
+            <div className="text-sm font-medium text-gray-700">{t("暂无快照")}</div>
           </div>
         ) : (
           <table className="w-full min-w-[820px] text-sm">
             <thead className="border-b border-gray-200 bg-gray-50 text-xs text-gray-500">
               <tr>
-                <th className="px-4 py-3 text-left font-medium">容器</th>
-                <th className="px-4 py-3 text-left font-medium">LXC 名称</th>
-                <th className="px-4 py-3 text-left font-medium">快照时间</th>
-                <th className="px-4 py-3 text-left font-medium">类型</th>
-                <th className="px-4 py-3 text-left font-medium">创建者</th>
-                <th className="px-4 py-3 text-right font-medium">大小</th>
-                <th className="px-4 py-3 text-center font-medium">操作</th>
+                <th className="px-4 py-3 text-left font-medium">{t("容器")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("LXC 名称")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("快照时间")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("类型")}</th>
+                <th className="px-4 py-3 text-left font-medium">{t("创建者")}</th>
+                <th className="px-4 py-3 text-right font-medium">{t("大小")}</th>
+                <th className="px-4 py-3 text-center font-medium">{t("操作")}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
@@ -118,7 +120,7 @@ export default function Snapshots() {
                       onClick={() => handleDelete(snapshot)}
                       disabled={deleting === snapshot.id}
                       className="inline-flex items-center justify-center p-1.5 rounded text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50"
-                      title="删除快照"
+                      title={t("删除快照")}
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

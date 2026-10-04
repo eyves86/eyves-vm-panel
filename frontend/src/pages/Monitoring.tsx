@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { RefreshCw, Activity, Server, ShieldAlert, Download } from 'lucide-react'
 import { getContainerMonitoring, getUsageExport, ContainerMonitorRow } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const severityClass: Record<string, string> = {
   critical: 'bg-red-100 text-red-700',
@@ -34,6 +35,7 @@ function formatGB(value: number): string {
 }
 
 export default function Monitoring() {
+  const { t } = useLanguage()
   const [rows, setRows] = useState<ContainerMonitorRow[]>([])
   const [total, setTotal] = useState(0)
   const [summary, setSummary] = useState<{ running: number; abusers: number; abuse_alerts: number }>({ running: 0, abusers: 0, abuse_alerts: 0 })
@@ -111,19 +113,19 @@ export default function Monitoring() {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-black">容器监控</h1>
+        <h1 className="text-xl font-semibold text-black">{t("容器监控")}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="text"
             value={usageTenant}
             onChange={(e) => setUsageTenant(e.target.value)}
-            placeholder="按租户过滤导出（可选）"
+            placeholder={t("按租户过滤导出（可选）")}
             className="h-9 w-48 rounded-md border border-gray-300 px-3 text-sm text-black placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500"
           />
           <button
             onClick={() => void exportUsage()}
             disabled={usageExporting}
-            title="导出全量容器用量 JSON（含配置额度/流量计数/生命周期状态，供财务对账）"
+            title={t("导出全量容器用量 JSON（含配置额度/流量计数/生命周期状态，供财务对账）")}
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm disabled:opacity-50"
           >
             <Download className="w-4 h-4" />
@@ -148,7 +150,7 @@ export default function Monitoring() {
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
           >
             <RefreshCw className="w-4 h-4" />
-            刷新
+            {t("刷新")}
           </button>
         </div>
       </div>
@@ -157,28 +159,28 @@ export default function Monitoring() {
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <Server className="w-4 h-4" />
-            容器总数
+            {t("容器总数")}
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{total}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <Activity className="w-4 h-4" />
-            运行中
+            {t("运行中")}
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{summary.running}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <ShieldAlert className="w-4 h-4" />
-            涉及滥用容器
+            {t("涉及滥用容器")}
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{summary.abusers}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <ShieldAlert className="w-4 h-4" />
-            滥用告警总数
+            {t("滥用告警总数")}
           </div>
           <div className="mt-1 text-2xl font-semibold text-black">{summary.abuse_alerts}</div>
         </div>
@@ -186,28 +188,28 @@ export default function Monitoring() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-black">全部容器实时指标（LXC / KVM）</h2>
-          <span className="text-xs text-gray-500">更新于 {generatedAt || '-'}</span>
+          <h2 className="text-sm font-semibold text-black">{t("全部容器实时指标（LXC / KVM）")}</h2>
+          <span className="text-xs text-gray-500">{t("更新于")} {generatedAt || '-'}</span>
         </div>
         {total === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无容器</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无容器")}</div>
         ) : (
           <>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
-                  <th className="px-4 py-2.5 whitespace-nowrap">容器</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">类型</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">状态</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">归属</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("容器")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("类型")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("状态")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("归属")}</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">IP</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">CPU</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">内存</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">网络(入/出)</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">磁盘(读/写)</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">流量(入/出)</th>
-                  <th className="px-4 py-2.5 whitespace-nowrap">滥用</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("内存")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("网络(入/出)")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("磁盘(读/写)")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("流量(入/出)")}</th>
+                  <th className="px-4 py-2.5 whitespace-nowrap">{t("滥用")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -227,7 +229,7 @@ export default function Monitoring() {
                       </span>
                       {row.policy_blocked && (
                         <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
-                          已封禁
+                          {t("已封禁")}
                         </span>
                       )}
                     </td>
@@ -272,25 +274,25 @@ export default function Monitoring() {
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3">
               <div className="flex items-center gap-2 text-xs text-gray-500">
                 <span>
-                  显示 {(safePage - 1) * pageSize + 1}-{Math.min(safePage * pageSize, total)} / {total}
+                  {t("显示")} {(safePage - 1) * pageSize + 1}-{Math.min(safePage * pageSize, total)} / {total}
                 </span>
                 <select
                   value={pageSize}
                   onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}
                   className="h-7 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700"
-                  title="每页数量"
+                  title={t("每页数量")}
                 >
-                  <option value={10}>10 / 页</option>
-                  <option value={20}>20 / 页</option>
-                  <option value={50}>50 / 页</option>
+                  <option value={10}>{t("10 / 页")}</option>
+                  <option value={20}>{t("20 / 页")}</option>
+                  <option value={50}>{t("50 / 页")}</option>
                 </select>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={() => setPage(1)} disabled={safePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">首页</button>
-                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">上一页</button>
+                <button onClick={() => setPage(1)} disabled={safePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">{t("首页")}</button>
+                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">{t("上一页")}</button>
                 <span className="px-2 text-xs text-gray-500">{safePage} / {totalPages}</span>
-                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">下一页</button>
-                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">末页</button>
+                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">{t("下一页")}</button>
+                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">{t("末页")}</button>
               </div>
             </div>
           </>

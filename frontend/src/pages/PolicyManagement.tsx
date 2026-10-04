@@ -9,6 +9,7 @@ import {
   getPolicies,
   updatePolicy,
 } from '../services/api'
+import { useLanguage } from '../contexts/LanguageContext'
 
 const metricLabels: Record<string, string> = {
   cpu: 'CPU 使用率 (%)',
@@ -47,6 +48,7 @@ const emptyRule = (): PolicyRule => ({
 })
 
 export default function PolicyManagement() {
+  const { t } = useLanguage()
   const { isSubUser } = useAuth()
   const [rules, setRules] = useState<PolicyRule[]>([])
   const [history, setHistory] = useState<PolicyTriggerRecord[]>([])
@@ -127,27 +129,27 @@ export default function PolicyManagement() {
   }
 
   if (isSubUser) {
-    return <div className="p-8 text-center text-sm text-gray-500">子用户无权访问策略管理功能</div>
+    return <div className="p-8 text-center text-sm text-gray-500">{t("子用户无权访问策略管理功能")}</div>
   }
 
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-xl font-semibold text-black">CPU / 带宽策略</h1>
+        <h1 className="text-xl font-semibold text-black">{t("CPU / 带宽策略")}</h1>
         <div className="flex items-center gap-2">
           <button
             onClick={() => { setEditing(emptyRule()); setMessage(null) }}
             className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-3 py-2 text-sm text-white hover:bg-brand-700"
           >
             <Plus className="w-4 h-4" />
-            新建策略
+            {t("新建策略")}
           </button>
           <button
             onClick={fetchData}
             className="inline-flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 text-sm"
           >
             <RefreshCw className="w-4 h-4" />
-            刷新
+            {t("刷新")}
           </button>
         </div>
       </div>
@@ -156,27 +158,27 @@ export default function PolicyManagement() {
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-indigo-500" />
           <p className="text-xs text-gray-600">
-            策略引擎每分钟采样运行中容器的指标，条件满足且超过冷却时间后自动执行动作（提升 CPU / 内存 / 带宽或关机）。规则与触发记录持久化保存。
+            {t("策略引擎每分钟采样运行中容器的指标，条件满足且超过冷却时间后自动执行动作（提升 CPU / 内存 / 带宽或关机）。规则与触发记录持久化保存。")}
           </p>
         </div>
         {loading ? (
-          <div className="p-8 text-center text-sm text-gray-500">加载中...</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("加载中...")}</div>
         ) : rules.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无策略，点击右上角「新建策略」创建</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无策略，点击右上角「新建策略」创建")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
-                  <th className="px-4 py-2.5">启用</th>
-                  <th className="px-4 py-2.5">名称</th>
-                  <th className="px-4 py-2.5">条件</th>
-                  <th className="px-4 py-2.5">动作</th>
-                  <th className="px-4 py-2.5">作用范围</th>
-                  <th className="px-4 py-2.5">冷却</th>
-                  <th className="px-4 py-2.5">触发次数</th>
-                  <th className="px-4 py-2.5">最近触发</th>
-                  <th className="px-4 py-2.5">操作</th>
+                  <th className="px-4 py-2.5">{t("启用")}</th>
+                  <th className="px-4 py-2.5">{t("名称")}</th>
+                  <th className="px-4 py-2.5">{t("条件")}</th>
+                  <th className="px-4 py-2.5">{t("动作")}</th>
+                  <th className="px-4 py-2.5">{t("作用范围")}</th>
+                  <th className="px-4 py-2.5">{t("冷却")}</th>
+                  <th className="px-4 py-2.5">{t("触发次数")}</th>
+                  <th className="px-4 py-2.5">{t("最近触发")}</th>
+                  <th className="px-4 py-2.5">{t("操作")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -203,7 +205,7 @@ export default function PolicyManagement() {
                       {rule.action === 'adjust_bw' && ` → ${rule.adjust_bw_mbps}Mbps`}
                     </td>
                     <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{scopeLabels[rule.target_scope.startsWith('tenant:') ? 'tenant' : rule.target_scope.startsWith('container:') ? 'container' : 'all']}</td>
-                    <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{rule.cooldown_minutes || 10} 分钟</td>
+                    <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{rule.cooldown_minutes || 10} {t("分钟")}</td>
                     <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{rule.triggered_count || 0}</td>
                     <td className="px-4 py-2.5 text-xs text-gray-500 whitespace-nowrap">{rule.last_triggered || '-'}</td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
@@ -212,7 +214,7 @@ export default function PolicyManagement() {
                           onClick={() => { setEditing(rule); setMessage(null) }}
                           className="rounded-md border border-gray-300 px-2 py-1 text-xs text-gray-700 hover:bg-gray-50"
                         >
-                          编辑
+                          {t("编辑")}
                         </button>
                         <button
                           onClick={() => handleDelete(rule)}
@@ -232,21 +234,21 @@ export default function PolicyManagement() {
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-          <h2 className="text-sm font-semibold text-black">触发记录 ({history.length})</h2>
+          <h2 className="text-sm font-semibold text-black">{t("触发记录 (")}{history.length})</h2>
         </div>
         {history.length === 0 ? (
-          <div className="p-8 text-center text-sm text-gray-500">暂无触发记录</div>
+          <div className="p-8 text-center text-sm text-gray-500">{t("暂无触发记录")}</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
-                  <th className="px-4 py-2.5">时间</th>
-                  <th className="px-4 py-2.5">策略</th>
-                  <th className="px-4 py-2.5">容器</th>
-                  <th className="px-4 py-2.5">指标值</th>
-                  <th className="px-4 py-2.5">动作</th>
-                  <th className="px-4 py-2.5">详情</th>
+                  <th className="px-4 py-2.5">{t("时间")}</th>
+                  <th className="px-4 py-2.5">{t("策略")}</th>
+                  <th className="px-4 py-2.5">{t("容器")}</th>
+                  <th className="px-4 py-2.5">{t("指标值")}</th>
+                  <th className="px-4 py-2.5">{t("动作")}</th>
+                  <th className="px-4 py-2.5">{t("详情")}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -276,16 +278,16 @@ export default function PolicyManagement() {
               </button>
             </div>
             <div className="max-h-[70vh] space-y-3 overflow-auto p-4">
-              <Field label="策略名称">
+              <Field label={t("策略名称")}>
                 <input
                   value={editing.name}
                   onChange={(e) => patch({ name: e.target.value })}
-                  placeholder="例如：CPU 过载自动升配"
+                  placeholder={t("例如：CPU 过载自动升配")}
                   className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                 />
               </Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="监控指标">
+                <Field label={t("监控指标")}>
                   <select
                     value={editing.metric}
                     onChange={(e) => patch({ metric: e.target.value as PolicyRule['metric'] })}
@@ -296,7 +298,7 @@ export default function PolicyManagement() {
                     ))}
                   </select>
                 </Field>
-                <Field label="触发动作">
+                <Field label={t("触发动作")}>
                   <select
                     value={editing.action}
                     onChange={(e) => patch({ action: e.target.value as PolicyRule['action'] })}
@@ -309,17 +311,17 @@ export default function PolicyManagement() {
                 </Field>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="条件">
+                <Field label={t("条件")}>
                   <select
                     value={editing.operator}
                     onChange={(e) => patch({ operator: e.target.value as PolicyRule['operator'] })}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   >
-                    <option value="gt">大于 (gt)</option>
-                    <option value="lt">小于 (lt)</option>
+                    <option value="gt">{t("大于 (gt)")}</option>
+                    <option value="lt">{t("小于 (lt)")}</option>
                   </select>
                 </Field>
-                <Field label="阈值">
+                <Field label={t("阈值")}>
                   <input
                     type="number"
                     value={editing.threshold}
@@ -329,7 +331,7 @@ export default function PolicyManagement() {
                 </Field>
               </div>
               {editing.action === 'raise_cpu' && (
-                <Field label="每次提升核数">
+                <Field label={t("每次提升核数")}>
                   <input
                     type="number"
                     value={editing.adjust_vcpu}
@@ -339,7 +341,7 @@ export default function PolicyManagement() {
                 </Field>
               )}
               {editing.action === 'raise_ram' && (
-                <Field label="每次提升内存 (MB)">
+                <Field label={t("每次提升内存 (MB)")}>
                   <input
                     type="number"
                     value={editing.adjust_ram_mb}
@@ -349,7 +351,7 @@ export default function PolicyManagement() {
                 </Field>
               )}
               {editing.action === 'adjust_bw' && (
-                <Field label="调整后带宽 (Mbps)">
+                <Field label={t("调整后带宽 (Mbps)")}>
                   <input
                     type="number"
                     value={editing.adjust_bw_mbps}
@@ -359,7 +361,7 @@ export default function PolicyManagement() {
                 </Field>
               )}
               <div className="grid grid-cols-2 gap-3">
-                <Field label="冷却时间 (分钟)">
+                <Field label={t("冷却时间 (分钟)")}>
                   <input
                     type="number"
                     value={editing.cooldown_minutes}
@@ -367,23 +369,23 @@ export default function PolicyManagement() {
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   />
                 </Field>
-                <Field label="作用范围">
+                <Field label={t("作用范围")}>
                   <select
                     value={editing.target_scope}
                     onChange={(e) => patch({ target_scope: e.target.value })}
                     className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-brand-500 focus:outline-none"
                   >
-                    <option value="all">全部容器</option>
-                    <option value="tenant:default">租户 default</option>
-                    <option value="container:">指定容器（手动填名称）</option>
+                    <option value="all">{t("全部容器")}</option>
+                    <option value="tenant:default">{t("租户 default")}</option>
+                    <option value="container:">{t("指定容器（手动填名称）")}</option>
                   </select>
                 </Field>
               </div>
               {editing.target_scope.startsWith('container:') && editing.target_scope === 'container:' && (
-                <p className="text-xs text-gray-400">在「作用范围」后手动补全容器名称，例如 container:web-01</p>
+                <p className="text-xs text-gray-400">{t("在「作用范围」后手动补全容器名称，例如 container:web-01")}</p>
               )}
               {editing.target_scope.startsWith('tenant:') && (
-                <p className="text-xs text-gray-400">当前作用于租户：{editing.target_scope.slice(7) || 'default'}</p>
+                <p className="text-xs text-gray-400">{t("当前作用于租户：")}{editing.target_scope.slice(7) || 'default'}</p>
               )}
               <div className="flex items-center gap-2">
                 <input
@@ -392,7 +394,7 @@ export default function PolicyManagement() {
                   onChange={(e) => patch({ enabled: e.target.checked })}
                   className="h-4 w-4 rounded border-gray-300"
                 />
-                <label className="text-sm text-gray-700">启用该策略</label>
+                <label className="text-sm text-gray-700">{t("启用该策略")}</label>
               </div>
               {message && (
                 <p className={`text-xs ${message.type === 'ok' ? 'text-emerald-600' : 'text-red-600'}`}>{message.text}</p>
@@ -403,7 +405,7 @@ export default function PolicyManagement() {
                 onClick={() => setEditing(null)}
                 className="rounded-md border border-gray-300 px-4 py-2 text-sm text-gray-700 hover:bg-gray-50"
               >
-                取消
+                {t("取消")}
               </button>
               <button
                 onClick={handleSave}
