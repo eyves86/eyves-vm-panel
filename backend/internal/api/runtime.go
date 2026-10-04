@@ -206,6 +206,13 @@ func setHostnameByRuntime(id int, hostname string) error {
 	if len(hostname) > 63 {
 		return fmt.Errorf("hostname too long (max 63 chars)")
 	}
+	// 纵深防御：只允许 RFC 1123 字符集 [a-z0-9-]，避免任何调用方把 hostname
+	// 拼进 shell 脚本时造成命令注入（controller 层已有同样校验，此处兜底）。
+	for _, ch := range hostname {
+		if !((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-') {
+			return fmt.Errorf("hostname must match [a-z0-9-] (RFC 1123)")
+		}
+	}
 	if c.IsKVM() {
 		// virsh set-hostname 是较新 libvirt 才有的命令，先试试；不行再回退
 		if err := kvmSetHostnameVirsh(c.VirshName(), hostname); err == nil {

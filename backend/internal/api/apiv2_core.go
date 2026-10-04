@@ -291,7 +291,16 @@ func v2Auth(next http.HandlerFunc) http.HandlerFunc {
 				v2Forbidden(w, r, "请求来源校验失败")
 				return
 			}
-			next(w, withAuthContext(r, authContextFromClaims(claims)))
+			ctx := authContextFromClaims(claims)
+			// 管理员角色（admin/operator/readonly）按 rbac 权限点强制，避免受限管理员
+			// 令牌在未逐个调用 v2RequireAdmin 的端点上越权。
+			if ctx.Type == authTypeAdmin && !adminRoleAllowed(ctx.Role, r.Method, r.URL.Path) {
+				auditRequest(r, "rbac.denied", r.URL.Path,
+					"role="+config.NormalizeAdminRole(ctx.Role)+" method="+r.Method, false, "insufficient role permission")
+				v2Forbidden(w, r, "当前管理员角色无权执行该操作")
+				return
+			}
+			next(w, withAuthContext(r, ctx))
 			return
 		}
 		if key, ok := validateApiKeyRequest(r); ok {

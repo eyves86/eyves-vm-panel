@@ -292,6 +292,10 @@ func v2IPPoolAttach(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, fmt.Sprintf("实例不存在：%d", req.InstanceID))
 		return
 	}
+	if !isContainerAllowedForRequest(r, c.UUID) {
+		v2Forbidden(w, r, "无权操作该实例")
+		return
+	}
 	if c.RecycledAt != "" {
 		v2Precondition(w, r, "实例在回收站中，不能绑定 IP")
 		return

@@ -2054,16 +2054,36 @@ func InitConfig() (*EyvescloudConfig, error) {
 		fmt.Println("  EyvesCloud - FIRST BOOT (SECURITY WARNING)")
 		fmt.Println("========================================")
 		fmt.Println("  Credentials file could not be written securely.")
-		fmt.Println("  The generated password is shown below — save it NOW")
-		fmt.Println("  and change it on first login.")
-		fmt.Printf("  Username: %s\n", adminUser)
-		fmt.Printf("  Password: %s\n", adminPass)
+		// 绝不把明文密码写进非交互式 stdout（systemd 会落盘到 journald，造成长期
+		// 泄露）：仅当 stdout 是交互式终端（字符设备）时才打印密码，否则只给出
+		// 告警与恢复指引。
+		if isInteractiveStdout() {
+			fmt.Println("  The generated password is shown below — save it NOW")
+			fmt.Println("  and change it on first login.")
+			fmt.Printf("  Username: %s\n", adminUser)
+			fmt.Printf("  Password: %s\n", adminPass)
+		} else {
+			fmt.Println("  Refusing to print the password to a non-interactive stream")
+			fmt.Println("  (it would be persisted to logs).")
+			fmt.Printf("  Username: %s\n", adminUser)
+			fmt.Println("  Reset it now with: eyvescloud account reset")
+		}
 		fmt.Printf("  Admin login path: %s\n", adminPath)
 		fmt.Println("========================================")
 		fmt.Println()
 	}
 
 	return AppConfig, nil
+}
+
+// isInteractiveStdout 报告 stdout 是否为交互式终端（字符设备）。
+// 用于避免把一次性密码写入 journald 等非交互式日志流。
+func isInteractiveStdout() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return fi.Mode()&os.ModeCharDevice != 0
 }
 
 func normalizeConfigDefaults(dataDir string) bool {

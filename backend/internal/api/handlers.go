@@ -134,8 +134,16 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		id = snapshot.ContainerID
 	}
 	if isSnapshotAction {
-		if c := config.FindContainer(id); c != nil && !isContainerAllowedForRequest(r, c.UUID) {
-			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
+		// 快照可能属于已删除的容器（孤儿快照）。此时无法通过容器做属主校验，
+		// 但涉及删除/恢复的高危操作必须限管理员，避免子用户/窄作用域 Key
+		// 借由孤儿快照越权操作他人数据。
+		if c := config.FindContainer(id); c != nil {
+			if !isContainerAllowedForRequest(r, c.UUID) {
+				jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
+				return
+			}
+		} else if !isAdminRequest(r) {
+			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this snapshot"})
 			return
 		}
 	}

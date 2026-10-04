@@ -641,7 +641,13 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		}
 		tokenString := tokenFromRequest(r)
 		if claims, ok := claimsFromToken(tokenString); ok {
-			next(w, withAuthContext(r, authContextFromClaims(claims)))
+			ctx := authContextFromClaims(claims)
+			// 管理员角色（admin/operator/readonly）在鉴权入口即强制 rbac 权限点，
+			// 覆盖仅挂 AuthMiddleware（未挂 AdminMiddleware）的少量路由，避免越权。
+			if ctx.Type == authTypeAdmin && !enforceAdminRole(w, r, ctx.Role) {
+				return
+			}
+			next(w, withAuthContext(r, ctx))
 			return
 		}
 

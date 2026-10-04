@@ -898,6 +898,8 @@ func isAdminRequest(r *http.Request) bool {
 func sanitizeContainerResponse(r *http.Request, c *config.Container) {
 	if !isAdminRequest(r) {
 		c.SSHPassword = ""
+		c.VNCPassword = ""
+		c.SSHHostKey = ""
 	}
 }
 

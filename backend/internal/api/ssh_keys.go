@@ -193,6 +193,9 @@ func createSSHKey(w http.ResponseWriter, r *http.Request) {
 }
 
 func getSSHKey(w http.ResponseWriter, r *http.Request, id string) {
+	if !requireScope(w, r, "container:read") {
+		return
+	}
 	key, ok := findSSHKey(id)
 	if !ok {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "SSH key not found"})
@@ -343,8 +346,12 @@ func sshKeyCanAccess(r *http.Request, key config.SSHKey) bool {
 		return false
 	}
 	switch ctx.Type {
-	case authTypeAdmin, authTypeAPIKey:
+	case authTypeAdmin:
 		return true
+	case authTypeAPIKey:
+		// API Key 仅在持有管理级/SSH Key 作用域时可访问任意 Key，避免窄作用域
+		// Key 越权读取或改写他人 SSH Key（IDOR）。
+		return scopeAllowed(ctx.Scopes, "admin:access") || scopeAllowed(ctx.Scopes, "container:ssh-key")
 	case authTypeSubUser:
 		return key.Type == "subuser" && key.OwnerID == ctx.Actor
 	}
