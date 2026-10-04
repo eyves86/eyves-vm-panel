@@ -293,7 +293,7 @@ export default function Containers() {
   }
 
   // 第 1 页叠加"排队创建"占位行（服务端数据不含）；翻页后不叠加。
-  const displayContainers = !showRecycle && page === 1
+  const displayContainers: DisplayContainer[] = !showRecycle && page === 1
     ? buildDisplayContainers(containers, queuedCreates, tasks)
     : containers
   const activeTaskCount = tasks.filter((task) => task.status === 'pending' || task.status === 'running').length

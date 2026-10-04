@@ -116,7 +116,7 @@ export default function SubUserManagement() {
     try {
       const res = await listSubUsersPaged({ page, page_size: pageSize })
       const data = res.data.data
-      setUsers(data?.items || [])
+      setUsers((data?.items as SubUserItem[] | undefined) || [])
       setUsersTotal(data?.total ?? 0)
     } catch (err) {
       console.error(err)
