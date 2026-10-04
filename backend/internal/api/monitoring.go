@@ -129,11 +129,36 @@ func HandleContainerMonitoring(w http.ResponseWriter, r *http.Request) {
 		return rows[i].Name < rows[j].Name
 	})
 
-	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+	total := len(rows)
+	// 汇总（分页前全量口径）：容器总数 / 运行中 / 涉及滥用 / 滥用告警总数。
+	summary := map[string]int{"running": 0, "abusers": 0, "abuse_alerts": 0}
+	for _, row := range rows {
+		if row.Status == "running" {
+			summary["running"]++
+		}
+		if row.AbuseAlerts > 0 {
+			summary["abusers"]++
+		}
+		summary["abuse_alerts"] += row.AbuseAlerts
+	}
+	payload := map[string]interface{}{
 		"containers":   rows,
-		"total":        len(rows),
+		"total":        total,
+		"summary":      summary,
 		"generated_at": time.Now().Format("2006-01-02 15:04:05"),
-	}})
+	}
+	if p := parsePagination(r); p.Requested {
+		if p.Invalid {
+			errResponse(w, http.StatusBadRequest, "INVALID_REQUEST",
+				"page must be >= 1 and page_size within [1, 200]")
+			return
+		}
+		payload["containers"] = paginate(rows, p)
+		payload["page"] = p.Page
+		payload["page_size"] = p.PageSize
+	}
+
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: payload})
 }
 
 func bytesToGB(bytes int64) float64 {

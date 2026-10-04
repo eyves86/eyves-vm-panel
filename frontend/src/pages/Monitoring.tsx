@@ -35,6 +35,10 @@ function formatGB(value: number): string {
 
 export default function Monitoring() {
   const [rows, setRows] = useState<ContainerMonitorRow[]>([])
+  const [total, setTotal] = useState(0)
+  const [summary, setSummary] = useState<{ running: number; abusers: number; abuse_alerts: number }>({ running: 0, abusers: 0, abuse_alerts: 0 })
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [generatedAt, setGeneratedAt] = useState('')
   const [loading, setLoading] = useState(true)
   const [autoRefresh, setAutoRefresh] = useState(true)
@@ -67,9 +71,11 @@ export default function Monitoring() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await getContainerMonitoring()
+      const res = await getContainerMonitoring({ page, page_size: pageSize })
       if (res.data.data) {
         setRows(res.data.data.containers || [])
+        setTotal(res.data.data.total ?? 0)
+        if (res.data.data.summary) setSummary(res.data.data.summary)
         setGeneratedAt(res.data.data.generated_at || '')
       }
     } catch (err) {
@@ -77,7 +83,7 @@ export default function Monitoring() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [page, pageSize])
 
   useEffect(() => {
     fetchData()
@@ -86,9 +92,13 @@ export default function Monitoring() {
     return () => clearInterval(interval)
   }, [fetchData, autoRefresh])
 
-  const running = rows.filter((r) => r.status === 'running').length
-  const abusers = rows.filter((r) => r.abuse_alerts > 0).length
-  const totalAbuse = rows.reduce((sum, r) => sum + r.abuse_alerts, 0)
+  // 总数收缩时收敛当前页，避免停留在空页。
+  useEffect(() => {
+    setPage((p) => Math.min(p, Math.max(1, Math.ceil(total / pageSize))))
+  }, [total, pageSize])
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const safePage = Math.min(page, totalPages)
 
   if (loading) {
     return (
@@ -149,28 +159,28 @@ export default function Monitoring() {
             <Server className="w-4 h-4" />
             容器总数
           </div>
-          <div className="mt-1 text-2xl font-semibold text-black">{rows.length}</div>
+          <div className="mt-1 text-2xl font-semibold text-black">{total}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <Activity className="w-4 h-4" />
             运行中
           </div>
-          <div className="mt-1 text-2xl font-semibold text-black">{running}</div>
+          <div className="mt-1 text-2xl font-semibold text-black">{summary.running}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <ShieldAlert className="w-4 h-4" />
             涉及滥用容器
           </div>
-          <div className="mt-1 text-2xl font-semibold text-black">{abusers}</div>
+          <div className="mt-1 text-2xl font-semibold text-black">{summary.abusers}</div>
         </div>
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 text-gray-500 text-xs">
             <ShieldAlert className="w-4 h-4" />
             滥用告警总数
           </div>
-          <div className="mt-1 text-2xl font-semibold text-black">{totalAbuse}</div>
+          <div className="mt-1 text-2xl font-semibold text-black">{summary.abuse_alerts}</div>
         </div>
       </div>
 
@@ -179,12 +189,13 @@ export default function Monitoring() {
           <h2 className="text-sm font-semibold text-black">全部容器实时指标（LXC / KVM）</h2>
           <span className="text-xs text-gray-500">更新于 {generatedAt || '-'}</span>
         </div>
-        {rows.length === 0 ? (
+        {total === 0 ? (
           <div className="p-8 text-center text-sm text-gray-500">暂无容器</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
                 <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
                   <th className="px-4 py-2.5 whitespace-nowrap">容器</th>
                   <th className="px-4 py-2.5 whitespace-nowrap">类型</th>
@@ -257,7 +268,32 @@ export default function Monitoring() {
                 ))}
               </tbody>
             </table>
-          </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3">
+              <div className="flex items-center gap-2 text-xs text-gray-500">
+                <span>
+                  显示 {(safePage - 1) * pageSize + 1}-{Math.min(safePage * pageSize, total)} / {total}
+                </span>
+                <select
+                  value={pageSize}
+                  onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}
+                  className="h-7 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700"
+                  title="每页数量"
+                >
+                  <option value={10}>10 / 页</option>
+                  <option value={20}>20 / 页</option>
+                  <option value={50}>50 / 页</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-1">
+                <button onClick={() => setPage(1)} disabled={safePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">首页</button>
+                <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={safePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">上一页</button>
+                <span className="px-2 text-xs text-gray-500">{safePage} / {totalPages}</span>
+                <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">下一页</button>
+                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40">末页</button>
+              </div>
+            </div>
+          </>
         )}
       </div>
     </div>

@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Download, FileJson, RefreshCw, ShieldCheck } from 'lucide-react'
-import { AuditLog, exportAuditLogs, getAuditLogs, verifyAuditChain } from '../services/api'
+import { AuditLog, exportAuditLogs, getAuditLogsPaged, verifyAuditChain } from '../services/api'
 import { actionLabel } from '../utils/labels'
 
 const PAGE_SIZE = 10
 
 export default function AuditLogs() {
   const [logs, setLogs] = useState<AuditLog[]>([])
+  const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const [exporting, setExporting] = useState<'csv' | 'json' | null>(null)
@@ -15,14 +16,16 @@ export default function AuditLogs() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await getAuditLogs()
-      setLogs(res.data.data || [])
+      const res = await getAuditLogsPaged({ page, page_size: PAGE_SIZE })
+      const data = res.data.data
+      setLogs(data?.items || [])
+      setTotal(data?.total ?? 0)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [page])
 
   useEffect(() => {
     fetchData()
@@ -32,8 +35,8 @@ export default function AuditLogs() {
 
   // Clamp the active page when the log list shrinks after a refresh.
   useEffect(() => {
-    setPage(p => Math.min(p, Math.max(1, Math.ceil(logs.length / PAGE_SIZE))))
-  }, [logs.length])
+    setPage(p => Math.min(p, Math.max(1, Math.ceil(total / PAGE_SIZE))))
+  }, [total])
 
   // 导出审计日志（CSV / JSON），后端以 Blob 流返回
   const downloadAuditLogs = async (format: 'csv' | 'json') => {
@@ -88,16 +91,16 @@ export default function AuditLogs() {
     )
   }
 
-  const totalPages = Math.max(1, Math.ceil(logs.length / PAGE_SIZE))
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
-  const pageLogs = logs.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+  const pageLogs = logs
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-black">操作日志</h1>
-          <p className="text-sm text-gray-500 mt-1">共 {logs.length} 条操作记录</p>
+          <p className="text-sm text-gray-500 mt-1">共 {total} 条操作记录</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -141,7 +144,7 @@ export default function AuditLogs() {
       )}
 
       <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        {logs.length === 0 ? (
+        {total === 0 ? (
           <div className="p-8 text-center text-sm text-gray-500">暂无操作日志</div>
         ) : (
           <>
@@ -177,17 +180,17 @@ export default function AuditLogs() {
                 </tbody>
               </table>
             </div>
-            {logs.length > PAGE_SIZE && (
+            {total > PAGE_SIZE && (
               <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
-                <span className="text-xs text-gray-400">第 {page}/{totalPages} 页</span>
+                <span className="text-xs text-gray-400">第 {safePage}/{totalPages} 页</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setPage(1)} disabled={page === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="首页"><ChevronsLeft className="w-4 h-4" /></button>
-                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="上一页"><ChevronLeft className="w-4 h-4" /></button>
-                  {getPageNumbers(page, totalPages).map(n => (
-                    <button key={n} onClick={() => setPage(n)} className={`w-7 h-7 text-xs rounded ${n === page ? 'bg-brand-600 text-white' : 'border border-gray-200 hover:bg-gray-100'}`}>{n}</button>
+                  <button onClick={() => setPage(1)} disabled={safePage === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="首页"><ChevronsLeft className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="上一页"><ChevronLeft className="w-4 h-4" /></button>
+                  {getPageNumbers(safePage, totalPages).map(n => (
+                    <button key={n} onClick={() => setPage(n)} className={`w-7 h-7 text-xs rounded ${n === safePage ? 'bg-brand-600 text-white' : 'border border-gray-200 hover:bg-gray-100'}`}>{n}</button>
                   ))}
-                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="下一页"><ChevronRight className="w-4 h-4" /></button>
-                  <button onClick={() => setPage(totalPages)} disabled={page >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="末页"><ChevronsRight className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="下一页"><ChevronRight className="w-4 h-4" /></button>
+                  <button onClick={() => setPage(totalPages)} disabled={safePage >= totalPages} className="p-1 text-gray-400 hover:text-black disabled:opacity-20" title="末页"><ChevronsRight className="w-4 h-4" /></button>
                 </div>
               </div>
             )}

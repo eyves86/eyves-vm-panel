@@ -27,10 +27,11 @@ import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import {
   Container,
+  ContainerFilterOptions,
   CreateContainerRequest,
   ContainerUsage,
   getContainerUsage,
-  getContainers,
+  getContainersPaged,
   batchAction,
   Task,
   getTasks,
@@ -55,6 +56,9 @@ export default function Containers() {
   // containersRef 镜像 containers，用于不触发轮询 interval 重建的读取（L8 优化）。
   const containersRef = useRef<Container[]>([])
   useEffect(() => { containersRef.current = containers }, [containers])
+  // total 为服务端全量口径（不随分页变化）；filterOptions 为服务端下发的筛选下拉项。
+  const [total, setTotal] = useState(0)
+  const [filterOptions, setFilterOptions] = useState<ContainerFilterOptions | null>(null)
   const [usageByName, setUsageByName] = useState<Record<string, ContainerUsage>>({})
   // 节点名映射（node_id -> node_name）：用于容器列表显示来源节点。
   const [nodeNameMap, setNodeNameMap] = useState<Record<string, string>>({})
@@ -67,6 +71,12 @@ export default function Containers() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [queuedCreates, setQueuedCreates] = useState<Record<string, CreateContainerRequest>>({})
   const [searchText, setSearchText] = useState('')
+  // 服务端搜索防抖：避免每次按键都发起请求。
+  const [debouncedSearch, setDebouncedSearch] = useState('')
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedSearch(searchText.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [searchText])
   const [typeFilter, setTypeFilter] = useState('all')
   const [systemFilter, setSystemFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
@@ -168,23 +178,43 @@ export default function Containers() {
 
   const fetchData = useCallback(async () => {
     try {
-      // 回收站视图走 v2 /recycle-bin；普通视图走 v1（后端已排除回收站实例）。
-      let nextContainers: Container[]
+      // 回收站视图走 v2 /recycle-bin（量小，客户端筛选）；普通视图走 v1 服务端分页。
       if (showRecycle) {
         const bin = await v2ListRecycleBin({ all: true })
         // v2 字段 → v1 表格渲染字段映射（template_id→template 等）。
-        nextContainers = (bin.items ?? []).map(v2RecycleItemToContainer) as unknown as Container[]
-      } else {
-        nextContainers = (await getContainers()).data.data || []
+        const items = (bin.items ?? []).map(v2RecycleItemToContainer) as unknown as Container[]
+        setContainers(items)
+        setTotal(items.length)
+        setFilterOptions(null)
+        return
       }
-      setContainers(nextContainers)
-      if (!showRecycle) await refreshUsage(nextContainers)
+      // 只有 running/stopped 是"纯数据"状态，可下发服务端；task/creating/failed 由前端对当前页补筛。
+      const serverStatus = statusFilter === 'running' || statusFilter === 'stopped' ? statusFilter : undefined
+      const res = await getContainersPaged({
+        page,
+        page_size: pageSize,
+        search: debouncedSearch || undefined,
+        type: typeFilter !== 'all' ? typeFilter : undefined,
+        system: systemFilter !== 'all' ? systemFilter : undefined,
+        status: serverStatus,
+        tenant: tenantFilter !== 'all' ? tenantFilter : undefined,
+        owner: !isSubUser && ownerFilter !== 'all' ? ownerFilter : undefined,
+        sort: sortField === 'id' ? 'id' : undefined,
+        order: sortField === 'id' ? sortOrder : undefined,
+      })
+      const data = res.data.data
+      const items = data?.items || []
+      setContainers(items)
+      setTotal(data?.total ?? 0)
+      setFilterOptions(data?.filter_options || null)
+      // 用量仅对当前页拉取（N+1 收敛到 page_size 量级）。
+      await refreshUsage(items)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [refreshUsage, showRecycle])
+  }, [refreshUsage, showRecycle, page, pageSize, debouncedSearch, typeFilter, systemFilter, statusFilter, tenantFilter, ownerFilter, isSubUser, sortField, sortOrder])
 
   useEffect(() => {
     fetchData()
@@ -219,6 +249,11 @@ export default function Containers() {
 
   const handleBatchAction = async (action: string) => {
     if (selected.size === 0) return
+    // P0：批量删除为不可恢复操作，二次确认后再提交。
+    if (action === 'delete') {
+      const ok = window.confirm(`确定删除选中的 ${selected.size} 个容器？该操作不可恢复。`)
+      if (!ok) return
+    }
     setBatchLoading(true)
     try {
       await batchAction(action, [...selected])
@@ -257,34 +292,61 @@ export default function Containers() {
     create: '正在初始化', start: '开机中', stop: '关机中', restart: '重启中', delete: '删除中', reinstall: '重装中',
   }
 
-  const displayContainers = buildDisplayContainers(containers, queuedCreates, tasks)
+  // 第 1 页叠加"排队创建"占位行（服务端数据不含）；翻页后不叠加。
+  const displayContainers = !showRecycle && page === 1
+    ? buildDisplayContainers(containers, queuedCreates, tasks)
+    : containers
   const activeTaskCount = tasks.filter((task) => task.status === 'pending' || task.status === 'running').length
-  const systemOptions = useMemo(() => buildSystemOptions(displayContainers), [displayContainers])
+  // 系统/租户下拉优先用服务端下发的 filter_options（全量口径，不随翻页抖动）。
+  const systemOptions = useMemo(() => {
+    if (!showRecycle && filterOptions?.systems && filterOptions.systems.length > 0) {
+      return filterOptions.systems.map((item) => ({ value: item.value, label: item.label }))
+    }
+    return buildSystemOptions(displayContainers)
+  }, [filterOptions, displayContainers, showRecycle])
   const tenantOptions = useMemo(() => {
+    if (!showRecycle && filterOptions?.tenants) {
+      return filterOptions.tenants.map((tenant) => ({ value: tenant, label: tenant }))
+    }
     const tenants = new Map<string, string>()
     for (const container of displayContainers) {
       const tenant = (container.tenant || '').trim()
       if (tenant) tenants.set(tenant, tenant)
     }
     return Array.from(tenants.entries()).map(([value, label]) => ({ value, label }))
-  }, [displayContainers])
+  }, [filterOptions, displayContainers, showRecycle])
+  // 服务端已完成 search/type/system/status(running|stopped)/tenant/owner 过滤；
+  // 此处仅补「任务派生状态」（task/creating/failed）与回收站视图的客户端筛选。
   const filteredContainers = useMemo(() => {
-    const base = filterContainers(displayContainers, {
-      search: searchText,
-      type: typeFilter,
-      system: systemFilter,
-      status: statusFilter,
-      tenant: tenantFilter,
-      taskStatusMap,
-      taskNameMap,
-    })
-    // 属主筛选（仅管理员）：__none__ = 未绑定
-    if (isSubUser || ownerFilter === 'all') return base
-    if (ownerFilter === '__none__') return base.filter((c) => !c.owner_sub_user_id)
-    return base.filter((c) => c.owner_sub_user_id === ownerFilter)
-  }, [displayContainers, searchText, typeFilter, systemFilter, statusFilter, tenantFilter, ownerFilter, isSubUser, tasks])
+    if (showRecycle) {
+      let base = filterContainers(displayContainers, {
+        search: searchText,
+        type: typeFilter,
+        system: systemFilter,
+        status: statusFilter,
+        tenant: tenantFilter,
+        taskStatusMap,
+        taskNameMap,
+      })
+      if (!isSubUser && ownerFilter !== 'all') {
+        base = ownerFilter === '__none__'
+          ? base.filter((c) => !c.owner_sub_user_id)
+          : base.filter((c) => c.owner_sub_user_id === ownerFilter)
+      }
+      return base
+    }
+    if (statusFilter === 'task' || statusFilter === 'creating' || statusFilter === 'failed') {
+      return displayContainers.filter((container) => {
+        const task = (container.id > 0 ? taskStatusMap[container.id] : undefined) || taskNameMap[container.name] || container.createTask
+        return getContainerStatusFilterValue(container, task) === statusFilter
+      })
+    }
+    return displayContainers
+  }, [displayContainers, showRecycle, searchText, typeFilter, systemFilter, statusFilter, tenantFilter, ownerFilter, isSubUser, tasks])
   const sortedContainers = useMemo(() => {
     if (!sortField) return filteredContainers
+    // id 排序由服务端保证全量有序；用量类排序（cpu/ram/disk/net）仅对当前页有效。
+    if (sortField === 'id' && !showRecycle) return filteredContainers
 
     return [...filteredContainers].sort((a, b) => {
       let valA = 0
@@ -330,12 +392,13 @@ export default function Containers() {
       }
       return sortOrder === 'asc' ? valA - valB : valB - valA
     })
-  }, [filteredContainers, sortField, sortOrder, usageByName])
+  }, [filteredContainers, sortField, sortOrder, usageByName, showRecycle])
 
-  const totalPages = Math.max(1, Math.ceil(sortedContainers.length / pageSize))
+  const totalCount = showRecycle ? sortedContainers.length : total
+  const totalPages = Math.max(1, Math.ceil((showRecycle ? sortedContainers.length : total) / pageSize))
   const currentPage = Math.min(page, totalPages)
   const pageStart = (currentPage - 1) * pageSize
-  const pageContainers = sortedContainers.slice(pageStart, pageStart + pageSize)
+  const pageContainers = showRecycle ? sortedContainers.slice(pageStart, pageStart + pageSize) : sortedContainers
   const selectableIDs = sortedContainers
     .filter((container) => !container.isPlaceholder && !taskStatusMap[container.id] && !taskNameMap[container.name])
     .map((container) => container.id)
@@ -343,7 +406,12 @@ export default function Containers() {
 
   useEffect(() => {
     setPage(1)
-  }, [searchText, typeFilter, systemFilter, statusFilter, tenantFilter, pageSize, sortField, sortOrder])
+  }, [debouncedSearch, typeFilter, systemFilter, statusFilter, tenantFilter, ownerFilter, pageSize, sortField, sortOrder])
+
+  // 总数收缩时收敛当前页，避免停留在空页。
+  useEffect(() => {
+    setPage((p) => Math.min(p, Math.max(1, Math.ceil(total / pageSize))))
+  }, [total, pageSize])
 
   const toggleAll = () => {
     if (allFilteredSelected) {
@@ -387,8 +455,7 @@ export default function Containers() {
         <div className="min-w-0">
           <h1 className="text-2xl font-bold text-black">容器管理</h1>
           <p className="text-sm text-gray-500 mt-1">
-            共 {displayContainers.length} 个容器
-            {filteredContainers.length !== displayContainers.length && `，筛选后 ${filteredContainers.length} 个`}
+            共 {totalCount} 个容器
             {selected.size > 0 && `，已选 ${selected.size} 个`}
           </p>
         </div>
@@ -434,7 +501,7 @@ export default function Containers() {
         </div>
       </div>
 
-      {displayContainers.length > 0 && (
+      {totalCount > 0 && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-[260px]">
@@ -547,7 +614,7 @@ export default function Containers() {
         </div>
       )}
 
-      {displayContainers.length === 0 ? (
+      {totalCount === 0 ? (
         <div className="bg-white border border-gray-200 rounded-xl p-12 text-center">
           <div className="w-16 h-16 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-4">
             <Server className="w-8 h-8 text-gray-400" />
@@ -858,14 +925,14 @@ export default function Containers() {
               </tbody>
             </table>
           </div>
-          {filteredContainers.length === 0 ? (
+          {pageContainers.length === 0 ? (
             <div className="border-t border-gray-100 px-4 py-10 text-center text-sm text-gray-500">
               没有匹配的容器
             </div>
           ) : (
             <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 px-4 py-3">
               <div className="text-xs text-gray-500">
-                显示 {pageStart + 1}-{Math.min(pageStart + pageSize, filteredContainers.length)} / {filteredContainers.length}
+                显示 {pageStart + 1}-{Math.min(pageStart + pageSize, totalCount)} / {totalCount}
               </div>
               <div className="flex items-center gap-1">
                 <button

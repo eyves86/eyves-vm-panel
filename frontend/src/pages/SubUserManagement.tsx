@@ -14,6 +14,7 @@ import api, {
   getContainers,
   getImages,
   getTenants,
+  listSubUsersPaged,
   updateSubUser,
   updateSubUserImages,
   updateSubUserTenant,
@@ -62,6 +63,9 @@ export default function SubUserManagement() {
   const dialog = useDialog()
   const { t } = useLanguage()
   const [users, setUsers] = useState<SubUserItem[]>([])
+  const [usersTotal, setUsersTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(true)
   const [auditLogs, setAuditLogs] = useState<AuditLogExt[] | null>(null)
   const [loginLogs, setLoginLogs] = useState<LoginLog[] | null>(null)
@@ -110,16 +114,26 @@ export default function SubUserManagement() {
 
   const fetchUsers = useCallback(async () => {
     try {
-      const res = await api.get<{ success: boolean; data: SubUserItem[] }>('/sub-users')
-      setUsers(res.data.data || [])
+      const res = await listSubUsersPaged({ page, page_size: pageSize })
+      const data = res.data.data
+      setUsers(data?.items || [])
+      setUsersTotal(data?.total ?? 0)
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [page, pageSize])
 
   useEffect(() => { fetchUsers() }, [fetchUsers])
+
+  // 总数收缩时收敛当前页，避免停留在空页。
+  useEffect(() => {
+    setPage((p) => Math.min(p, Math.max(1, Math.ceil(usersTotal / pageSize))))
+  }, [usersTotal, pageSize])
+
+  const usersTotalPages = Math.max(1, Math.ceil(usersTotal / pageSize))
+  const usersSafePage = Math.min(page, usersTotalPages)
 
   const managementUrl = (user: SubUserItem) => `${window.location.origin}/user/login?code=${user.access_code}`
 
@@ -403,7 +417,7 @@ export default function SubUserManagement() {
         <div>
           <h1 className="text-xl font-semibold text-black dark:text-white">{t('子用户管理')}</h1>
           <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            {t('容器分配的子用户列表，共')} {users.length} {t('个')}
+            {t('容器分配的子用户列表，共')} {usersTotal} {t('个')}
           </p>
         </div>
         <button
@@ -416,7 +430,7 @@ export default function SubUserManagement() {
       </div>
 
       <div className="overflow-hidden rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900">
-        {users.length === 0 ? (
+        {usersTotal === 0 ? (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-gray-100 dark:bg-gray-800">
               <UserCog className="h-7 w-7 text-gray-400" />
@@ -425,6 +439,7 @@ export default function SubUserManagement() {
             <div className="mt-1 text-xs text-gray-400">点击右上角「新建子用户」创建，可先建空账号再绑定容器</div>
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] text-sm">
             <thead className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-xs text-gray-500 dark:text-gray-400">
@@ -441,7 +456,7 @@ export default function SubUserManagement() {
             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
               {users.map((user, index) => (
                 <tr key={user.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                  <td className="px-4 py-3 text-gray-400 dark:text-gray-500">{index + 1}</td>
+                  <td className="px-4 py-3 text-gray-400 dark:text-gray-500">{(usersSafePage - 1) * pageSize + index + 1}</td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-black dark:text-white">{user.username}</div>
                     {user.email && <div className="text-xs text-gray-400">{user.email}</div>}
@@ -552,6 +567,29 @@ export default function SubUserManagement() {
             </tbody>
           </table>
           </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-gray-100 dark:border-gray-800 px-4 py-3">
+            <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+              <span>显示 {(usersSafePage - 1) * pageSize + 1}-{Math.min(usersSafePage * pageSize, usersTotal)} / {usersTotal}</span>
+              <select
+                value={pageSize}
+                onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1) }}
+                className="h-7 rounded border border-gray-300 bg-white px-2 text-xs text-gray-700 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300"
+                title="每页数量"
+              >
+                <option value={10}>10 / 页</option>
+                <option value={20}>20 / 页</option>
+                <option value={50}>50 / 页</option>
+              </select>
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setPage(1)} disabled={usersSafePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">首页</button>
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={usersSafePage === 1} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">上一页</button>
+              <span className="px-2 text-xs text-gray-500 dark:text-gray-400">{usersSafePage} / {usersTotalPages}</span>
+              <button onClick={() => setPage((p) => Math.min(usersTotalPages, p + 1))} disabled={usersSafePage === usersTotalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">下一页</button>
+              <button onClick={() => setPage(usersTotalPages)} disabled={usersSafePage === usersTotalPages} className="rounded border border-gray-200 px-2.5 py-1.5 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-40 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800">末页</button>
+            </div>
+          </div>
+          </>
         )}
       </div>
 

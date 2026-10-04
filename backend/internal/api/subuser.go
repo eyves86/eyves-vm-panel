@@ -957,6 +957,18 @@ func HandleAuditLogs(w http.ResponseWriter, r *http.Request) {
 		reversed[len(logs)-1-i] = l
 	}
 
+	p := parsePagination(r)
+	if p.Invalid {
+		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST",
+			"page must be >= 1 and page_size within [1, 200]")
+		return
+	}
+	if p.Requested {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true,
+			Data: pagedEnvelope(paginate(reversed, p), len(reversed), p.Page, p.PageSize)})
+		return
+	}
+
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: reversed})
 }
 
@@ -1322,6 +1334,17 @@ func HandleSubUserList(w http.ResponseWriter, r *http.Request) {
 		result = append(result, item)
 	}
 
+	p := parsePagination(r)
+	if p.Invalid {
+		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST",
+			"page must be >= 1 and page_size within [1, 200]")
+		return
+	}
+	if p.Requested {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true,
+			Data: pagedEnvelope(paginate(result, p), len(result), p.Page, p.PageSize)})
+		return
+	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: result})
 }
 

@@ -1052,6 +1052,40 @@ export const updateSubUserTenant = (subUserId: string, tenant: string) =>
 export const getContainers = () =>
   api.get<APIResponse<Container[]>>('/containers')
 
+// 分页信封（企业级列表契约）：未传 page/page_size 时后端仍返回全量数组。
+export interface PagedList<T> {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
+export interface ContainerListQuery {
+  page?: number
+  page_size?: number
+  search?: string
+  type?: string
+  system?: string
+  status?: string
+  tenant?: string
+  owner?: string
+  node?: string
+  sort?: string
+  order?: 'asc' | 'desc'
+}
+
+export interface ContainerFilterOptions {
+  systems?: { value: string; label: string }[]
+  tenants?: string[]
+}
+
+export interface ContainerListPage extends PagedList<Container> {
+  filter_options?: ContainerFilterOptions
+}
+
+export const getContainersPaged = (params: ContainerListQuery = {}) =>
+  api.get<APIResponse<ContainerListPage>>('/containers', { params })
+
 export const getContainer = (id: ContainerIdentifier) =>
   api.get<APIResponse<Container>>(`/containers/${id}`)
 
@@ -1733,6 +1767,9 @@ export const createSubUserAdvanced = (payload: {
 export const listSubUsers = () =>
   api.get<APIResponse<SubUser[]>>('/sub-users')
 
+export const listSubUsersPaged = (params: { page?: number; page_size?: number } = {}) =>
+  api.get<APIResponse<PagedList<SubUser>>>('/sub-users', { params })
+
 export const updateSubUserImages = (id: string, allowedImageIds: string[]) =>
   api.put<APIResponse<SubUser>>(`/sub-users/${id}/images`, { allowed_image_ids: allowedImageIds })
 
@@ -1762,6 +1799,9 @@ export interface AuditLog {
 
 export const getAuditLogs = () =>
   api.get<APIResponse<AuditLog[]>>('/audit-logs')
+
+export const getAuditLogsPaged = (params: { page?: number; page_size?: number } = {}) =>
+  api.get<APIResponse<PagedList<AuditLog>>>('/audit-logs', { params })
 
 // Security
 export interface SecurityAlert {
@@ -1850,8 +1890,15 @@ export interface ContainerMonitorRow {
   policy_blocked: boolean
 }
 
-export const getContainerMonitoring = () =>
-  api.get<APIResponse<{ containers: ContainerMonitorRow[]; total: number; generated_at: string }>>('/monitoring/containers')
+export const getContainerMonitoring = (params: { page?: number; page_size?: number } = {}) =>
+  api.get<APIResponse<{
+    containers: ContainerMonitorRow[]
+    total: number
+    generated_at: string
+    page?: number
+    page_size?: number
+    summary?: { running: number; abusers: number; abuse_alerts: number }
+  }>>('/monitoring/containers', { params })
 
 // 滥用记录：按用户/租户与类型聚合
 export interface AbuseOwnerSummary {

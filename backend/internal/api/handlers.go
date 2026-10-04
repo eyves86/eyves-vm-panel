@@ -762,6 +762,12 @@ func listContainers(w http.ResponseWriter, r *http.Request) {
 		}
 		containers = filtered
 	}
+	// 服务端筛选 / 排序（企业级大规模列表：万级容器下不下发全量到浏览器）。
+	// 仅处理"纯数据"维度；任务态 / 排队占位由前端叠加。
+	filterOptions := buildContainerFilterOptions(containers)
+	containers = filterContainersByQuery(containers, r)
+	sortContainersByQuery(containers, r)
+
 	for i := range containers {
 		sanitizeContainerResponse(r, &containers[i])
 		// 列表为只读汇总视图，一律不回显登录口令（detail/console 需要时单独拉取）。
@@ -775,11 +781,181 @@ func listContainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Requested {
-		jsonResponse(w, http.StatusOK, APIResponse{Success: true,
-			Data: pagedEnvelope(paginate(containers, p), len(containers), p.Page, p.PageSize)})
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
+			"items":          paginate(containers, p),
+			"total":          len(containers),
+			"page":           p.Page,
+			"page_size":      p.PageSize,
+			"filter_options": filterOptions,
+		}})
 		return
 	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: containers})
+}
+
+// buildContainerFilterOptions 汇总筛选下拉的可选项（systems / tenants）。
+// 取自"筛选前"的全量集合，保证翻页 / 筛选过程中下拉选项不抖动。
+func buildContainerFilterOptions(containers []config.Container) map[string]interface{} {
+	systemLabels := map[string]string{
+		"ubuntu": "Ubuntu", "debian": "Debian", "alpine": "Alpine",
+		"centos": "CentOS", "archlinux": "Arch Linux", "fedora": "Fedora",
+		"rockylinux": "Rocky Linux", "windows": "Windows", "unknown": "未知系统",
+	}
+	seen := map[string]bool{}
+	systems := make([]map[string]string, 0, 8)
+	seenTenants := map[string]bool{}
+	tenants := make([]string, 0, 8)
+	for _, c := range containers {
+		if g := containerSystemGroup(c.Template); !seen[g] {
+			seen[g] = true
+			label := systemLabels[g]
+			if label == "" {
+				label = g
+			}
+			systems = append(systems, map[string]string{"value": g, "label": label})
+		}
+		if t := strings.TrimSpace(c.Tenant); t != "" && !seenTenants[t] {
+			seenTenants[t] = true
+			tenants = append(tenants, t)
+		}
+	}
+	sortSliceStable(systems, func(a, b map[string]string) bool { return a["label"] < b["label"] })
+	sortSliceStable(tenants, func(a, b string) bool { return a < b })
+	return map[string]interface{}{"systems": systems, "tenants": tenants}
+}
+
+// containerSystemGroup 由模板 ID 推导系统分组（与前端 getSystemFilterValue 对齐）。
+func containerSystemGroup(template string) string {
+	normalized := strings.TrimPrefix(template, "kvm-")
+	switch {
+	case strings.HasPrefix(normalized, "ubuntu"):
+		return "ubuntu"
+	case strings.HasPrefix(normalized, "debian"):
+		return "debian"
+	case strings.HasPrefix(normalized, "alpine"):
+		return "alpine"
+	case strings.HasPrefix(normalized, "centos"):
+		return "centos"
+	case strings.HasPrefix(normalized, "archlinux"):
+		return "archlinux"
+	case strings.HasPrefix(normalized, "fedora"):
+		return "fedora"
+	case strings.HasPrefix(normalized, "rockylinux"):
+		return "rockylinux"
+	case strings.HasPrefix(normalized, "windows"):
+		return "windows"
+	default:
+		if normalized == "" {
+			return "unknown"
+		}
+		return normalized
+	}
+}
+
+// filterContainersByQuery 应用 search / type / system / status / tenant / owner / node 筛选。
+// 前缀为 "search=" 的关键字检索覆盖 名称 / ID / UUID / IP / IPv6 / 模板 / 租户 / 端口 / 备注。
+func filterContainersByQuery(containers []config.Container, r *http.Request) []config.Container {
+	q := r.URL.Query()
+	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
+	typ := strings.ToLower(strings.TrimSpace(q.Get("type")))
+	system := strings.ToLower(strings.TrimSpace(q.Get("system")))
+	status := strings.ToLower(strings.TrimSpace(q.Get("status")))
+	tenant := strings.TrimSpace(q.Get("tenant"))
+	owner := strings.TrimSpace(q.Get("owner"))
+	node := strings.TrimSpace(q.Get("node"))
+
+	if search == "" && (typ == "" || typ == "all") && (system == "" || system == "all") &&
+		(status == "" || status == "all") && (tenant == "" || tenant == "all") &&
+		(owner == "" || owner == "all") && (node == "" || node == "all") {
+		return containers
+	}
+
+	filtered := containers[:0]
+	for _, c := range containers {
+		if typ != "" && typ != "all" && strings.ToLower(c.Runtime()) != typ {
+			continue
+		}
+		if system != "" && system != "all" && containerSystemGroup(c.Template) != system {
+			continue
+		}
+		if status != "" && status != "all" && !strings.Contains(","+status+",", ","+strings.ToLower(c.Status)+",") {
+			continue
+		}
+		if tenant != "" && tenant != "all" && c.Tenant != tenant {
+			continue
+		}
+		if owner != "" && owner != "all" {
+			if owner == "__none__" {
+				if c.OwnerSubUserID != "" {
+					continue
+				}
+			} else if c.OwnerSubUserID != owner {
+				continue
+			}
+		}
+		if node != "" && node != "all" {
+			if node == "local" {
+				if c.NodeID != "" {
+					continue
+				}
+			} else if c.NodeID != node {
+				continue
+			}
+		}
+		if search != "" && !containerMatchesSearch(c, search) {
+			continue
+		}
+		filtered = append(filtered, c)
+	}
+	return filtered
+}
+
+func containerMatchesSearch(c config.Container, keyword string) bool {
+	fields := []string{
+		strconv.Itoa(c.ID), c.Name, c.UUID, c.IP, c.IPv6, c.Template,
+		c.Tenant, c.Remark, strconv.Itoa(c.SSHPort),
+	}
+	for _, f := range fields {
+		if f != "" && strings.Contains(strings.ToLower(f), keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+// sortContainersByQuery 支持 sort=id|name|status|vcpu|ram_mb|disk_gb|node_id|created_at，
+// order=asc|desc。未传 sort 时保持自然顺序（不改动）。
+func sortContainersByQuery(containers []config.Container, r *http.Request) {
+	key := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
+	if key == "" {
+		return
+	}
+	desc := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("order")), "desc")
+	sortSliceStable(containers, func(a, b config.Container) bool {
+		var less bool
+		switch key {
+		case "name", "hostname":
+			less = a.Name < b.Name
+		case "status":
+			less = a.Status < b.Status
+		case "vcpu":
+			less = a.VCPU < b.VCPU
+		case "ram_mb", "memory":
+			less = a.RAMMB < b.RAMMB
+		case "disk_gb", "disk":
+			less = a.DiskGB < b.DiskGB
+		case "node_id", "node":
+			less = a.NodeID < b.NodeID
+		case "created_at":
+			less = a.CreatedAt < b.CreatedAt
+		default:
+			less = a.ID < b.ID
+		}
+		if desc {
+			return !less
+		}
+		return less
+	})
 }
 
 func createContainer(w http.ResponseWriter, r *http.Request) {
