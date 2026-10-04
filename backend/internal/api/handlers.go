@@ -852,6 +852,23 @@ func createContainer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cfg.Virtualization = runtimeFromRequest(cfg.Virtualization)
+
+	// KVM 能力前置校验（与 v2 的 createInstance 保持一致）。
+	//
+	// 必须放在模板校验**之前**：本机没有 /dev/kvm 时，模板校验会先报
+	// "Template is not enabled or downloaded"——理由是错的，用户会以为是镜像
+	// 没下载而去反复折腾。真实原因是宿主缺少 KVM 能力。
+	//
+	// 同时放在节点分流之前不影响正确性：指定了节点的请求会在下面更早地
+	// 被转发出去（节点自身可能有 KVM）。
+	if cfg.Virtualization == config.VirtualizationKVM && !hostKVMAvailable() {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{
+			Success: false,
+			Message: "本机不支持 KVM（缺少 /dev/kvm 或 virsh）；如需 KVM 实例，请在产品配置中指定支持 KVM 的节点",
+		})
+		return
+	}
+
 	if cfg.TemplateID == "" {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Template is required"})
 		return

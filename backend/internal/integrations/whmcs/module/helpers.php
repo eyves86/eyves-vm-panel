@@ -226,18 +226,6 @@ function eyvescloud_option_definitions()
         ];
     }
 
-    // IP 组：多 IP 高可用/故障切换场景使用。
-    if (!empty($dyn['ipgroups'])) {
-        $dynamic[] = [
-            'label'       => 'IP 组',
-            'key'         => 'ip_group',
-            'type'        => 'dropdown',
-            'default'     => '',
-            'description' => '开通时从该 IP 组分配公网地址；不使用则留空',
-            'options'     => ['' => '不使用'] + $dyn['ipgroups'],
-        ];
-    }
-
     // 安全组：绑定到新开通的实例。注意面板侧默认不强制执行，需在面板开启。
     if (!empty($dyn['secgroups'])) {
         $dynamic[] = [
@@ -249,6 +237,10 @@ function eyvescloud_option_definitions()
             'options'     => ['' => '不绑定'] + $dyn['secgroups'],
         ];
     }
+
+    // 刻意不做「IP 组」配置项：面板虽有 IPGroup 数据结构（供 failover 场景用），
+    // 但容器侧完全没有绑定 IP 组的能力——创建接口不接受该参数，也没有绑定端点。
+    // 加一个传不过去的下拉只会变成"配了不生效"的假功能。
 
     $defs = [
         [

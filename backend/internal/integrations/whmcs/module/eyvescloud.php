@@ -302,7 +302,28 @@ function eyvescloud_Off(array $params)
  */
 function eyvescloud_HardOff(array $params)
 {
-    return eyvescloud_account_action($params, 'destroy', '硬关机任务已提交（强制 kill）', 90);
+    // 面板的「强制关机」是 v2 的 power 动作 hard-stop（内部映射到 agent 的
+    // force-stop：只断电、保留磁盘）。
+    //
+    // 此前这里调用的是 'destroy' —— 那是「销毁实例并删除磁盘」。虽然 v1 并不
+    // 存在该端点（所以此前表现为功能不可用而非数据被删），但语义完全错误：
+    // 一旦该端点上线，客户点一下"强制关机"就会连数据一起没。这里改为明确走
+    // v2 的 hard-stop，让按钮文案与真实行为一致。
+    $id = eyvescloud_isoNumericID($params);
+    if ($id <= 0) {
+        return '无法解析实例编号（请先同步一次实例信息）';
+    }
+    $res = eyvescloud_request(
+        $params,
+        '/api/v2/instances/' . $id . '/power',
+        ['action' => 'hard-stop'],
+        'POST',
+        90
+    );
+    if (!eyvescloud_success($res)) {
+        return eyvescloud_message($res, '强制关机失败');
+    }
+    return 'success';
 }
 
 /**
