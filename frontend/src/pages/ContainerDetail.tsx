@@ -205,6 +205,9 @@ export default function ContainerDetail() {
   const [draft, setDraft] = useState<MappingDraft>(emptyDraft)
   const [savingMapping, setSavingMapping] = useState(false)
   const [subUsers, setSubUsers] = useState<SubUser[]>([])
+  // 子用户加载失败标记与重试计数：失败时属主弹窗显示错误+重试，而不是误报“暂无子用户”。
+  const [subUsersError, setSubUsersError] = useState(false)
+  const [subUsersReloadKey, setSubUsersReloadKey] = useState(0)
   const [changingOwner, setChangingOwner] = useState(false)
   const [showOwnerEdit, setShowOwnerEdit] = useState(false)
   const [ownerDraft, setOwnerDraft] = useState('')
@@ -403,13 +406,19 @@ export default function ContainerDetail() {
     let cancelled = false
     listSubUsers()
       .then((res) => {
-        if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
+        if (cancelled) return
+        if (res.data?.success && Array.isArray(res.data.data)) {
           setSubUsers(res.data.data)
+          setSubUsersError(false)
+        } else {
+          setSubUsersError(true)
         }
       })
-      .catch(() => { /* 静默失败 */ })
+      .catch(() => {
+        if (!cancelled) setSubUsersError(true)
+      })
     return () => { cancelled = true }
-  }, [isSubUser])
+  }, [isSubUser, subUsersReloadKey])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -803,11 +812,13 @@ export default function ContainerDetail() {
         setContainer((prev) => prev ? { ...prev, owner_sub_user_id: nextOwnerId } : prev)
         setShowOwnerEdit(false)
         const owner = subUsers.find((u) => u.id === nextOwnerId)
-        dialog.alert('完成', owner ? `已绑定给子用户「${owner.username}」` : '已解绑属主')
+        dialog.alert(t('属主已更新'), owner ? `${t('已绑定给子用户')}：${owner.username}` : t('已解绑属主'))
+      } else {
+        dialog.alert(t('变更属主失败'), res.data?.message || t('请稍后重试'))
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
-      dialog.alert('失败', error.response?.data?.message || '变更属主失败')
+      dialog.alert(t('变更属主失败'), error.response?.data?.message || t('请稍后重试'))
     } finally {
       setChangingOwner(false)
     }
@@ -882,6 +893,8 @@ export default function ContainerDetail() {
         setResetPasswordResult(nextPassword)
         setResetPasswordDraft(nextPassword)
         await fetchContainer()
+      } else {
+        dialog.alert(t('密码重置失败'), res.data?.message || t('请稍后重试'))
       }
     } catch (err: unknown) {
       console.error(err)
@@ -937,6 +950,8 @@ export default function ContainerDetail() {
       })
       if (res.data.success) {
         setAccountResult(`账号 ${username} 已创建${accountSudo ? '（已授予提权）' : ''}`)
+      } else {
+        dialog.alert(t('创建账号失败'), res.data?.message || t('请稍后重试'))
       }
     } catch (err: unknown) {
       console.error(err)
@@ -3261,9 +3276,16 @@ export default function ContainerDetail() {
                   </option>
                 ))}
               </select>
-              {subUsers.length === 0 && (
+              {subUsersError ? (
+                <p className="mt-1 text-xs text-red-600">
+                  {t('子用户加载失败')}
+                  <button onClick={() => setSubUsersReloadKey((k) => k + 1)} className="ml-1 underline hover:no-underline">
+                    {t('重试')}
+                  </button>
+                </p>
+              ) : subUsers.length === 0 ? (
                 <p className="mt-1 text-xs text-amber-600">暂无子用户，请先到「用户与租户 → 子用户管理」创建</p>
-              )}
+              ) : null}
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={() => setShowOwnerEdit(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>

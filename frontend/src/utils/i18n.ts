@@ -2420,6 +2420,12 @@ const exact: Record<string, string> = {
   "租户 A": "Tenant A",
   "复制 Secret": "Copy Secret",
   "编辑 Webhook 订阅": "Edit Webhook Subscription",
+  // === UI feedback: owner change & account flows ===
+  "重试": "Retry",
+  "属主已更新": "Owner updated",
+  "已绑定给子用户": "Bound to sub-user",
+  "变更属主失败": "Failed to change owner",
+  "子用户加载失败": "Failed to load sub-users",
   // === Phase 2 t() refactor gap fill (42 entries) ===
 }
 

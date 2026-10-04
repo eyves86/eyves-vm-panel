@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react'
 import CreateContainerModal from '../components/CreateContainerModal'
+import { useDialog } from '../components/Dialog'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import {
@@ -46,6 +47,8 @@ import { v2ListRecycleBin, v2RestoreInstance, v2PurgeInstance, v2RecycleItemToCo
 
 export default function Containers() {
   const navigate = useNavigate()
+  const dialog = useDialog()
+  const { t } = useLanguage()
   const { isSubUser, can, features } = useAuth()
   // 创建按钮：v2 功能点可用时以后者为准（更精确，含 API Key scope）；
   // v2 不可用（features 为空）时退回"非子用户即可创建"的旧判断，避免误伤。
@@ -86,6 +89,9 @@ export default function Containers() {
   const [sortField, setSortField] = useState<'id' | 'cpu' | 'ram' | 'disk' | 'net' | null>(null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [subUsers, setSubUsers] = useState<SubUser[]>([])
+  // 子用户加载失败标记与重试计数：失败时属主下拉显示错误+重试，而不是误报“暂无子用户”。
+  const [subUsersError, setSubUsersError] = useState(false)
+  const [subUsersReloadKey, setSubUsersReloadKey] = useState(0)
   const [ownerMenuId, setOwnerMenuId] = useState<number | null>(null)
   // 回收站视图（同类商业面板 同款）：开启后列表显示软删除实例，可恢复/彻底删除。
   const [showRecycle, setShowRecycle] = useState(false)
@@ -98,13 +104,19 @@ export default function Containers() {
     let cancelled = false
     listSubUsers()
       .then((res) => {
-        if (!cancelled && res.data?.success && Array.isArray(res.data.data)) {
+        if (cancelled) return
+        if (res.data?.success && Array.isArray(res.data.data)) {
           setSubUsers(res.data.data)
+          setSubUsersError(false)
+        } else {
+          setSubUsersError(true)
         }
       })
-      .catch(() => { /* 静默失败：列表仍可用，只是没下拉 */ })
+      .catch(() => {
+        if (!cancelled) setSubUsersError(true)
+      })
     return () => { cancelled = true }
-  }, [isSubUser])
+  }, [isSubUser, subUsersReloadKey])
 
   // 加载节点列表（仅管理员视图需要，用于显示容器来源节点）
   useEffect(() => {
@@ -124,17 +136,24 @@ export default function Containers() {
     return () => { cancelled = true }
   }, [isSubUser])
 
-  // 行内变更属主：成功后本地更新，失败依赖 5s 轮询回滚显示
+  // 行内变更属主：成功/失败均给出明确反馈（不再静默回滚）
   const applyOwnerChange = async (container: DisplayContainer, ownerId: string) => {
     setOwnerMenuId(null)
     if (changingOwner || container.isPlaceholder) return
     if ((container.owner_sub_user_id || '') === ownerId) return
     setChangingOwner(true)
     try {
-      await changeContainerOwner(container.uuid || container.id, ownerId)
+      const res = await changeContainerOwner(container.uuid || container.id, ownerId)
+      if (!res.data?.success) {
+        dialog.alert(t('变更属主失败'), res.data?.message || t('请稍后重试'))
+        return
+      }
       setContainers((prev) => prev.map((c) => (c.id === container.id ? { ...c, owner_sub_user_id: ownerId } : c)))
-    } catch {
-      /* 静默失败：下次轮询恢复原值 */
+      const owner = subUsers.find((u) => u.id === ownerId)
+      dialog.alert(t('属主已更新'), owner ? `${t('已绑定给子用户')}：${owner.username}` : t('已解绑属主'))
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert(t('变更属主失败'), error.response?.data?.message || t('请稍后重试'))
     } finally {
       setChangingOwner(false)
     }
@@ -790,9 +809,19 @@ export default function Containers() {
                                       {u.tenant && <span className="ml-auto shrink-0 text-[10px] text-gray-400">{u.tenant}</span>}
                                     </button>
                                   ))}
-                                  {subUsers.length === 0 && (
-                                    <div className="px-3 py-2 text-xs text-gray-400">暂无子用户</div>
-                                  )}
+                                  {subUsersError ? (
+                                    <div className="flex items-center gap-2 px-3 py-2 text-xs text-red-600">
+                                      <span>{t('子用户加载失败')}</span>
+                                      <button
+                                        onClick={() => setSubUsersReloadKey((k) => k + 1)}
+                                        className="underline hover:no-underline"
+                                      >
+                                        {t('重试')}
+                                      </button>
+                                    </div>
+                                  ) : subUsers.length === 0 ? (
+                                    <div className="px-3 py-2 text-xs text-gray-400">{t('暂无子用户')}</div>
+                                  ) : null}
                                 </div>
                               </>
                             )}
