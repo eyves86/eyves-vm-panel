@@ -37,12 +37,19 @@ jobs:
           cp -r dist/* ../backend/internal/server/web/
 
       - name: Build backend (${{ matrix.arch }})
+        env:
+          # F-7：发布公钥（minisign 信封第二行 base64）编译期内嵌，供面板「自升级」
+          # 对 SHA256SUMS 做 ed25519 验签。必须在**这里**注入——安装脚本侧有内置
+          # 默认公钥，但面板二进制若不带 releasePubKeyHex，自升级会视为「开发构建」
+          # 静默跳过验签，签名资产形同虚设。默认值与 install.sh 内置一致，可用仓库
+          # 变量 EYVESCLOUD_RELEASE_PUBKEY 覆盖。
+          EYVESCLOUD_RELEASE_PUBKEY: ${{ vars.EYVESCLOUD_RELEASE_PUBKEY || 'Xyv7jh+bDXBzIf57+PhyfzCUsfEPOIuyUog/j6burGI=' }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cd backend
           go mod download
           CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch }} \
-            go build -trimpath -ldflags="-s -w -X eyvescloud/internal/version.Version=${VERSION}" \
+            go build -trimpath -ldflags="-s -w -X eyvescloud/internal/version.Version=${VERSION} -X eyvescloud/internal/cli.releasePubKeyHex=${EYVESCLOUD_RELEASE_PUBKEY}" \
             -o ../dist/eyvescloud-linux-${{ matrix.arch }} .
 
       - name: Package release assets

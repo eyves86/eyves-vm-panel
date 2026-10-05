@@ -112,6 +112,16 @@ verify_contracts() {
   else
     bad "存在被静默吞掉的落库调用："; printf '      %s\n' "$silent"
   fi
+
+  # 8) 发布产物必须内嵌验签公钥（F-7）：CI 曾只注入 version.Version，未注入
+  #    cli.releasePubKeyHex，导致面板「自升级」把签名校验当"开发构建"静默跳过，
+  #    发布的 SHA256SUMS.minisig 形同虚设。安装脚本侧有内置公钥，但那只覆盖
+  #    首次安装，升级必须由二进制自身验签。
+  if grep -q 'cli\.releasePubKeyHex=' "$ROOT/.github/workflows/build-release.yml"; then
+    ok "CI 构建内嵌 releasePubKeyHex（自升级验签生效）"
+  else
+    bad "CI 构建未内嵌 releasePubKeyHex（自升级验签将被静默跳过）"
+  fi
 }
 
 # ---------------------------------------------------------------------------

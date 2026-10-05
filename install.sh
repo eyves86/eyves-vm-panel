@@ -1097,10 +1097,29 @@ uninstall_eyvescloud() {
     remove_eyvescloud_host_hooks
     remove_eyvescloud_quota_records
 
+    # 被控 agent 服务：正常单元 + reconcile_local_agent_service 停用后的 .disabled 变体
+    if has_cmd systemctl; then
+        systemctl stop eyvescloud-agent >/dev/null 2>&1 || true
+        systemctl disable eyvescloud-agent >/dev/null 2>&1 || true
+    fi
+    if has_cmd rc-service; then
+        rc-service eyvescloud-agent stop >/dev/null 2>&1 || true
+    fi
+    if has_cmd rc-update; then
+        rc-update del eyvescloud-agent default >/dev/null 2>&1 || true
+    fi
+
     remove_path /etc/systemd/system/eyvescloud.service
+    remove_path /etc/systemd/system/eyvescloud-agent.service
+    remove_path /etc/systemd/system/eyvescloud-agent.service.disabled
     remove_path /etc/init.d/eyvescloud
+    remove_path /etc/init.d/eyvescloud-agent
     remove_path /usr/local/bin/eyvescloud
+    # vm 快捷管理菜单（install_vm_tool 生成）
+    remove_path /usr/local/bin/vm
     remove_path /etc/sysctl.d/99-eyvescloud.conf
+    # 网络环境变量目录（network.env 等）
+    remove_path /etc/eyvescloud
     remove_path /var/log/eyvescloud.log
     remove_path /var/log/eyvescloud.err
     remove_path /root/.eyvescloud
