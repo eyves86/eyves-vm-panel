@@ -17,6 +17,17 @@ const severityLabel: Record<string, string> = {
   low: '低危',
 }
 
+// 后端返回英文状态枚举，经中文词条再走 t() 才能得到正确的中/英文案。
+const statusLabel: Record<string, string> = {
+  running: '运行中',
+  stopped: '已停止',
+  exited: '已退出',
+  frozen: '已挂起',
+  paused: '已暂停',
+  initializing: '创建中',
+  creating: '创建中',
+}
+
 function formatRate(value: number): string {
   if (!value || value <= 0) return '-'
   const units = ['B/s', 'KB/s', 'MB/s', 'GB/s']
@@ -225,7 +236,7 @@ export default function Monitoring() {
                           row.status === 'running' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'
                         }`}
                       >
-                        {row.status || '-'}
+                        {row.status ? t(statusLabel[row.status] || row.status) : '-'}
                       </span>
                       {row.policy_blocked && (
                         <span className="ml-1 rounded bg-red-100 px-1.5 py-0.5 text-xs font-medium text-red-700">
@@ -234,7 +245,7 @@ export default function Monitoring() {
                       )}
                     </td>
                     <td className="px-4 py-2.5 text-xs text-gray-600 whitespace-nowrap">
-                      {row.owner || '未分配'}
+                      {row.owner || t('未分配')}
                       {row.tenant ? ` / ${row.tenant}` : ''}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap">{row.ip || '-'}</td>
@@ -260,7 +271,7 @@ export default function Monitoring() {
                             severityClass[row.abuse_severity || ''] || 'bg-gray-100 text-gray-600'
                           }`}
                         >
-                          {severityLabel[row.abuse_severity || ''] || row.abuse_severity} · {row.abuse_alerts}
+                          {row.abuse_severity ? t(severityLabel[row.abuse_severity] || row.abuse_severity) : '-'} · {row.abuse_alerts}
                         </span>
                       ) : (
                         <span className="text-xs text-gray-400">-</span>

@@ -253,14 +253,29 @@ table thead th {
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-  color: #9aa1ab;
+  color: #6b7280;
 }
 .dark table thead th {
-  color: #71717a;
+  color: #9ca3af;
 }
 table tbody tr {
   transition: background-color var(--motion-fast) var(--motion-ease-swift);
 }
+
+/* ---- 浅色模式对比度：白底上不足 4.5:1 的常用文字色收敛到上一档 ---- */
+.text-gray-400 { color: #71717a; }
+.text-amber-600 { color: #b45309; }
+.text-green-600 { color: #15803d; }
+.text-emerald-600 { color: #047857; }
+.text-teal-600 { color: #0f766e; }
+/* 深色代码面板：浅色主题下 muted 文字仍需浅色（深底深字不可读） */
+.bg-gray-800 .text-gray-400,
+.bg-gray-900 .text-gray-400,
+.bg-gray-950 .text-gray-400,
+.bg-black .text-gray-400 { color: #a1a1aa; }
+/* 浅色底上的次级徽标再压深一档，补足 4.5:1 */
+.bg-gray-100.text-gray-500 { color: #5f6672; }
+.bg-red-50.text-red-600 { color: #b91c1c; }
 
 /* ---- 骨架屏：微光扫过（loading 不再空白） ---- */
 .skeleton {
@@ -422,7 +437,7 @@ table tbody tr {
 .dark .text-gray-700 { color: #d4d4d8 !important; }
 .dark .text-gray-600 { color: #a1a1aa !important; }
 .dark .text-gray-500 { color: #a1a1aa !important; }
-.dark .text-gray-400 { color: #71717a !important; }
+.dark .text-gray-400 { color: #8b8b94 !important; }
 
 .dark .border-gray-100 { border-color: #262626 !important; }
 .dark .border-gray-200 { border-color: #333333 !important; }
@@ -454,6 +469,27 @@ table tbody tr {
 .dark .bg-brand-50 { background-color: #2d2444 !important; }
 .dark .bg-brand-100 { background-color: #352a52 !important; }
 
+/* 补齐浅色胶囊/徽标的深色底（缺失时亮底+亮字会不可读） */
+.dark .bg-blue-50 { background-color: #16233a !important; }
+.dark .bg-blue-100 { background-color: #1c2d4a !important; }
+.dark .bg-sky-50 { background-color: #16233a !important; }
+.dark .bg-sky-100 { background-color: #1c2d4a !important; }
+.dark .bg-emerald-100 { background-color: #21402f !important; }
+.dark .bg-emerald-200 { background-color: #2a5043 !important; }
+.dark .bg-green-100 { background-color: #21402f !important; }
+.dark .bg-teal-50 { background-color: #1b322c !important; }
+.dark .bg-red-100 { background-color: #4a2735 !important; }
+.dark .bg-rose-100 { background-color: #4a2735 !important; }
+.dark .bg-amber-200 { background-color: #5c4726 !important; }
+.dark .bg-yellow-100 { background-color: #4a3820 !important; }
+.dark .bg-orange-50 { background-color: #3a2c1a !important; }
+.dark .bg-orange-100 { background-color: #4a3820 !important; }
+.dark .bg-indigo-100 { background-color: #352a52 !important; }
+.dark .bg-violet-50 { background-color: #2d2444 !important; }
+.dark .bg-purple-50 { background-color: #2d2444 !important; }
+.dark .bg-purple-100 { background-color: #352a52 !important; }
+.dark .bg-slate-50 { background-color: #1a1f2b !important; }
+
 .dark .text-green-700 { color: #9bd7bf !important; }
 .dark .text-red-600 { color: #f0a1b3 !important; }
 .dark .text-red-700 { color: #f0a1b3 !important; }
@@ -462,14 +498,48 @@ table tbody tr {
 .dark .text-emerald-700 { color: #9bd7bf !important; }
 .dark .text-emerald-600 { color: #9bd7bf !important; }
 .dark .text-amber-800 { color: #fde68a !important; }
-.dark .text-indigo-700 { color: #d1d5db !important; }
-.dark .text-brand-600 { color: #3b82f6 !important; }
-.dark .text-brand-700 { color: #3b82f6 !important; }
+.dark .text-indigo-700 { color: #c7c3f5 !important; }
+.dark .text-brand-600 { color: #93c5fd !important; }
+.dark .text-brand-700 { color: #93c5fd !important; }
+
+/* 深色主按钮：brand-500(#3b82f6) 上白字仅 3.7:1，降深到 #2563eb 后 5.2:1 */
+.dark .dark\:bg-brand-500 { background-color: #2563eb !important; }
+.dark .dark\:hover\:bg-brand-400:hover { background-color: #1d4ed8 !important; }
+
+/* 卡片水印：深色下浅色渐变，否则近乎不可见 */
+.dark .card-watermark {
+  background-image: linear-gradient(to bottom right, #f4f4f5, #a1a1aa, #52525b) !important;
+  opacity: .16 !important;
+}
+
+/* 补齐徽标文字色（与上方深色底成对，保证对比度） */
+.dark .text-blue-600,
+.dark .text-blue-700,
+.dark .text-blue-800 { color: #9dc0f0 !important; }
+.dark .text-sky-700 { color: #9dc0f0 !important; }
+.dark .text-yellow-700 { color: #e8c88a !important; }
+.dark .text-orange-700 { color: #e8c88a !important; }
+.dark .text-green-800 { color: #9bd7bf !important; }
+.dark .text-emerald-800 { color: #9bd7bf !important; }
+.dark .text-teal-600 { color: #9bd7bf !important; }
+.dark .text-rose-700 { color: #f0a1b3 !important; }
+.dark .text-violet-700 { color: #c7c3f5 !important; }
+.dark .text-purple-600,
+.dark .text-purple-700 { color: #c7c3f5 !important; }
+.dark .text-indigo-600,
+.dark .text-indigo-800 { color: #c7c3f5 !important; }
+.dark .text-slate-700 { color: #cbd5e1 !important; }
 
 .dark .border-emerald-200 { border-color: #2a5043 !important; }
 .dark .border-red-200 { border-color: #5b3045 !important; }
 .dark .border-amber-200 { border-color: #5c4726 !important; }
 .dark .border-brand-200 { border-color: #49345f !important; }
+.dark .border-green-200 { border-color: #2a5043 !important; }
+.dark .border-blue-200 { border-color: #24405f !important; }
+.dark .border-sky-200 { border-color: #24405f !important; }
+.dark .border-indigo-200 { border-color: #49345f !important; }
+.dark .border-amber-300 { border-color: #5c4726 !important; }
+.dark .border-red-300 { border-color: #5b3045 !important; }
 
 .dark .focus\:ring-brand-500:focus { --tw-ring-color: #3b82f6 !important; }
 .dark .focus\:border-brand-500:focus { border-color: #3b82f6 !important; }
@@ -491,7 +561,7 @@ table tbody tr {
 .dark .dark\:text-black { color: #111111 !important; }
 .dark .dark\:text-gray-300 { color: #d4d4d8 !important; }
 .dark .dark\:text-gray-400 { color: #a1a1aa !important; }
-.dark .dark\:text-gray-500 { color: #71717a !important; }
+.dark .dark\:text-gray-500 { color: #a1a1aa !important; }
 .dark .dark\:text-emerald-300 { color: #9bd7bf !important; }
 .dark .dark\:text-red-300 { color: #f0a1b3 !important; }
 .dark .dark\:text-amber-300 { color: #e8c88a !important; }

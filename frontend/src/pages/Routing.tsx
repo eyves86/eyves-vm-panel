@@ -917,7 +917,7 @@ function CapacityCard({ title, watermark, remaining, total, used, label, usedLab
 }) {
   return (
     <div className="relative overflow-hidden rounded-xl border border-gray-200 bg-white p-4">
-      <div className="pointer-events-none absolute bottom-1 right-3 select-none bg-gradient-to-br from-black via-gray-600 to-gray-300 bg-clip-text text-[44px] font-black italic tracking-wide text-transparent opacity-25 -skew-x-12">
+      <div className="card-watermark pointer-events-none absolute bottom-1 right-3 select-none bg-gradient-to-br from-black via-gray-600 to-gray-300 bg-clip-text text-[44px] font-black italic tracking-wide text-transparent opacity-25 -skew-x-12">
         {watermark}
       </div>
       <div className="relative z-10">

@@ -216,6 +216,8 @@ const exact: Record<string, string> = {
   '出': 'Out',
   '运行中': 'Running',
   '已停止': 'Stopped',
+  '已退出': 'Exited',
+  '已暂停': 'Paused',
   '已完成': 'Completed',
   '等待中': 'Pending',
   '执行中': 'Running',

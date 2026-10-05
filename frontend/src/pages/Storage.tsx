@@ -298,7 +298,7 @@ function DiskUsageBar({
               className="flex h-full items-center justify-center overflow-hidden border-r border-white/70 text-[10px] font-medium text-white last:border-r-0"
               style={{ width: `${pct}%`, minWidth: pct > 0 && pct < 0.6 ? '3px' : undefined, backgroundColor: segment.color }}
             >
-              {pct >= 9 && <span className={segment.key === 'free' ? 'text-gray-600' : ''}>{t(segment.label)}</span>}
+              {pct >= 9 && <span style={segment.key === 'free' ? { color: '#374151' } : undefined}>{t(segment.label)}</span>}
             </div>
           )
         })}

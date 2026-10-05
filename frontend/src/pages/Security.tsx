@@ -338,7 +338,7 @@ export default function Security() {
               <tbody className="divide-y divide-gray-100">
                 {abuse.by_owner.map((row, index) => (
                   <tr key={`${row.owner}-${row.tenant}-${index}`} className="hover:bg-gray-50">
-                    <td className="px-4 py-2.5 text-gray-800 whitespace-nowrap">{row.owner || '未分配'}</td>
+                    <td className="px-4 py-2.5 text-gray-800 whitespace-nowrap">{row.owner || t('未分配')}</td>
                     <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">{row.tenant || '-'}</td>
                     <td className="px-4 py-2.5 whitespace-nowrap">
                       <SeverityBadge severity={row.severity} />
