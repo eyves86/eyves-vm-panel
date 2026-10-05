@@ -116,7 +116,14 @@ export default function SubUserManagement() {
     try {
       const res = await listSubUsersPaged({ page, page_size: pageSize })
       const data = res.data.data
-      setUsers((data?.items as SubUserItem[] | undefined) || [])
+      // 后端对"空账号"（未绑定任何容器）返回 container_names/container_uuids = null，
+      // 直接 .length/.map 会让整页白屏，这里统一归一化为数组。
+      const items = (data?.items as SubUserItem[] | undefined) || []
+      setUsers(items.map((u) => ({
+        ...u,
+        container_names: u.container_names || [],
+        container_uuids: u.container_uuids || [],
+      })))
       setUsersTotal(data?.total ?? 0)
     } catch (err) {
       console.error(err)

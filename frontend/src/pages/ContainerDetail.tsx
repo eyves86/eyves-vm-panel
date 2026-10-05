@@ -115,6 +115,7 @@ import {
   updatePortMapping,
   SubUser,
   changeContainerOwner,
+  rotateSubUserPassword,
   getISOs,
   ISOFile,
   containerRescue,
@@ -219,6 +220,8 @@ export default function ContainerDetail() {
   const [traffic, setTraffic] = useState<TrafficInfo | null>(null)
   const [subUser, setSubUser] = useState<SubUser | null>(null)
   const [showSubUser, setShowSubUser] = useState(false)
+  const [subUserBusy, setSubUserBusy] = useState(false)
+  const [rotatingSubUser, setRotatingSubUser] = useState(false)
   const [showTrafficEdit, setShowTrafficEdit] = useState(false)
   const [trafficEdit, setTrafficEdit] = useState({ mode: 'total', monthly: 0, inGB: 0, outGB: 0 })
   const [savingTraffic, setSavingTraffic] = useState(false)
@@ -740,16 +743,44 @@ export default function ContainerDetail() {
     }
   }
 
+  // 打开「管理链接」：容器未绑定属主时创建子用户，已绑定时幂等返回既有子用户。
   const handleCreateSubUser = async () => {
-    if (!container?.uuid) return
+    if (!container?.uuid || subUserBusy) return
+    setSubUserBusy(true)
     try {
       const res = await createSubUser(container.uuid)
       if (res.data.success && res.data.data) {
         setSubUser(res.data.data)
         setShowSubUser(true)
+      } else {
+        dialog.alert(t('打开管理链接失败'), res.data.message || t('请稍后重试'))
       }
-    } catch (err) {
-      console.error(err)
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert(t('打开管理链接失败'), error.response?.data?.message || t('请稍后重试'))
+    } finally {
+      setSubUserBusy(false)
+    }
+  }
+
+  // 重置该子用户的管理密码：明文仅本次返回，旧密码与所有已签发 token 立即失效。
+  const handleRotateSubUserPassword = async () => {
+    if (!subUser || rotatingSubUser) return
+    if (!(await dialog.confirm(t('重置管理密码'), t('将为该子用户生成新密码，其当前密码与所有已登录会话将立即失效。确定继续？')))) return
+    setRotatingSubUser(true)
+    try {
+      const res = await rotateSubUserPassword(subUser.id)
+      if (res.data.success && res.data.data) {
+        const data = res.data.data
+        setSubUser((prev) => prev ? { ...prev, username: data.username || prev.username, access_code: data.access_code || prev.access_code, password: data.password } : prev)
+      } else {
+        dialog.alert(t('重置管理密码失败'), res.data.message || t('请稍后重试'))
+      }
+    } catch (err: unknown) {
+      const error = err as { response?: { data?: { message?: string } } }
+      dialog.alert(t('重置管理密码失败'), error.response?.data?.message || t('请稍后重试'))
+    } finally {
+      setRotatingSubUser(false)
     }
   }
 
@@ -1851,9 +1882,9 @@ export default function ContainerDetail() {
               </>
             )}
             {!isSubUser && (
-              <ActionButton onClick={handleCreateSubUser} disabled={!!taskStatus || isExpired}>
+              <ActionButton onClick={handleCreateSubUser} disabled={!!taskStatus || isExpired || subUserBusy}>
                 <UserPlus className="w-3.5 h-3.5" />
-                管理链接
+                {subUserBusy ? t('打开中...') : t('管理链接')}
               </ActionButton>
             )}
             {!hasIndependentIPv4 && hasNATQuota && (
@@ -3074,21 +3105,49 @@ export default function ContainerDetail() {
       )}
 
       {showSubUser && subUser && (
-        <Modal title="管理链接" onClose={() => setShowSubUser(false)}>
-          <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 text-sm space-y-3">
-            <div className="flex items-start justify-between gap-3">
-              <span className="shrink-0 text-gray-500 dark:text-gray-400">地址</span>
-              <div className="flex min-w-0 items-center gap-1">
-                <span className="font-mono text-xs text-black dark:text-white break-all">{managementUrl}</span>
-                <button onClick={() => copyText(managementUrl)} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded"><Copy className="w-3 h-3" /></button>
+        <Modal title={t('管理链接')} onClose={() => setShowSubUser(false)}>
+          <div className="space-y-3">
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              {t('把地址发给使用者：打开后输入「访问码 + 密码」登录，登录后仅能管理本容器。')}
+            </p>
+            <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 text-sm space-y-3">
+              {([
+                [t('登录账号'), subUser.username],
+                [t('访问码'), subUser.access_code || '-'],
+                [t('管理地址'), managementUrl],
+              ] as Array<[string, string]>).map(([label, value]) => (
+                <div key={label} className="flex items-start justify-between gap-3">
+                  <span className="shrink-0 text-gray-500 dark:text-gray-400">{label}</span>
+                  <div className="flex min-w-0 items-center gap-1">
+                    <span className="font-mono text-xs text-black dark:text-white break-all">{value}</span>
+                    <button onClick={() => copyText(value)} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title={t('复制')}><Copy className="w-3 h-3" /></button>
+                  </div>
+                </div>
+              ))}
+              <div className="flex items-start justify-between gap-3">
+                <span className="shrink-0 text-gray-500 dark:text-gray-400">{t('密码')}</span>
+                <div className="flex min-w-0 items-center gap-1">
+                  {subUser.password ? (
+                    <>
+                      <span className="font-mono text-xs text-black dark:text-white break-all">{subUser.password}</span>
+                      <button onClick={() => copyText(subUser.password || '')} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title={t('复制')}><Copy className="w-3 h-3" /></button>
+                    </>
+                  ) : (
+                    <span className="text-right text-xs text-gray-500 dark:text-gray-400">{t('出于安全不回显（子用户可能已自行改密）')}</span>
+                  )}
+                </div>
               </div>
             </div>
-            <div className="flex items-start justify-between gap-3">
-              <span className="shrink-0 text-gray-500 dark:text-gray-400">密码</span>
-              <div className="flex min-w-0 items-center gap-1">
-                <span className="font-mono text-xs text-black dark:text-white">{subUser.password || ''}</span>
-                <button onClick={() => copyText(subUser.password || '')} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded"><Copy className="w-3 h-3" /></button>
-              </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-xs text-gray-500 dark:text-gray-400">{t('重置后将生成新密码并踢下线，仅在本次弹窗内显示。')}</span>
+              <button
+                onClick={() => void handleRotateSubUserPassword()}
+                disabled={rotatingSubUser}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${rotatingSubUser ? 'animate-spin' : ''}`} />
+                {rotatingSubUser ? t('重置中...') : t('重置密码')}
+              </button>
             </div>
           </div>
         </Modal>

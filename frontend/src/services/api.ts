@@ -1780,8 +1780,10 @@ export const updateSubUser = (id: string, payload: { username?: string; email?: 
   api.put<APIResponse<SubUser>>(`/sub-users/${id}/edit`, payload)
 
 // 删除子用户：其名下容器的归属会被自动解绑（容器本身保留）
+// 服务端路由要求 /delete 后缀（见 subuser.go 的 action=="delete" 分支），少了它只会返回
+// HTTP 200 + success:false「Action not found」，axios 不抛错 → 前端会误报删除成功。
 export const deleteSubUser = (id: string) =>
-  api.delete<APIResponse<{ id: string; username: string; freed_containers: string[] }>>(`/sub-users/${id}`)
+  api.delete<APIResponse<{ id: string; username: string; freed_containers: string[] }>>(`/sub-users/${id}/delete`)
 
 // 整体替换子用户的容器绑定集（containers 支持 id/uuid/name）
 export const bindSubUserContainers = (id: string, containers: string[]) =>
@@ -1789,6 +1791,10 @@ export const bindSubUserContainers = (id: string, containers: string[]) =>
 
 export const changeContainerOwner = (id: number | string, ownerSubUserId: string) =>
   api.put<APIResponse<{ owner_sub_user_id: string; owner_username?: string }>>(`/containers/${id}/owner`, { owner_sub_user_id: ownerSubUserId })
+
+// 管理员重置子用户密码：服务端生成随机 16 位新密码并一次性返回（旧密码与所有已签发 token 立即失效）。
+export const rotateSubUserPassword = (id: string) =>
+  api.post<APIResponse<{ password: string; access_code: string; username: string }>>(`/sub-users/${id}/rotate-password`)
 
 // Audit Logs
 export interface AuditLog {
