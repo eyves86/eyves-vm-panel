@@ -2944,8 +2944,15 @@ print_summary() {
     echo "  $(tr_msg "Web 面板：")http://YOUR_SERVER_IP:8999"
     echo "  $(tr_msg "快捷命令：")vm ($(tr_msg "查看面板信息/改账号/重置密码/重启服务"))"
     echo "  $(tr_msg "二进制：")/usr/local/bin/eyvescloud"
-    echo "  LXC NAT: ${LXC_NAT_SUBNET} (gateway ${LXC_NAT_GATEWAY})"
-    echo "  KVM NAT: ${KVM_NAT_SUBNET} (gateway ${KVM_NAT_GATEWAY})"
+    # agent 模式跳过 choose_nat_networks，这两个变量可能未赋值；直接展开会在
+    # `set -u` 下以 "LXC_NAT_SUBNET: unbound variable" 中止，导致本已成功的
+    # agent 安装以非零码收尾（表现为"安装失败"）。仅在已配置时打印。
+    if [ -n "${LXC_NAT_SUBNET:-}" ]; then
+        echo "  LXC NAT: ${LXC_NAT_SUBNET} (gateway ${LXC_NAT_GATEWAY:-})"
+    fi
+    if [ -n "${KVM_NAT_SUBNET:-}" ]; then
+        echo "  KVM NAT: ${KVM_NAT_SUBNET} (gateway ${KVM_NAT_GATEWAY:-})"
+    fi
     echo "  $(tr_msg "安装日志：")$LOG_FILE"
     echo "  $(tr_msg "问题反馈：")$ISSUE_URL"
     if is_systemd; then
@@ -3001,7 +3008,14 @@ if [ "$install_mode" != "agent" ]; then
     run_step "检查 project quota" try_enable_project_quota
 fi
 choose_version_interactively
-run_step "检查升级兼容性" check_upgrade_compatibility
+# 幂等短路必须**在当前 shell**执行：check_upgrade_compatibility 在「已装版本==
+# 目标版本」时会 print_summary 后 exit 0，用于短路整个安装。若用 run_step 包裹，
+# run_step 在子 shell 内执行步骤，子 shell 里的 exit 只结束子 shell —— 脚本会继续
+# 走到「下载发行版包 / 安装二进制」，把同版本重新下载覆盖安装，幂等形同虚设。
+# 该步骤唯一的失败路径是 die()（其自身已打印并以非零码退出），无需 run_step 回显。
+log "开始：检查升级兼容性"
+check_upgrade_compatibility
+log "完成：检查升级兼容性"
 run_step "下载发行版包" download_release_if_needed
 run_step "安装 EYVESCLOUD 二进制" install_binary
 

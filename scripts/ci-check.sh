@@ -132,6 +132,26 @@ verify_contracts() {
   else
     bad "安装幂等退化：未对 target 版本剥离前导 v（重复安装不会跳过）"
   fi
+
+  # 10) agent 模式会跳过 NAT 网段配置，LXC_NAT_SUBNET/KVM_NAT_SUBNET 未赋值。
+  #     print_summary 若无条件展开这两个变量，会在 `set -u` 下以
+  #     "unbound variable" 中止，使本已成功的 agent 安装以非零码收尾。
+  if sed -n '/^print_summary()/,/^}/p' "$ROOT/install.sh" \
+       | grep -q 'LXC_NAT_SUBNET:-'; then
+    ok "print_summary 对 NAT 变量做了空值保护（agent 模式不误报失败）"
+  else
+    bad "print_summary 未保护 NAT 变量（agent 模式安装会以 unbound variable 失败）"
+  fi
+
+  # 11) 幂等短路不得被 run_step 的子 shell 吞掉：run_step 在子 shell 里跑步骤，
+  #     步骤内的 exit 0 只结束子 shell，主流程会继续重新下载覆盖安装。
+  if grep -q 'run_step "检查升级兼容性"' "$ROOT/install.sh"; then
+    bad "幂等步骤被 run_step 包裹（子 shell 吞掉 exit 0，重复安装不会短路）"
+  elif grep -qE '^check_upgrade_compatibility$' "$ROOT/install.sh"; then
+    ok "幂等短路步骤在当前 shell 直接调用（exit 0 生效）"
+  else
+    bad "未找到 check_upgrade_compatibility 的调用点（幂等检查可能缺失）"
+  fi
 }
 
 # ---------------------------------------------------------------------------
