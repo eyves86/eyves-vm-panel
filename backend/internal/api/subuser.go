@@ -1336,6 +1336,22 @@ func HandleSubUserList(w http.ResponseWriter, r *http.Request) {
 		result = append(result, item)
 	}
 
+	// 服务端搜索（企业级万级子用户：下拉选择器按关键字过滤，避免下发全量）。
+	// 命中范围：用户名 / 邮箱 / ID / 租户 / 角色（不区分大小写子串）。
+	if q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("search"))); q != "" {
+		filtered := result[:0]
+		for _, it := range result {
+			if strings.Contains(strings.ToLower(it.Username), q) ||
+				strings.Contains(strings.ToLower(it.Email), q) ||
+				strings.Contains(strings.ToLower(it.ID), q) ||
+				strings.Contains(strings.ToLower(it.Tenant), q) ||
+				strings.Contains(strings.ToLower(it.Role), q) {
+				filtered = append(filtered, it)
+			}
+		}
+		result = filtered
+	}
+
 	p := parsePagination(r)
 	if p.Invalid {
 		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST",

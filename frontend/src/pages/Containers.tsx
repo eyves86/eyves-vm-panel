@@ -23,6 +23,7 @@ import {
   X,
 } from 'lucide-react'
 import CreateContainerModal from '../components/CreateContainerModal'
+import SubUserPicker from '../components/SubUserPicker'
 import { useDialog } from '../components/Dialog'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
@@ -37,8 +38,6 @@ import {
   Task,
   getTasks,
   deleteTask,
-  SubUser,
-  listSubUsers,
   changeContainerOwner,
   getNodes,
 } from '../services/api'
@@ -88,35 +87,11 @@ export default function Containers() {
   const [pageSize, setPageSize] = useState(10)
   const [sortField, setSortField] = useState<'id' | 'cpu' | 'ram' | 'disk' | 'net' | null>(null)
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
-  const [subUsers, setSubUsers] = useState<SubUser[]>([])
-  // 子用户加载失败标记与重试计数：失败时属主下拉显示错误+重试，而不是误报“暂无子用户”。
-  const [subUsersError, setSubUsersError] = useState(false)
-  const [subUsersReloadKey, setSubUsersReloadKey] = useState(0)
-  const [ownerMenuId, setOwnerMenuId] = useState<number | null>(null)
+  // 属主列/筛选改为服务端搜索+分页（SubUserPicker），不再一次性拉取全量子用户。
   // 回收站视图（同类商业面板 同款）：开启后列表显示软删除实例，可恢复/彻底删除。
   const [showRecycle, setShowRecycle] = useState(false)
   const [changingOwner, setChangingOwner] = useState(false)
   const [ownerFilter, setOwnerFilter] = useState('all')
-
-  // 加载子用户列表（仅管理员视图需要）
-  useEffect(() => {
-    if (isSubUser) return
-    let cancelled = false
-    listSubUsers()
-      .then((res) => {
-        if (cancelled) return
-        if (res.data?.success && Array.isArray(res.data.data)) {
-          setSubUsers(res.data.data)
-          setSubUsersError(false)
-        } else {
-          setSubUsersError(true)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setSubUsersError(true)
-      })
-    return () => { cancelled = true }
-  }, [isSubUser, subUsersReloadKey])
 
   // 加载节点列表（仅管理员视图需要，用于显示容器来源节点）
   useEffect(() => {
@@ -136,11 +111,18 @@ export default function Containers() {
     return () => { cancelled = true }
   }, [isSubUser])
 
-  // 行内变更属主：成功/失败均给出明确反馈（不再静默回滚）
-  const applyOwnerChange = async (container: DisplayContainer, ownerId: string) => {
-    setOwnerMenuId(null)
+  // 行内变更属主：二次确认 + 成功/失败均给出明确反馈（不再静默回滚）
+  const applyOwnerChange = async (container: DisplayContainer, ownerId: string, ownerLabel: string) => {
     if (changingOwner || container.isPlaceholder) return
     if ((container.owner_sub_user_id || '') === ownerId) return
+    const binding = ownerId !== ''
+    const ok = await dialog.confirm(
+      binding ? t('确认变更属主') : t('确认解绑属主'),
+      binding
+        ? `${t('确定将该容器的属主变更为')}「${ownerLabel}」？`
+        : t('确定解除该容器的属主绑定吗？')
+    )
+    if (!ok) return
     setChangingOwner(true)
     try {
       const res = await changeContainerOwner(container.uuid || container.id, ownerId)
@@ -148,9 +130,8 @@ export default function Containers() {
         dialog.alert(t('变更属主失败'), res.data?.message || t('请稍后重试'))
         return
       }
-      setContainers((prev) => prev.map((c) => (c.id === container.id ? { ...c, owner_sub_user_id: ownerId } : c)))
-      const owner = subUsers.find((u) => u.id === ownerId)
-      dialog.alert(t('属主已更新'), owner ? `${t('已绑定给子用户')}：${owner.username}` : t('已解绑属主'))
+      setContainers((prev) => prev.map((c) => (c.id === container.id ? { ...c, owner_sub_user_id: ownerId, owner_username: binding ? ownerLabel : '' } : c)))
+      dialog.alert(t('属主已更新'), binding ? `${t('已绑定给子用户')}：${ownerLabel}` : t('已解绑属主'))
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
       dialog.alert(t('变更属主失败'), error.response?.data?.message || t('请稍后重试'))
@@ -579,19 +560,18 @@ export default function Containers() {
                 ))}
               </select>
             )}
-            {!isSubUser && subUsers.length > 0 && (
-              <select
+            {!isSubUser && (
+              <SubUserPicker
                 value={ownerFilter}
-                onChange={(event) => setOwnerFilter(event.target.value)}
-                className="h-8 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
-                title="属主筛选"
-              >
-                <option value="all">全部属主</option>
-                <option value="__none__">未绑定</option>
-                {subUsers.map((u) => (
-                  <option key={u.id} value={u.id}>{u.username}</option>
-                ))}
-              </select>
+                onChange={(id) => setOwnerFilter(id)}
+                placeholder={t('全部属主')}
+                leadingOptions={[
+                  { value: 'all', label: t('全部属主') },
+                  { value: '__none__', label: t('未绑定') },
+                ]}
+                triggerClassName="inline-flex h-8 items-center gap-1 rounded-md border border-gray-300 bg-white px-2 text-xs text-gray-700 outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-500"
+                menuWidthClass="w-56"
+              />
             )}
             <select
               value={pageSize}
@@ -764,68 +744,25 @@ export default function Containers() {
                       </td>
                       {!isSubUser && (
                         <td className="px-2.5 py-2 align-top">
-                          <div className="relative">
-                            <button
-                              onClick={() => setOwnerMenuId(ownerMenuId === container.id ? null : container.id)}
-                              disabled={isPlaceholder || changingOwner}
-                              className="inline-flex items-center gap-1 text-xs rounded transition-colors hover:ring-1 hover:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-60"
-                              title="点击变更属主"
-                            >
-                              {(() => {
-                                const owner = subUsers.find((u) => u.id === container.owner_sub_user_id)
-                                if (container.owner_sub_user_id && owner) {
-                                  return (
-                                    <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
-                                      <UserCog className="w-3 h-3" />
-                                      {owner.username}
-                                    </span>
-                                  )
-                                }
-                                return <span className="text-gray-400">未绑定</span>
-                              })()}
-                            </button>
-                            {ownerMenuId === container.id && (
-                              <>
-                                <div className="fixed inset-0 z-40" onClick={() => setOwnerMenuId(null)} />
-                                <div className="absolute left-0 top-full z-50 mt-1 w-48 max-h-60 overflow-y-auto rounded-md border border-gray-200 bg-white py-1 shadow-lg dark:border-gray-700 dark:bg-gray-900">
-                                  <button
-                                    onClick={() => { void applyOwnerChange(container, '') }}
-                                    className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800"
-                                  >
-                                    <UserCog className="h-3 w-3" />
-                                    解绑（无属主）
-                                  </button>
-                                  <div className="my-1 border-t border-gray-100 dark:border-gray-800" />
-                                  {subUsers.map((u) => (
-                                    <button
-                                      key={u.id}
-                                      onClick={() => { void applyOwnerChange(container, u.id) }}
-                                      className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-gray-50 dark:hover:bg-gray-800 ${
-                                        u.id === container.owner_sub_user_id ? 'font-medium text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-300'
-                                      }`}
-                                    >
-                                      <UserCog className="h-3 w-3 shrink-0" />
-                                      <span className="truncate">{u.username}</span>
-                                      {u.tenant && <span className="ml-auto shrink-0 text-[10px] text-gray-400">{u.tenant}</span>}
-                                    </button>
-                                  ))}
-                                  {subUsersError ? (
-                                    <div className="flex items-center gap-2 px-3 py-2 text-xs text-red-600">
-                                      <span>{t('子用户加载失败')}</span>
-                                      <button
-                                        onClick={() => setSubUsersReloadKey((k) => k + 1)}
-                                        className="underline hover:no-underline"
-                                      >
-                                        {t('重试')}
-                                      </button>
-                                    </div>
-                                  ) : subUsers.length === 0 ? (
-                                    <div className="px-3 py-2 text-xs text-gray-400">{t('暂无子用户')}</div>
-                                  ) : null}
-                                </div>
-                              </>
+                          <SubUserPicker
+                            value={container.owner_sub_user_id || ''}
+                            selectedLabel={container.owner_username}
+                            disabled={isPlaceholder || changingOwner}
+                            leadingOptions={[{ value: '', label: t('解绑（无属主）') }]}
+                            triggerClassName="inline-flex items-center gap-1 text-xs rounded transition-colors hover:ring-1 hover:ring-gray-300 disabled:cursor-not-allowed disabled:opacity-60"
+                            menuWidthClass="w-56"
+                            renderTrigger={(label, bound) => (
+                              bound ? (
+                                <span className="inline-flex items-center gap-1 rounded bg-indigo-50 px-1.5 py-0.5 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300">
+                                  <UserCog className="w-3 h-3" />
+                                  {label}
+                                </span>
+                              ) : (
+                                <span className="text-gray-400">{t('未绑定')}</span>
+                              )
                             )}
-                          </div>
+                            onChange={(id, label) => { void applyOwnerChange(container, id, label) }}
+                          />
                         </td>
                       )}
                       <td className="px-2.5 py-2 align-top">

@@ -2426,6 +2426,15 @@ const exact: Record<string, string> = {
   "已绑定给子用户": "Bound to sub-user",
   "变更属主失败": "Failed to change owner",
   "子用户加载失败": "Failed to load sub-users",
+  // === 属主选择器（服务端搜索/分页）与二次确认 ===
+  "搜索子用户名 / 邮箱 / 租户": "Search sub-user / email / tenant",
+  "加载中": "Loading",
+  "加载更多": "Load more",
+  "无匹配子用户": "No matching sub-users",
+  "确认变更属主": "Confirm owner change",
+  "确认解绑属主": "Confirm owner unbind",
+  "确定将该容器的属主变更为": "Change this container's owner to",
+  "确定解除该容器的属主绑定吗？": "Unbind this container's owner?",
   // === Phase 2 t() refactor gap fill (42 entries) ===
 }
 

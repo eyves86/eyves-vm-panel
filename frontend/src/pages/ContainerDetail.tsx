@@ -114,13 +114,13 @@ import {
   updateResourceLimit,
   updatePortMapping,
   SubUser,
-  listSubUsers,
   changeContainerOwner,
   getISOs,
   ISOFile,
   containerRescue,
 } from '../services/api'
 import { useDialog } from '../components/Dialog'
+import SubUserPicker from '../components/SubUserPicker'
 import { useAuth } from '../contexts/AuthContext'
 import { useLanguage } from '../contexts/LanguageContext'
 import WebSSHViewer from '../components/WebSSHViewer'
@@ -204,13 +204,10 @@ export default function ContainerDetail() {
   const [savingExpiry, setSavingExpiry] = useState(false)
   const [draft, setDraft] = useState<MappingDraft>(emptyDraft)
   const [savingMapping, setSavingMapping] = useState(false)
-  const [subUsers, setSubUsers] = useState<SubUser[]>([])
-  // 子用户加载失败标记与重试计数：失败时属主弹窗显示错误+重试，而不是误报“暂无子用户”。
-  const [subUsersError, setSubUsersError] = useState(false)
-  const [subUsersReloadKey, setSubUsersReloadKey] = useState(0)
   const [changingOwner, setChangingOwner] = useState(false)
   const [showOwnerEdit, setShowOwnerEdit] = useState(false)
   const [ownerDraft, setOwnerDraft] = useState('')
+  const [ownerDraftLabel, setOwnerDraftLabel] = useState('')
   const [showReinstall, setShowReinstall] = useState(false)
   const [templates, setTemplates] = useState<Template[]>([])
   const [selectedTemplate, setSelectedTemplate] = useState('')
@@ -399,26 +396,6 @@ export default function ContainerDetail() {
     const timer = window.setInterval(fetchContainer, 5000)
     return () => window.clearInterval(timer)
   }, [fetchContainer])
-
-  // 加载子用户列表（仅管理员视图需要）
-  useEffect(() => {
-    if (isSubUser) return
-    let cancelled = false
-    listSubUsers()
-      .then((res) => {
-        if (cancelled) return
-        if (res.data?.success && Array.isArray(res.data.data)) {
-          setSubUsers(res.data.data)
-          setSubUsersError(false)
-        } else {
-          setSubUsersError(true)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setSubUsersError(true)
-      })
-    return () => { cancelled = true }
-  }, [isSubUser, subUsersReloadKey])
 
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -795,6 +772,7 @@ export default function ContainerDetail() {
   const openOwnerEdit = () => {
     if (!container) return
     setOwnerDraft(container.owner_sub_user_id || '')
+    setOwnerDraftLabel(container.owner_username || '')
     setShowOwnerEdit(true)
   }
 
@@ -809,10 +787,9 @@ export default function ContainerDetail() {
     try {
       const res = await changeContainerOwner(containerIdentifier, nextOwnerId)
       if (res.data.success) {
-        setContainer((prev) => prev ? { ...prev, owner_sub_user_id: nextOwnerId } : prev)
+        setContainer((prev) => prev ? { ...prev, owner_sub_user_id: nextOwnerId, owner_username: nextOwnerId ? ownerDraftLabel : '' } : prev)
         setShowOwnerEdit(false)
-        const owner = subUsers.find((u) => u.id === nextOwnerId)
-        dialog.alert(t('属主已更新'), owner ? `${t('已绑定给子用户')}：${owner.username}` : t('已解绑属主'))
+        dialog.alert(t('属主已更新'), nextOwnerId ? `${t('已绑定给子用户')}：${ownerDraftLabel}` : t('已解绑属主'))
       } else {
         dialog.alert(t('变更属主失败'), res.data?.message || t('请稍后重试'))
       }
@@ -2100,8 +2077,7 @@ export default function ContainerDetail() {
           </PlainRow>
           <PlainRow label="属主" value={(() => {
             if (!container.owner_sub_user_id) return '未绑定'
-            const owner = subUsers.find((u) => u.id === container.owner_sub_user_id)
-            return owner ? owner.username : '已删除的子用户'
+            return container.owner_username || container.owner_sub_user_id
           })()}>
             {!isSubUser && (
               <button
@@ -3259,33 +3235,21 @@ export default function ContainerDetail() {
             <p className="text-sm text-gray-500">
               容器「{container?.name}」当前属主：
               {container?.owner_sub_user_id
-                ? (subUsers.find((u) => u.id === container?.owner_sub_user_id)?.username || '已删除的子用户')
+                ? (container.owner_username || '已删除的子用户')
                 : '未绑定'}
             </p>
             <div>
               <label className="block text-xs text-gray-500 mb-1">新属主子用户</label>
-              <select
+              <SubUserPicker
+                className="w-full"
                 value={ownerDraft}
-                onChange={(e) => setOwnerDraft(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white"
-              >
-                <option value="">— 解绑（无属主）—</option>
-                {subUsers.map((u) => (
-                  <option key={u.id} value={u.id}>
-                    {u.username}{u.tenant ? `（租户：${u.tenant}）` : ''}
-                  </option>
-                ))}
-              </select>
-              {subUsersError ? (
-                <p className="mt-1 text-xs text-red-600">
-                  {t('子用户加载失败')}
-                  <button onClick={() => setSubUsersReloadKey((k) => k + 1)} className="ml-1 underline hover:no-underline">
-                    {t('重试')}
-                  </button>
-                </p>
-              ) : subUsers.length === 0 ? (
-                <p className="mt-1 text-xs text-amber-600">暂无子用户，请先到「用户与租户 → 子用户管理」创建</p>
-              ) : null}
+                selectedLabel={container?.owner_username}
+                onChange={(id, label) => { setOwnerDraft(id); setOwnerDraftLabel(label) }}
+                placeholder={t('解绑（无属主）')}
+                leadingOptions={[{ value: '', label: t('解绑（无属主）') }]}
+                triggerClassName="flex w-full items-center justify-between gap-1 px-3 py-2 border border-gray-300 rounded-md text-sm text-black bg-white text-left"
+                menuWidthClass="w-full"
+              />
             </div>
             <div className="flex justify-end gap-3">
               <button onClick={() => setShowOwnerEdit(false)} className="px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded-md">取消</button>

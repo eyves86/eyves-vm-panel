@@ -177,6 +177,8 @@ export interface Container {
   suspended_reason?: string
   suspended_at?: string
   owner_sub_user_id?: string
+  /** 属主用户名（后端派生下发，免去前端拉取全量子用户） */
+  owner_username?: string
   node_id?: string
   /** 客户接入端点（后端计算：节点容器指向所属节点，本机容器指向面板） */
   access_host?: string
@@ -1767,7 +1769,7 @@ export const createSubUserAdvanced = (payload: {
 export const listSubUsers = () =>
   api.get<APIResponse<SubUser[]>>('/sub-users')
 
-export const listSubUsersPaged = (params: { page?: number; page_size?: number } = {}) =>
+export const listSubUsersPaged = (params: { page?: number; page_size?: number; search?: string } = {}) =>
   api.get<APIResponse<PagedList<SubUser>>>('/sub-users', { params })
 
 export const updateSubUserImages = (id: string, allowedImageIds: string[]) =>

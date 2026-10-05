@@ -781,6 +781,14 @@ func listContainers(w http.ResponseWriter, r *http.Request) {
 		// 列表为只读汇总视图，一律不回显登录口令（detail/console 需要时单独拉取）。
 		containers[i].SSHPassword = ""
 	}
+	// 属主名派生填充：前端据此显示属主徽标/下拉，无需拉取全量子用户（万级可用性）。
+	if ownerNames := config.SubUserUsernameByID(); len(ownerNames) > 0 {
+		for i := range containers {
+			if containers[i].OwnerSubUserID != "" {
+				containers[i].OwnerUsername = ownerNames[containers[i].OwnerSubUserID]
+			}
+		}
+	}
 	// 分页：未传 page/page_size 时保持全量数组返回（向后兼容）。
 	p := parsePagination(r)
 	if p.Invalid {

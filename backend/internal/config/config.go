@@ -208,6 +208,9 @@ type Container struct {
 	PolicyBlockedReason           string         `json:"policy_blocked_reason,omitempty"`
 	PolicyBlockedAt               string         `json:"policy_blocked_at,omitempty"`
 	OwnerSubUserID                string         `json:"owner_sub_user_id,omitempty"`
+	// OwnerUsername 是列表响应中的派生展示字段（由 OwnerSubUserID 解析得到），
+	// 供前端免拉取全量子用户即可显示属主名；不参与落库（omitempty，且仅写响应副本）。
+	OwnerUsername string `json:"owner_username,omitempty"`
 	// RecycledAt 非空 = 实例在回收站（软删除，同类商业面板/同类商业面板同款能力）：
 	// 列表/统计默认排除，数据面不动；恢复=清标记，彻底删除（purge）才真销毁。
 	RecycledAt        string `json:"recycled_at,omitempty"`
@@ -3041,6 +3044,21 @@ func GetContainers() []Container {
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
 	return append([]Container(nil), AppConfig.Containers...)
+}
+
+// SubUserUsernameByID 返回 subuser ID → username 的只读映射（持锁快照），
+// 供列表接口派生 owner_username 展示字段。
+func SubUserUsernameByID() map[string]string {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return nil
+	}
+	m := make(map[string]string, len(AppConfig.SubUsers))
+	for i := range AppConfig.SubUsers {
+		m[AppConfig.SubUsers[i].ID] = AppConfig.SubUsers[i].Username
+	}
+	return m
 }
 
 // ---------------------------------------------------------------------------
