@@ -117,7 +117,7 @@ curl -fsSL -X POST "$API/releases" \
     >/dev/null 2>&1 || true
 
 rel_id="$(curl -fsSL "$API/releases/tags/${TAG}" -H "Authorization: token ${EYVESCLOUD_RELEASE_TOKEN}" \
-    | grep -o '"id":[0-9]*' | head -n 1 | grep -oE '[0-9]+')"
+    | grep -oE '"id"[[:space:]]*:[[:space:]]*[0-9]+' | head -n 1 | grep -oE '[0-9]+')"
 [ -n "$rel_id" ] || die "无法获取 release id（tag 是否已推送？）"
 
 # GitHub 的二进制资产上传必须走 uploads.github.com；api.github.com 对该路径返回 404。

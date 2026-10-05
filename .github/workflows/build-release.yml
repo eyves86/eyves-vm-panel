@@ -185,7 +185,7 @@ jobs:
             -d "$payload" >/dev/null || true
           # 取首个 "id"（release id）。不能用贪婪 sed 's/.*"id":.../'：单行 JSON 里
           # 末尾还有 author.id，会取错。
-          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | grep -o '"id":[0-9]*' | head -n 1 | grep -oE '[0-9]+')"
+          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | grep -oE '"id"[[:space:]]*:[[:space:]]*[0-9]+' | head -n 1 | grep -oE '[0-9]+')"
           [ -n "$id" ] || { echo "无法获取 Codeberg release id"; exit 1; }
           for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.minisig' -o -name 'SHA256SUMS.minisign' \)); do
             echo "upload $f"
