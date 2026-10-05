@@ -34,9 +34,6 @@ interface SubUserItem {
   current_image_ids?: string[]
   container_name: string
   container_uuid: string
-  access_code: string
-  // 访问码专用口令（与账号密码独立，可回显交付给使用者）
-  access_code_password?: string
   password?: string
   created_at: string
   last_login: string
@@ -79,7 +76,6 @@ export default function SubUserManagement() {
   const [imagesLoading, setImagesLoading] = useState(false)
   const [savingImages, setSavingImages] = useState(false)
   const [rotatingPassword, setRotatingPassword] = useState(false)
-  const [rotatingAccessCode, setRotatingAccessCode] = useState(false)
   const [logPage, setLogPage] = useState(1)
   const [logPageSize, setLogPageSize] = useState(10)
 
@@ -144,8 +140,6 @@ export default function SubUserManagement() {
 
   const usersTotalPages = Math.max(1, Math.ceil(usersTotal / pageSize))
   const usersSafePage = Math.min(page, usersTotalPages)
-
-  const managementUrl = (user: SubUserItem) => `${window.location.origin}/user/login?code=${user.access_code}`
 
   const copyText = async (text: string) => {
     await copyToClipboard(text)
@@ -311,7 +305,6 @@ export default function SubUserManagement() {
       const updatedUser = {
         ...user,
         username: data?.username || user.username,
-        access_code: data?.access_code || user.access_code,
         password: data?.password || '',
       }
       setUsers((prev) => prev.map((item) => (item.id === user.id ? updatedUser : item)))
@@ -321,30 +314,6 @@ export default function SubUserManagement() {
       dialog.alert('轮换失败', error.response?.data?.message || '请稍后重试')
     } finally {
       setRotatingPassword(false)
-    }
-  }
-
-  // 重置「访问码密码」（分享凭据）：不影响账号密码，明文一次性返回并立即生效。
-  const rotateAccessCodePassword = async (user: SubUserItem) => {
-    if (rotatingAccessCode) return
-    if (!(await dialog.confirm('重置访问码密码', '将为该子用户生成新的访问码密码，旧口令与所有已登录会话将立即失效。确定继续？'))) return
-    setRotatingAccessCode(true)
-    try {
-      const res = await api.post(`/sub-users/${user.id}/rotate-access-code-password`)
-      const data = res.data.data
-      const updatedUser = {
-        ...user,
-        username: data?.username || user.username,
-        access_code: data?.access_code || user.access_code,
-        access_code_password: data?.access_code_password || user.access_code_password,
-      }
-      setUsers((prev) => prev.map((item) => (item.id === user.id ? updatedUser : item)))
-      setPasswordUser(updatedUser)
-    } catch (err: unknown) {
-      const error = err as { response?: { data?: { message?: string } } }
-      dialog.alert('重置失败', error.response?.data?.message || '请稍后重试')
-    } finally {
-      setRotatingAccessCode(false)
     }
   }
 
@@ -964,7 +933,7 @@ export default function SubUserManagement() {
             <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-200 dark:border-gray-700">
               <div>
                 <h3 className="text-sm font-semibold text-black dark:text-white">登录凭据</h3>
-                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">账号登录管理绑定的全部容器；访问码用于分享登录</p>
+                <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">{t('账号登录管理绑定的全部容器；单台机器的分享入口在容器详情「管理链接」')}</p>
               </div>
               <div className="flex items-center gap-2">
                 <button
@@ -1017,66 +986,12 @@ export default function SubUserManagement() {
                 </div>
               </div>
 
-              {/* 区块 2：访问码登录（分享给他人：访问码 + 访问码密码） */}
-              <div className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
-                <div className="flex items-center justify-between gap-2 bg-gray-50 dark:bg-gray-800 px-3.5 py-2 text-xs font-medium text-gray-600 dark:text-gray-300">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <KeyRound className="h-3.5 w-3.5 shrink-0" />
-                    <span className="shrink-0">访问码登录（分享）</span>
-                    <span className="truncate font-normal text-gray-400">（访问码 + 访问码密码，登录后仅能管理已绑定的容器）</span>
-                  </div>
-                  <button
-                    onClick={() => rotateAccessCodePassword(passwordUser)}
-                    disabled={rotatingAccessCode}
-                    className="inline-flex shrink-0 items-center gap-1 rounded px-2 py-1 text-[11px] text-amber-700 bg-amber-50 hover:bg-amber-100 dark:text-amber-300 dark:bg-amber-900/30 dark:hover:bg-amber-900/50 disabled:opacity-50"
-                    title="生成新的访问码密码（旧口令立即失效，所有已登录会话需重新登录）"
-                  >
-                    <RefreshCw className={`w-3 h-3 ${rotatingAccessCode ? 'animate-spin' : ''}`} />
-                    {rotatingAccessCode ? '重置中...' : '重置访问码密码'}
-                  </button>
-                </div>
-                <div className="px-3.5 py-3 text-sm space-y-2.5">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="shrink-0 text-gray-500 dark:text-gray-400">访问码</span>
-                    <div className="flex min-w-0 items-center gap-1">
-                      <span className="font-mono text-xs text-black dark:text-white break-all">{passwordUser.access_code}</span>
-                      <button onClick={() => copyText(passwordUser.access_code)} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
-                        <Copy className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="shrink-0 text-gray-500 dark:text-gray-400">访问码密码</span>
-                    <div className="flex min-w-0 items-center gap-1">
-                      <span className="font-mono text-xs text-black dark:text-white break-all">{passwordUser.access_code_password || '—'}</span>
-                      {passwordUser.access_code_password && (
-                        <button onClick={() => copyText(passwordUser.access_code_password || '')} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
-                          <Copy className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="shrink-0 text-gray-500 dark:text-gray-400">分享链接</span>
-                    <div className="flex min-w-0 items-center gap-1">
-                      <span className="font-mono text-xs text-black dark:text-white break-all">{managementUrl(passwordUser)}</span>
-                      <button onClick={() => copyText(managementUrl(passwordUser))} className="shrink-0 p-0.5 text-gray-400 hover:text-black dark:hover:text-white rounded" title="复制">
-                        <Copy className="w-3 h-3" />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="text-xs text-gray-400">
-                    当前授权范围：{passwordUser.container_names?.length ? `${passwordUser.container_names.length} 个容器（${passwordUser.container_names.join('、')}）` : '未绑定容器'}
-                  </div>
-                  <div className="text-xs text-gray-400">
-                    访问码密码与上面的账号密码相互独立：使用者凭「访问码 + 访问码密码」登录，且不能修改账号密码。
-                  </div>
-                </div>
+              {/* 访问码已下沉到「机器级」：每台容器各自持有一个访问码，登录后仅能管理
+                  该台机器，因此不再按子用户展示/重置。入口在容器详情 → 管理链接。 */}
+              <div className="rounded-xl border border-gray-200 dark:border-gray-700 px-3.5 py-2.5 text-xs text-gray-500 dark:text-gray-400">
+                {t('访问码是「机器级」凭据：每台容器各自持有一个访问码与访问码密码，凭它登录后仅能管理该台机器。')}
+                {t('请在「容器详情 → 管理链接」中查看或重置某台机器的访问码。')}
               </div>
-
-              <p className="text-xs text-gray-400">
-                如需把<strong>单个容器</strong>分享给他人，建议为该容器单独创建子用户并只绑定此容器，再分享其访问码。
-              </p>
             </div>
           </div>
         </div>

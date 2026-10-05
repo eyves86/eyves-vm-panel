@@ -293,6 +293,11 @@ func ensureSchema() error {
 			rdns TEXT,
 			PRIMARY KEY (container_id, position)
 		)`,
+		`CREATE TABLE IF NOT EXISTS container_access_links (
+			container_uuid TEXT PRIMARY KEY,
+			access_code TEXT,
+			access_code_password TEXT
+		)`,
 		`CREATE TABLE IF NOT EXISTS sub_users (
 			id TEXT PRIMARY KEY,
 			username TEXT NOT NULL,
@@ -965,6 +970,10 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if cfg.Containers, err = loadContainers(); err != nil {
 		return nil, false, err
 	}
+	// 机器级访问码凭据独立成表（container_access_links），加载后挂到容器上。
+	if err := attachContainerAccessLinks(cfg); err != nil {
+		return nil, false, err
+	}
 	if cfg.SubUsers, err = loadSubUsers(); err != nil {
 		return nil, false, err
 	}
@@ -1009,6 +1018,7 @@ func saveConfigToDB() error {
 		"port_mappings",
 		"container_public_ipv4s",
 		"container_ipv6_addresses",
+		"container_access_links",
 		"sub_user_container_names",
 		"sub_user_container_uuids",
 		"containers",
@@ -1032,6 +1042,9 @@ func saveConfigToDB() error {
 		return err
 	}
 	if err := saveContainers(tx); err != nil {
+		return err
+	}
+	if err := saveContainerAccessLinks(tx); err != nil {
 		return err
 	}
 	if err := saveSubUsers(tx); err != nil {
@@ -1311,6 +1324,56 @@ func saveContainers(tx *sql.Tx) error {
 				VALUES (?, ?, ?, ?, ?, ?)`, c.ID, i, ip.Address, ip.PrefixLen, ip.Interface, ip.RDNS); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+// saveContainerAccessLinks 落库「机器级访问码凭据」（access_code + access_code_password）。
+// 两者都必须能被管理端/用户端回显，故以 enc:v1: 可逆密文落库；两个都为空时不写行。
+func saveContainerAccessLinks(tx *sql.Tx) error {
+	for _, c := range AppConfig.Containers {
+		code := strings.TrimSpace(c.AccessCode)
+		pw := strings.TrimSpace(c.AccessCodePassword)
+		if code == "" && pw == "" {
+			continue
+		}
+		if _, err := tx.Exec(`INSERT INTO container_access_links (container_uuid, access_code, access_code_password)
+			VALUES (?, ?, ?)`, c.UUID, EncryptSecretAtRest(code), EncryptSecretAtRest(pw)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attachContainerAccessLinks 读取机器级访问码凭据，解密后挂到对应容器上。
+// 独立于 containers 主表的 SELECT，避免改动体量巨大的容器列清单。
+func attachContainerAccessLinks(cfg *EyvescloudConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	rows, err := db.Query(`SELECT container_uuid, access_code, access_code_password FROM container_access_links`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type pair struct{ code, pw string }
+	links := map[string]pair{}
+	for rows.Next() {
+		var uuid string
+		var code, pw sql.NullString
+		if err := rows.Scan(&uuid, &code, &pw); err != nil {
+			return err
+		}
+		links[uuid] = pair{DecryptSecretAtRest(code.String), DecryptSecretAtRest(pw.String)}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i := range cfg.Containers {
+		if v, ok := links[cfg.Containers[i].UUID]; ok {
+			cfg.Containers[i].AccessCode = v.code
+			cfg.Containers[i].AccessCodePassword = v.pw
 		}
 	}
 	return nil
@@ -1930,23 +1993,8 @@ func loadSubUsers() ([]SubUser, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
-	// 存量迁移：为尚无访问码口令的子用户回填随机口令（升级即生效，无需人工干预）。
-	// 口令以密文直接 UPDATE 落库，失败则保持为空（该行访问码登录会被拒绝，
-	// 管理员可在后台重置），不阻断启动。
-	for i := range result {
-		if result[i].AccessCodePassword != "" {
-			continue
-		}
-		pw := generateRandomString(16)
-		enc, encErr := EncryptNodeToken(pw)
-		if encErr != nil {
-			continue
-		}
-		if _, execErr := db.Exec(`UPDATE sub_users SET access_code_password = ? WHERE id = ?`, enc, result[i].ID); execErr != nil {
-			continue
-		}
-		result[i].AccessCodePassword = pw
-	}
+	// 说明：访问码/访问码口令已下沉到「机器级」（container_access_links 表），
+	// 子用户行上的同名历史字段不再参与鉴权，加载后也不再回填。
 	for i := range result {
 		result[i].ContainerNames, err = loadStringList("sub_user_container_names", "container_name", "sub_user_id", result[i].ID)
 		if err != nil {

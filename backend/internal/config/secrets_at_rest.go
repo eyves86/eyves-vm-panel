@@ -82,6 +82,9 @@ func EncryptSecretsForExport(cfg *EyvescloudConfig) {
 	}
 	for i := range cfg.Containers {
 		cfg.Containers[i].SSHPassword = EncryptSecretAtRest(cfg.Containers[i].SSHPassword)
+		// 机器级访问码凭据（分享登录）同样必须加密，避免备份文件泄露即等于交出机器。
+		cfg.Containers[i].AccessCode = EncryptSecretAtRest(cfg.Containers[i].AccessCode)
+		cfg.Containers[i].AccessCodePassword = EncryptSecretAtRest(cfg.Containers[i].AccessCodePassword)
 	}
 	for i := range cfg.Nodes {
 		cfg.Nodes[i].Token = EncryptSecretAtRest(cfg.Nodes[i].Token)
@@ -159,6 +162,10 @@ func DecryptSecretsAfterImport(cfg *EyvescloudConfig) []string {
 	for i := range cfg.Containers {
 		cfg.Containers[i].SSHPassword = decryptField(
 			"container:"+cfg.Containers[i].Name+".ssh_password", cfg.Containers[i].SSHPassword)
+		cfg.Containers[i].AccessCode = decryptField(
+			"container:"+cfg.Containers[i].Name+".access_code", cfg.Containers[i].AccessCode)
+		cfg.Containers[i].AccessCodePassword = decryptField(
+			"container:"+cfg.Containers[i].Name+".access_code_password", cfg.Containers[i].AccessCodePassword)
 	}
 	for i := range cfg.Nodes {
 		cfg.Nodes[i].Token = decryptField("node:"+cfg.Nodes[i].Name+".token", cfg.Nodes[i].Token)

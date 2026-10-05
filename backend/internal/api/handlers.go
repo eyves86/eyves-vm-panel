@@ -307,6 +307,10 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		resetSSHPassword(w, r, id)
+	case action == "rotate-access-code-password" && r.Method == http.MethodPost:
+		// 重置本机器的「访问码口令」（分享凭据）。管理端与持有该机器的子用户
+		// 都可重置；不触及任何账号密码。
+		rotateContainerAccessCodePassword(w, r, c)
 	case action == "create-account" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:account") {
 			return
@@ -1262,6 +1266,8 @@ func getContainer(w http.ResponseWriter, r *http.Request, id int) {
 		_, _ = kvmManager.RefreshVNCPort(c.ID)
 		_, _ = kvmManager.RefreshNetwork(c.ID)
 	}
+	// 机器级访问码凭据按需生成并落库，保证详情页/「管理链接」弹窗可回显。
+	ensureContainerAccessCredentials(c)
 	res := *c
 	// 节点容器：主控只保存归属与心跳摘要，详情页需要的系统模板 / SSH 密码 /
 	// 创建时间等字段按需向被控拉取（节点 token 鉴权通道；凭据不在主控落库）。

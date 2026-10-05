@@ -113,9 +113,8 @@ import {
   updateTrafficLimit,
   updateResourceLimit,
   updatePortMapping,
-  SubUser,
   changeContainerOwner,
-  rotateSubUserAccessCodePassword,
+  rotateContainerAccessCodePassword,
   getISOs,
   ISOFile,
   containerRescue,
@@ -218,7 +217,6 @@ export default function ContainerDetail() {
   const [reinstallMode, setReinstallMode] = useState<'system' | 'full'>('system')
   const [reinstalling, setReinstalling] = useState(false)
   const [traffic, setTraffic] = useState<TrafficInfo | null>(null)
-  const [subUser, setSubUser] = useState<SubUser | null>(null)
   const [showSubUser, setShowSubUser] = useState(false)
   const [subUserBusy, setSubUserBusy] = useState(false)
   const [rotatingSubUser, setRotatingSubUser] = useState(false)
@@ -743,18 +741,22 @@ export default function ContainerDetail() {
     }
   }
 
-  // 打开「管理链接」：容器未绑定属主时创建子用户，已绑定时幂等返回既有子用户。
+  // 打开「管理链接」：确保该机器有属主（未绑定时创建子用户），并展示该机器
+  // 自己的访问码/访问码口令（机器级凭据，登录后仅能管理这一台）。
+  // 打开「管理链接」：确保该机器有属主（未绑定时自动创建子用户，供访问码登录解析
+  // 属主与容器授权），再展示该机器自己的访问码/访问码口令（机器级凭据，登录后仅
+  // 能管理这一台）。
   const handleCreateSubUser = async () => {
     if (!container?.uuid || subUserBusy) return
     setSubUserBusy(true)
     try {
       const res = await createSubUser(container.uuid)
-      if (res.data.success && res.data.data) {
-        setSubUser(res.data.data)
-        setShowSubUser(true)
-      } else {
+      if (!res.data.success) {
         dialog.alert(t('打开管理链接失败'), res.data.message || t('请稍后重试'))
+        return
       }
+      await fetchContainer()
+      setShowSubUser(true)
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
       dialog.alert(t('打开管理链接失败'), error.response?.data?.message || t('请稍后重试'))
@@ -763,23 +765,23 @@ export default function ContainerDetail() {
     }
   }
 
-  // 重置该子用户的访问码密码（分享凭据）：不影响账号密码，明文仅本次返回；
-  // 旧口令与所有已签发 token 立即失效（会在下方弹窗内展示新口令）。
-  const handleRotateSubUserAccessCodePassword = async () => {
-    if (!subUser || rotatingSubUser) return
-    if (!(await dialog.confirm(t('重置访问码密码'), t('将为该子用户生成新的访问码密码，旧口令与所有已登录会话将立即失效。确定继续？')))) return
+  // 重置本机器的「访问码口令」（分享凭据）：不影响账号密码，明文仅本次返回；
+  // 新口令会在弹窗内展示（属主已签发会话将失效）。
+  const handleRotateContainerAccessCodePassword = async () => {
+    if (!container || rotatingSubUser) return
+    if (!(await dialog.confirm(t('重置访问码口令'), t('将为该机器生成新的访问码口令，旧口令将立即失效。确定继续？')))) return
     setRotatingSubUser(true)
     try {
-      const res = await rotateSubUserAccessCodePassword(subUser.id)
+      const res = await rotateContainerAccessCodePassword(container.uuid || container.id)
       if (res.data.success && res.data.data) {
         const data = res.data.data
-        setSubUser((prev) => prev ? { ...prev, username: data.username || prev.username, access_code: data.access_code || prev.access_code, access_code_password: data.access_code_password } : prev)
+        setContainer((prev) => prev ? { ...prev, access_code: data.access_code || prev.access_code, access_code_password: data.access_code_password } : prev)
       } else {
-        dialog.alert(t('重置访问码密码失败'), res.data.message || t('请稍后重试'))
+        dialog.alert(t('重置访问码口令失败'), res.data.message || t('请稍后重试'))
       }
     } catch (err: unknown) {
       const error = err as { response?: { data?: { message?: string } } }
-      dialog.alert(t('重置访问码密码失败'), error.response?.data?.message || t('请稍后重试'))
+      dialog.alert(t('重置访问码口令失败'), error.response?.data?.message || t('请稍后重试'))
     } finally {
       setRotatingSubUser(false)
     }
@@ -1729,8 +1731,9 @@ export default function ContainerDetail() {
   if (hasFirewallIPv4 && hasIndependentIPv6) {
     firewallNetworkOptions.push({ value: 'all', label: '全部网络' })
   }
-  const managementUrl = subUser?.access_code
-    ? `${window.location.origin}/user/login?code=${encodeURIComponent(subUser.access_code)}`
+  const containerAccessCode = container?.access_code || ''
+  const managementUrl = containerAccessCode
+    ? `${window.location.origin}/user/login?code=${encodeURIComponent(containerAccessCode)}`
     : ''
   const charts: ResourceChartConfig[] = [
     {
@@ -3105,17 +3108,16 @@ export default function ContainerDetail() {
         </Modal>
       )}
 
-      {showSubUser && subUser && (
+      {showSubUser && (
         <Modal title={t('管理链接')} onClose={() => setShowSubUser(false)}>
           <div className="space-y-3">
             <p className="text-xs text-gray-500 dark:text-gray-400">
-              {t('把地址发给使用者：打开后输入「访问码 + 访问码密码」登录，登录后仅能管理本容器。')}
+              {t('把地址发给使用者：打开后输入「访问码 + 访问码密码」登录，登录后仅能管理本容器这一台机器。')}
             </p>
             <div className="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 text-sm space-y-3">
               {([
-                [t('登录账号'), subUser.username],
-                [t('访问码'), subUser.access_code || '-'],
-                [t('访问码密码'), subUser.access_code_password || '-'],
+                [t('访问码'), container.access_code || '-'],
+                [t('访问码密码'), container.access_code_password || '-'],
                 [t('管理地址'), managementUrl],
               ] as Array<[string, string]>).map(([label, value]) => (
                 <div key={label} className="flex items-start justify-between gap-3">
@@ -3128,12 +3130,12 @@ export default function ContainerDetail() {
               ))}
             </div>
             <div className="rounded-xl border border-gray-200 dark:border-gray-700 px-3.5 py-2.5 text-xs text-gray-500 dark:text-gray-400">
-              {t('访问码密码与「账号密码」是两套独立凭据：使用者凭「访问码 + 访问码密码」登录，且不能在该会话中修改账号密码。')}
+              {t('访问码是「机器级」凭据：一个访问码只对应本容器，凭「访问码 + 访问码密码」登录后仅能管理这一台机器。')}
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-xs text-gray-500 dark:text-gray-400">{t('重置后将生成新的访问码密码并踢下线，仅在本次弹窗内显示。')}</span>
               <button
-                onClick={() => void handleRotateSubUserAccessCodePassword()}
+                onClick={() => void handleRotateContainerAccessCodePassword()}
                 disabled={rotatingSubUser}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-gray-300 dark:border-gray-600 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50"
               >

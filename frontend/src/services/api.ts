@@ -179,6 +179,10 @@ export interface Container {
   owner_sub_user_id?: string
   /** 属主用户名（后端派生下发，免去前端拉取全量子用户） */
   owner_username?: string
+  /** 机器级访问码（分享登录凭据，一个访问码对应一台机器） */
+  access_code?: string
+  /** 机器级访问码口令（与账号密码独立，可回显、可重置） */
+  access_code_password?: string
   node_id?: string
   /** 客户接入端点（后端计算：节点容器指向所属节点，本机容器指向面板） */
   access_host?: string
@@ -537,14 +541,21 @@ export const changePassword = (oldPassword: string, newPassword: string) =>
 
 // ---- 子用户自助（用户门户「安全设置」）----
 
+export interface SubUserAccessLink {
+  container_uuid: string
+  container_name: string
+  access_code: string
+  access_code_password: string
+  login_url: string
+}
+
 export interface SubUserProfile {
   username: string
   email?: string
   role: string
-  access_code: string
-  // 访问码专用口令（与账号密码独立，可随时回显）
-  access_code_password: string
   container_count: number
+  // 当前会话可管理机器的「机器级」访问码凭据（访问码会话只含一台机器）。
+  access_links: SubUserAccessLink[]
   // 当前会话来源：account（账号登录）/ access_code（访问码登录）。
   // 访问码会话不可修改账号密码，前端据此隐藏账号密码管理。
   via: string
@@ -557,9 +568,11 @@ export const getSubUserProfile = () =>
 export const selfRotatePassword = (oldPassword: string) =>
   api.post<APIResponse<{ password: string }>>('/sub-user/rotate-password', { old_password: oldPassword })
 
-// 自助重置访问码密码：与账号密码独立，生成随机新口令并一次性返回（含踢下线）。
-export const selfRotateAccessCodePassword = () =>
-  api.post<APIResponse<{ access_code_password: string; access_code: string }>>('/sub-user/rotate-access-code-password')
+// 自助重置某台机器的「访问码口令」：与账号密码独立，生成随机新口令并一次性返回。
+export const selfRotateAccessCodePassword = (containerUuid: string) =>
+  api.post<APIResponse<{ access_code: string; access_code_password: string; container_uuid: string; container_name: string }>>(
+    `/containers/${encodeURIComponent(containerUuid)}/rotate-access-code-password`,
+  )
 
 export const changeUsername = (newUsername: string, password: string) =>
   api.post<APIResponse>('/change-username', { new_username: newUsername, password })
@@ -1746,9 +1759,6 @@ export interface SubUser {
   allowed_image_ids?: string[]
   image_limit_configured?: boolean
   current_image_ids?: string[]
-  access_code: string
-  // 访问码专用口令（与账号密码独立，列表回显供管理员交付分享凭据）
-  access_code_password?: string
   created_at: string
   last_login?: string
   last_login_ip?: string
@@ -1805,11 +1815,13 @@ export const changeContainerOwner = (id: number | string, ownerSubUserId: string
 
 // 管理员重置子用户密码：服务端生成随机 16 位新密码并一次性返回（旧密码与所有已签发 token 立即失效）。
 export const rotateSubUserPassword = (id: string) =>
-  api.post<APIResponse<{ password: string; access_code: string; username: string }>>(`/sub-users/${id}/rotate-password`)
+  api.post<APIResponse<{ password: string; username: string }>>(`/sub-users/${id}/rotate-password`)
 
-// 管理员重置子用户的「访问码密码」（分享凭据）：不影响账号密码，明文一次性返回。
-export const rotateSubUserAccessCodePassword = (id: string) =>
-  api.post<APIResponse<{ access_code_password: string; access_code: string; username: string }>>(`/sub-users/${id}/rotate-access-code-password`)
+// 管理员重置某台机器的「访问码口令」（分享凭据）：不影响账号密码，明文一次性返回。
+export const rotateContainerAccessCodePassword = (containerId: ContainerIdentifier) =>
+  api.post<APIResponse<{ access_code: string; access_code_password: string; container_uuid: string; container_name: string }>>(
+    `/containers/${encodeURIComponent(String(containerId))}/rotate-access-code-password`,
+  )
 
 // Audit Logs
 export interface AuditLog {

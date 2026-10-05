@@ -240,6 +240,13 @@ type Container struct {
 	// Tags 资源标签（企业成本分摊 / 按标签过滤，类比 AWS EC2 Tags）。
 	// key/value 均 ≤128 字符，最多 20 个；克隆时继承，删除容器时随之消亡。
 	Tags map[string]string `json:"tags,omitempty"`
+	// AccessCode/AccessCodePassword 是**机器级分享凭据**：每台容器各自持有一个
+	// 访问码与其专用口令，访问码登录后仅能管理这一台容器（与子用户账号解耦，
+	// 一台 = 一个码 = 单机登录）。两者都需在管理端/用户端回显，落库用
+	// AES-256-GCM 可逆加密（见 store_sqlite.go 的 container_access_links 表），
+	// 内存中为明文。空 = 尚未生成（访问详情/分享时按需生成并落库）。
+	AccessCode         string `json:"access_code,omitempty"`
+	AccessCodePassword string `json:"access_code_password,omitempty"`
 }
 
 // SSHKey 是平台托管的 SSH 公钥账户（类比 GitHub SSH Key）。
@@ -1043,6 +1050,23 @@ func FindSubUserByNameOrEmail(identifier string) (*SubUser, bool) {
 		su := &AppConfig.SubUsers[i]
 		if strings.EqualFold(su.Username, identifier) || strings.ToLower(strings.TrimSpace(su.Email)) == lower {
 			cp := *su
+			return &cp, true
+		}
+	}
+	return nil, false
+}
+
+// FindSubUserByID 按内部 ID 查找子用户，返回副本（调用方不应持有实时指针）。
+func FindSubUserByID(id string) (*SubUser, bool) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, false
+	}
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for i := range AppConfig.SubUsers {
+		if AppConfig.SubUsers[i].ID == id {
+			cp := AppConfig.SubUsers[i]
 			return &cp, true
 		}
 	}
@@ -3858,10 +3882,28 @@ func FindContainerByIdentifier(identifier string) *Container {
 	return nil
 }
 
+// EnsureContainerAccessCredentials 就地补齐容器缺失的「访问码」与「访问码密码」。
+// 返回是否发生了生成（调用方据此决定是否需要持久化）。访问码 8 位、口令 16 位，
+// 均由 crypto/rand 生成，仅用于「访问码 + 访问码密码」单机登录。
+func EnsureContainerAccessCredentials(c *Container) bool {
+	if c == nil {
+		return false
+	}
+	changed := false
+	if strings.TrimSpace(c.AccessCode) == "" {
+		c.AccessCode = generateRandomString(8)
+		changed = true
+	}
+	if strings.TrimSpace(c.AccessCodePassword) == "" {
+		c.AccessCodePassword = generateRandomString(16)
+		changed = true
+	}
+	return changed
+}
+
 // RecycleRetentionDays 默认回收站保留天数（超过后自动彻底删除）。
 // 可用 app_meta 键 recycle_retention_days 覆盖；0/负值按默认处理。
 const RecycleRetentionDays = 7
-
 // RecycleContainer 把实例移入回收站（软删除）：打标记并停机（运行中时）。
 // 返回 (实例名, 是否在运行)。数据面不动，恢复=清标记。
 func RecycleContainer(id int, reason string) (string, bool, error) {

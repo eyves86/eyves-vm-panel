@@ -12,8 +12,8 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-// TestSubUserListRedactsPassword 保障子用户列表不回显落库明文口令，
-// 但访问码（用于生成管理分享链接，属产品设计）仍保留。
+// TestSubUserListRedactsPassword 保障子用户列表不回显落库明文口令；
+// 访问码/访问码口令已下沉到「机器级」，子用户列表不再包含它们。
 func TestSubUserListRedactsPassword(t *testing.T) {
 	previous := config.AppConfig
 	t.Cleanup(func() { config.AppConfig = previous })
@@ -56,8 +56,11 @@ func TestSubUserListRedactsPassword(t *testing.T) {
 	if resp.Data[0].Password != "" {
 		t.Fatalf("list leaked plaintext password: %q", resp.Data[0].Password)
 	}
-	if resp.Data[0].AccessCode != "CODE12345!" {
-		t.Fatalf("access_code should be retained for share links, got %q", resp.Data[0].AccessCode)
+	if resp.Data[0].AccessCode != "" {
+		t.Fatalf("access_code moved to container level; sub-user list must not expose it, got %q", resp.Data[0].AccessCode)
+	}
+	if strings.Contains(rec.Body.String(), "CODE12345!") {
+		t.Fatalf("legacy sub-user access code must not appear in list response")
 	}
 	if strings.Contains(rec.Body.String(), "SuperSecretPlaintext") {
 		t.Fatalf("plaintext password present anywhere in list response")

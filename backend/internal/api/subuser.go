@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -35,8 +37,6 @@ type subUserResponse struct {
 	AllowedImageIDs      []string `json:"allowed_image_ids,omitempty"`
 	ImageLimitConfigured bool     `json:"image_limit_configured,omitempty"`
 	CurrentImageIDs      []string `json:"current_image_ids,omitempty"`
-	AccessCode           string   `json:"access_code"`
-	AccessCodePassword   string   `json:"access_code_password"`
 	CreatedAt            string   `json:"created_at"`
 }
 
@@ -53,8 +53,6 @@ func newSubUserResponse(su config.SubUser, password string) subUserResponse {
 		AllowedImageIDs:      effectiveSubUserAllowedImageIDs(&su),
 		ImageLimitConfigured: su.ImageLimitConfigured,
 		CurrentImageIDs:      subUserCurrentImageIDs(&su),
-		AccessCode:           su.AccessCode,
-		AccessCodePassword:   su.AccessCodePassword,
 		CreatedAt:            su.CreatedAt,
 	}
 }
@@ -303,14 +301,6 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 							su.ContainerNames = appendUniqueString(su.ContainerNames, c.Name)
 						}
 					}
-					// AccessCode 缺失时补一个（兼容旧数据）
-					if su.AccessCode == "" {
-						su.AccessCode = generateRandomStr(8)
-					}
-					// 访问码口令缺失时补一个随机口令（兼容旧数据/未回填的行）
-					if su.AccessCodePassword == "" {
-						su.AccessCodePassword = generateRandomStr(16)
-					}
 					// ImageLimitConfigured 未覆盖时从容器继承
 					if !su.ImageLimitConfigured && len(su.AllowedImageIDs) == 0 && len(validContainers) > 0 {
 						su.AllowedImageIDs = validContainers[0].EffectiveImageIDs
@@ -431,18 +421,15 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 
 	// 构建新 SubUser
 	subUser := config.SubUser{
-		ID:         "sub-" + generateRandomStr(8),
-		Username:   username,
-		Email:      emailNorm,
-		Password:   password,
-		PassHash:   string(hash),
-		Role:       subUserRole(req.Role),
-		Tenant:     strings.TrimSpace(req.Tenant),
-		AccessCode: generateRandomStr(8),
-		// 访问码口令与账号密码分离：随账号一并生成，管理员可随时在后台查看/重置。
-		AccessCodePassword: generateRandomStr(16),
-		CreatedAt:          time.Now().Format("2006-01-02 15:04:05"),
-		TokenVersion:       0,
+		ID:           "sub-" + generateRandomStr(8),
+		Username:     username,
+		Email:        emailNorm,
+		Password:     password,
+		PassHash:     string(hash),
+		Role:         subUserRole(req.Role),
+		Tenant:       strings.TrimSpace(req.Tenant),
+		CreatedAt:    time.Now().Format("2006-01-02 15:04:05"),
+		TokenVersion: 0,
 	}
 	for _, c := range validContainers {
 		subUser.ContainerNames = appendUniqueString(subUser.ContainerNames, c.Name)
@@ -597,57 +584,87 @@ func HandleSubUserAccessCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	config.AppConfigMu.RLock()
-	subUsers := append([]config.SubUser(nil), config.AppConfig.SubUsers...)
+	containers := append([]config.Container(nil), config.AppConfig.Containers...)
 	config.AppConfigMu.RUnlock()
 	// 常量时间比较访问码（审计 H-8）：遍历全量候选而不提前 return，
-	// 避免通过响应耗时差异逐个字符猜测访问码。
-	var matched *config.SubUser
-	for i := range subUsers {
-		if subtle.ConstantTimeCompare([]byte(subUsers[i].AccessCode), []byte(req.Code)) == 1 {
-			matched = &subUsers[i]
+	// 避免通过响应耗时差异逐个字符猜测访问码。访问码是「机器级」的：
+	// 命中即唯一确定一台容器。
+	var matched *config.Container
+	for i := range containers {
+		if containers[i].AccessCode != "" &&
+			subtle.ConstantTimeCompare([]byte(containers[i].AccessCode), []byte(req.Code)) == 1 {
+			matched = &containers[i]
 		}
 	}
-	if matched != nil {
-		su := *matched
-		// 访问码口令与账号密码是两套独立凭据：此处只校验访问码专用口令
-		// （AccessCodePassword），绝不回退到账号密码。空口令（未回填或解密失败）
-		// 视为不可用直接拒绝。常量时间比较，避免口令前缀的时序侧信道。
-		if su.AccessCodePassword == "" ||
-			subtle.ConstantTimeCompare([]byte(su.AccessCodePassword), []byte(req.Password)) != 1 {
-			loginLimiter.recordFail(rateKey)
-			config.AddLoginLog(su.Username, ip, clientUA, false)
-			jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid password"})
-			return
-		}
-
-		containerUUIDs := activeSubUserContainerUUIDs(&su)
-		if len(containerUUIDs) == 0 {
-			loginLimiter.recordFail(rateKey)
-			config.AddLoginLog(su.Username, ip, clientUA, false)
-			jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "No active container is assigned to this link"})
-			return
-		}
-		loginLimiter.reset(rateKey)
-		// 标记会话来源：访问码会话禁止修改账号密码（见 HandleSubUserChangePassword）。
-		tokenStr := newSubUserTokenWithOrigin(su.Username, containerUUIDs, su.Role, time.Now().Add(24*time.Hour), su.TokenVersion, subUserOriginAccessCode)
-		config.AddLoginLog(su.Username, ip, clientUA, true)
-
-		setSessionCookie(w, r, tokenStr)
-		jsonResponse(w, http.StatusOK, APIResponse{
-			Success: true,
-			Data: map[string]interface{}{
-				"token":           tokenStr,
-				"username":        su.Username,
-				"role":            subUserRole(su.Role),
-				"container_uuids": containerUUIDs,
-			},
-		})
+	if matched == nil {
+		// Unknown access code: throttle further attempts from this identity.
+		loginLimiter.recordFail(rateKey)
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid access code"})
 		return
 	}
 
-	// Unknown access code: throttle further attempts from this identity.
-	loginLimiter.recordFail(rateKey)
-	jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid access code"})
+	c := *matched
+	// 访问码口令与账号密码是两套独立凭据：此处只校验这台机器自己的访问码口令，
+	// 绝不回退到账号密码。空口令（未生成或解密失败）视为不可用直接拒绝。
+	// 常量时间比较，避免口令前缀的时序侧信道。
+	if c.AccessCodePassword == "" ||
+		subtle.ConstantTimeCompare([]byte(c.AccessCodePassword), []byte(req.Password)) != 1 {
+		loginLimiter.recordFail(rateKey)
+		config.AddLoginLog(c.Name, ip, clientUA, false)
+		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "Invalid password"})
+		return
+	}
+
+	// 访问码会话以容器属主子用户为令牌主体（沿用子用户 JWT 语义），但授权范围
+	// 仅含这一台容器——「一个访问码 = 一台机器」单机登录。
+	owner, ok := findSubUserOwningContainer(c)
+	if !ok || owner == nil {
+		loginLimiter.recordFail(rateKey)
+		config.AddLoginLog(c.Name, ip, clientUA, false)
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "该机器尚未绑定账号，请先在管理端「管理链接」中启用"})
+		return
+	}
+
+	loginLimiter.reset(rateKey)
+	// 标记会话来源：访问码会话禁止修改账号密码（见 HandleSubUserChangePassword）。
+	tokenStr := newSubUserTokenWithOrigin(owner.Username, []string{c.UUID}, owner.Role, time.Now().Add(24*time.Hour), owner.TokenVersion, subUserOriginAccessCode)
+	config.AddLoginLog(owner.Username, ip, clientUA, true)
+
+	setSessionCookie(w, r, tokenStr)
+	jsonResponse(w, http.StatusOK, APIResponse{
+		Success: true,
+		Data: map[string]interface{}{
+			"token":           tokenStr,
+			"username":        owner.Username,
+			"role":            subUserRole(owner.Role),
+			"container_uuids": []string{c.UUID},
+			"container_name":  c.Name,
+		},
+	})
+}
+
+// findSubUserOwningContainer 解析某台容器的属主子用户：优先用容器上的
+// OwnerSubUserID，缺失时回退到按绑定（UUID 或名称）扫描子用户列表。
+func findSubUserOwningContainer(c config.Container) (*config.SubUser, bool) {
+	if id := strings.TrimSpace(c.OwnerSubUserID); id != "" {
+		if su, ok := config.FindSubUserByID(id); ok && su != nil {
+			return su, true
+		}
+	}
+	config.AppConfigMu.RLock()
+	defer config.AppConfigMu.RUnlock()
+	for i := range config.AppConfig.SubUsers {
+		su := &config.AppConfig.SubUsers[i]
+		if c.UUID != "" && stringContains(su.ContainerUUIDs, c.UUID) {
+			cp := *su
+			return &cp, true
+		}
+		if c.Name != "" && stringContains(su.ContainerNames, c.Name) {
+			cp := *su
+			return &cp, true
+		}
+	}
+	return nil, false
 }
 
 // 子用户令牌来源：区分「账号登录（用户名/邮箱 + 账号密码）」与「访问码登录
@@ -1307,12 +1324,8 @@ type SubUserListItem struct {
 	CurrentImageIDs      []string `json:"current_image_ids,omitempty"`
 	ContainerName        string   `json:"container_name"`
 	ContainerUUID        string   `json:"container_uuid"`
-	AccessCode           string   `json:"access_code"`
-	// AccessCodePassword 为访问码登录口令，明文回显（可逆加密落库），
-	// 与账号密码（列表不回显）不同：管理员需把它连同访问码一起交付给使用者。
-	AccessCodePassword string `json:"access_code_password"`
-	Password           string `json:"password,omitempty"`
-	CreatedAt          string `json:"created_at"`
+	Password             string   `json:"password,omitempty"`
+	CreatedAt            string   `json:"created_at"`
 	LastLogin          string `json:"last_login"`
 	LastLoginIP        string `json:"last_login_ip"`
 	LastLoginUA        string `json:"last_login_ua"`
@@ -1346,13 +1359,11 @@ func HandleSubUserList(w http.ResponseWriter, r *http.Request) {
 			AllowedImageIDs:      effectiveSubUserAllowedImageIDs(&su),
 			ImageLimitConfigured: su.ImageLimitConfigured,
 			CurrentImageIDs:      subUserCurrentImageIDs(&su),
-			// 访问码用于生成管理分享链接（产品设计，需在列表中提供）；
-			// 访问码口令同样回显——它是交给使用者的分享凭据，可随时查看/复制。
 			// 账号登录口令为一次性凭据，仅创建/轮换时返回，列表不回显已落库明文。
-			AccessCode:         su.AccessCode,
-			AccessCodePassword: su.AccessCodePassword,
-			Password:           "",
-			CreatedAt:          su.CreatedAt,
+			// 访问码/访问码口令已下沉到「机器级」（见 Container.AccessCode），
+			// 不再挂在子用户上。
+			Password:  "",
+			CreatedAt: su.CreatedAt,
 		}
 
 		// Resolve container name from first active UUID
@@ -1476,41 +1487,8 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
-			"password":    password,
-			"access_code": updated.AccessCode,
-			"username":    updated.Username,
-		}})
-		return
-
-	case action == "rotate-access-code-password" && r.Method == http.MethodPost:
-		if !requireScope(w, r, "subuser:update") {
-			return
-		}
-		// 重置「访问码密码」（分享凭据），不影响账号密码。明文仅本次返回；
-		// TokenVersion++ 使所有已签发 token（含账号会话）失效以避免旧分享继续可用。
-		password := generateRandomStr(16)
-		var updated config.SubUser
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
-			for i := range cfg.SubUsers {
-				if cfg.SubUsers[i].ID != subUserID {
-					continue
-				}
-				cfg.SubUsers[i].AccessCodePassword = password
-				cfg.SubUsers[i].Token = ""
-				cfg.SubUsers[i].TokenVersion++
-				updated = cfg.SubUsers[i]
-				return
-			}
-		})
-		if updated.ID == "" {
-			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
-			return
-		}
-		auditRequest(r, "subuser.rotate_access_code_password", updated.Username, "admin rotated access-code password", true, "")
-		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
-			"access_code_password": password,
-			"access_code":          updated.AccessCode,
-			"username":             updated.Username,
+			"password": password,
+			"username": updated.Username,
 		}})
 		return
 
@@ -2053,18 +2031,62 @@ func HandleSubUserProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uuids := activeSubUserContainerUUIDs(su)
+	uuids := sessionContainerUUIDs(r, su)
+	links := make([]map[string]interface{}, 0, len(uuids))
+	for _, uuid := range uuids {
+		c := config.FindContainerByUUID(uuid)
+		if c == nil {
+			continue
+		}
+		// 机器级访问码凭据按需生成并落库（缺失时才写库）。
+		ensureContainerAccessCredentials(c)
+		links = append(links, map[string]interface{}{
+			"container_uuid":       c.UUID,
+			"container_name":       c.Name,
+			"access_code":          c.AccessCode,
+			"access_code_password": c.AccessCodePassword,
+			"login_url":            "/user/login?code=" + url.QueryEscape(c.AccessCode),
+		})
+	}
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
-		"username":             su.Username,
-		"email":                su.Email,
-		"role":                 subUserRole(su.Role),
-		"access_code":          su.AccessCode,
-		"access_code_password": su.AccessCodePassword,
-		"container_count":      len(uuids),
+		"username":        su.Username,
+		"email":           su.Email,
+		"role":            subUserRole(su.Role),
+		"container_count": len(uuids),
+		// access_links 是当前会话可管理的每台机器的访问码凭据（访问码会话只有一台）。
+		"access_links": links,
 		// via 让前端知道当前会话是账号登录还是访问码登录，从而决定
 		// 「账号密码管理」是否可用（访问码会话不可改账号密码）。
 		"via": subUserSessionVia(r),
 	}})
+}
+
+// sessionContainerUUIDs 返回当前会话被授权的容器 UUID：优先取令牌声明
+// （访问码会话只含其唯一的一台机器），回退到子用户绑定的全部容器。
+func sessionContainerUUIDs(r *http.Request, su *config.SubUser) []string {
+	if allowed, ok := subUserAllowedContainers(r); ok {
+		out := make([]string, 0, len(allowed.uuids))
+		for uuid := range allowed.uuids {
+			out = append(out, uuid)
+		}
+		sort.Strings(out)
+		return out
+	}
+	return activeSubUserContainerUUIDs(su)
+}
+
+// ensureContainerAccessCredentials 为容器按需生成「访问码 + 访问码口令」并落库。
+// 仅当确有缺失时才触发一次写库，避免每次读取详情都全量落库。
+func ensureContainerAccessCredentials(c *config.Container) {
+	if c == nil || (c.AccessCode != "" && c.AccessCodePassword != "") {
+		return
+	}
+	if _, updated := config.MutateContainerByID(c.ID, func(t *config.Container) {
+		config.EnsureContainerAccessCredentials(t)
+	}); updated != nil {
+		c.AccessCode = updated.AccessCode
+		c.AccessCodePassword = updated.AccessCodePassword
+	}
 }
 
 // HandleSubUserSelfRotatePassword 子用户自助轮换密码（用户门户「安全设置」）。
@@ -2138,12 +2160,13 @@ func HandleSubUserSelfRotatePassword(w http.ResponseWriter, r *http.Request) {
 	}})
 }
 
-// HandleSubUserSelfRotateAccessCodePassword 子用户自助重置「访问码密码」
-// （用户门户「安全设置」）。访问码密码与账号密码相互独立：账号会话与访问码
-// 会话都可重置它（前者代表所有者本人；后者代表分享对象，重置只影响分享凭据，
-// 不触及账号本身，故不属于被禁的「改账号密码」）。服务端随机生成 16 位新口令，
-// 明文仅本次返回；TokenVersion++ 使所有已签发 token（含当前会话）失效，
-// 前端展示新口令并引导重新登录。
+// HandleSubUserSelfRotateAccessCodePassword 重置「机器级访问码口令」
+// （用户门户「安全设置」）。访问码口令与账号密码相互独立：账号会话与访问码
+// 会话都可重置它（前者代表所有者本人；后者代表分享对象，重置只影响该机器的
+// 分享凭据，不触及账号本身，故不属于被禁的「改账号密码」）。请求体可选
+// container_uuid；不传时要求会话恰好只授权一台机器（即访问码会话）。服务端
+// 随机生成 16 位新口令，明文仅本次返回；属主的 TokenVersion++ 使所有已签发
+// token（含当前会话）失效，前端展示新口令并引导重新登录。
 func HandleSubUserSelfRotateAccessCodePassword(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -2159,24 +2182,64 @@ func HandleSubUserSelfRotateAccessCodePassword(w http.ResponseWriter, r *http.Re
 	if loginRateLimited(w, rateKey) {
 		return
 	}
-	loginLimiter.reset(rateKey)
 
-	password := generateRandomStr(16)
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
-		for i := range cfg.SubUsers {
-			if cfg.SubUsers[i].ID != su.ID {
-				continue
-			}
-			cfg.SubUsers[i].AccessCodePassword = password
-			cfg.SubUsers[i].Token = ""
-			cfg.SubUsers[i].TokenVersion++
+	var req struct {
+		ContainerUUID string `json:"container_uuid"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	target := strings.TrimSpace(req.ContainerUUID)
+	if target == "" {
+		uuids := sessionContainerUUIDs(r, su)
+		if len(uuids) != 1 {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "请指定要重置访问码口令的机器（container_uuid）"})
 			return
 		}
-	})
+		target = uuids[0]
+	}
+	if !isContainerAllowedForRequest(r, target) {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this container"})
+		return
+	}
+	c := config.FindContainerByUUID(target)
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	loginLimiter.reset(rateKey)
+	rotateContainerAccessCodePassword(w, r, c)
+}
 
-	auditRequest(r, "subuser.self.rotate_access_code_password", su.Username, "self access-code password rotation", true, "")
+// rotateContainerAccessCodePassword 生成新的「机器级访问码口令」并落库，同时使该
+// 机器属主已签发的令牌立即失效（含访问码会话）。调用方需先完成鉴权与容器可见性校验。
+func rotateContainerAccessCodePassword(w http.ResponseWriter, r *http.Request, c *config.Container) {
+	if c == nil {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
+		return
+	}
+	password := generateRandomStr(16)
+	ownerID := strings.TrimSpace(c.OwnerSubUserID)
+	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		for i := range cfg.Containers {
+			if (c.UUID != "" && cfg.Containers[i].UUID == c.UUID) || (c.UUID == "" && cfg.Containers[i].ID == c.ID) {
+				cfg.Containers[i].AccessCodePassword = password
+				break
+			}
+		}
+		// 口令轮换后使属主已签发令牌立即失效（含当前访问码会话）。
+		for i := range cfg.SubUsers {
+			if ownerID != "" && cfg.SubUsers[i].ID == ownerID {
+				cfg.SubUsers[i].TokenVersion++
+				break
+			}
+		}
+	})
+	c.AccessCodePassword = password
+
+	auditRequest(r, "container.rotate_access_code_password", c.Name, "access-code password rotated", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
+		"container_uuid":       c.UUID,
+		"container_name":       c.Name,
+		"access_code":          c.AccessCode,
 		"access_code_password": password,
-		"access_code":          su.AccessCode,
 	}})
 }
