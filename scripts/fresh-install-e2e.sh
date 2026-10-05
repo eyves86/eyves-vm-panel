@@ -215,16 +215,21 @@ fi
 tail -n 5 "$REPORT_DIR/install.log" 2>/dev/null | sed 's/^/    install> /' | tee -a "$MAIN_LOG" >/dev/null
 
 # --- 2a) 真实下载路径：断言「确实执行了哈希与签名校验」，防止校验被静默跳过 ---
+# 注意：install.sh 的 run_step 会把每个步骤的 stdout/stderr 重定向到它自己的
+# 日志文件（EYVESCLOUD_LOG_FILE，即 install-script.log），因此「校验通过」这类
+# 步骤内日志**不在** install.log（后者只有 run_step 的 开始/完成 横幅）。
 if [ -z "${EYVESCLOUD_E2E_LOCAL_BIN:-}" ]; then
-    if grep -q '校验清单签名验证通过（ed25519）' "$REPORT_DIR/install.log" 2>/dev/null; then
+    vlog="$REPORT_DIR/install-script.log"
+    [ -s "$vlog" ] || vlog="$REPORT_DIR/install.log"
+    if grep -q '校验清单签名验证通过（ed25519）' "$vlog" 2>/dev/null; then
         record PASS "真实下载：ed25519 清单签名验证通过"
     else
-        record FAIL "真实下载：ed25519 清单签名验证通过" "install.log 未见签名验证通过日志"
+        record FAIL "真实下载：ed25519 清单签名验证通过" "$vlog 未见签名验证通过日志"
     fi
-    if grep -qE '校验通过：.*SHA-256' "$REPORT_DIR/install.log" 2>/dev/null; then
+    if grep -qE '校验通过：.*SHA-256' "$vlog" 2>/dev/null; then
         record PASS "真实下载：SHA-256 校验通过"
     else
-        record FAIL "真实下载：SHA-256 校验通过" "install.log 未见 SHA-256 校验日志"
+        record FAIL "真实下载：SHA-256 校验通过" "$vlog 未见 SHA-256 校验日志"
     fi
 else
     record SKIP "真实下载：签名/哈希校验" "本地二进制模式跳过下载与校验"
@@ -236,9 +241,10 @@ if [ "${EYVESCLOUD_E2E_SKIP_IDEMPOTENT:-0}" = "1" ]; then
 elif [ "$install_rc" != "0" ]; then
     record SKIP "幂等：同版本重复安装被跳过" "首次安装未成功，跳过"
 else
-    if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH_RUN" install ) \
+    if ( cd "$INSTALL_CWD" && EYVESCLOUD_LOG_FILE="$REPORT_DIR/install-rerun-script.log" \
+            EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH_RUN" install ) \
             >"$REPORT_DIR/install-rerun.log" 2>&1 </dev/null; then
-        if grep -q '无需重复安装' "$REPORT_DIR/install-rerun.log" 2>/dev/null; then
+        if grep -q '无需重复安装' "$REPORT_DIR/install-rerun.log" "$REPORT_DIR/install-rerun-script.log" 2>/dev/null; then
             record PASS "幂等：同版本重复安装被跳过"
         else
             record WARN "幂等：同版本重复安装被跳过" "rc=0 但未出现「无需重复安装」提示"
@@ -425,7 +431,8 @@ if [ "${EYVESCLOUD_E2E_MODES:-0}" = "1" ] && [ "${EYVESCLOUD_E2E_KEEP:-0}" != "1
     AGENT_UNIT="/etc/systemd/system/eyvescloud-agent.service"
 
     # --- controller-only ---
-    if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" EYVESCLOUD_INSTALL_MODE=controller \
+    if ( cd "$INSTALL_CWD" && EYVESCLOUD_LOG_FILE="$REPORT_DIR/mode-controller-script.log" \
+            EYVESCLOUD_VERSION="$VER" EYVESCLOUD_INSTALL_MODE=controller \
             bash "$INSTALL_SH_RUN" install ) >"$REPORT_DIR/mode-controller.log" 2>&1 </dev/null; then
         record PASS "模式 controller：安装退出码 0"
         [ -f "$PANEL_UNIT" ] && record PASS "模式 controller：面板单元已安装" \
@@ -451,7 +458,8 @@ if [ "${EYVESCLOUD_E2E_MODES:-0}" = "1" ] && [ "${EYVESCLOUD_E2E_KEEP:-0}" != "1
     # --- agent-only ---
     # 主控地址用 TEST-NET-2（不可路由）：只为验证单元落盘与启动分支，
     # 不要求真的能连上主控；也避免命中「回环 agent 自愈停用」逻辑。
-    if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" EYVESCLOUD_INSTALL_MODE=agent \
+    if ( cd "$INSTALL_CWD" && EYVESCLOUD_LOG_FILE="$REPORT_DIR/mode-agent-script.log" \
+            EYVESCLOUD_VERSION="$VER" EYVESCLOUD_INSTALL_MODE=agent \
             EYVESCLOUD_CONTROLLER="https://198.51.100.10:${PANEL_PORT}" \
             bash "$INSTALL_SH_RUN" install ) >"$REPORT_DIR/mode-agent.log" 2>&1 </dev/null; then
         record PASS "模式 agent：安装退出码 0"
