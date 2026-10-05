@@ -366,10 +366,12 @@ fi
 # 步骤 6：汇总 + 打包
 # ---------------------------------------------------------------------------
 hdr "步骤 6：汇总"
-pass_n=$(grep -c '^PASS' "$RESULTS" 2>/dev/null || echo 0)
-warn_n=$(grep -c '^WARN' "$RESULTS" 2>/dev/null || echo 0)
-skip_n=$(grep -c '^SKIP' "$RESULTS" 2>/dev/null || echo 0)
-fail_n=$(grep -c '^FAIL' "$RESULTS" 2>/dev/null || echo 0)
+# 注意：`grep -c` 无匹配时仍会打印 0 但返回非 0，用 `|| true` 兜住退出码，
+# 切勿 `|| echo 0` —— 那会把计数变成 "0\n0" 撑坏汇总行。
+pass_n=$(grep -c '^PASS' "$RESULTS" 2>/dev/null || true)
+warn_n=$(grep -c '^WARN' "$RESULTS" 2>/dev/null || true)
+skip_n=$(grep -c '^SKIP' "$RESULTS" 2>/dev/null || true)
+fail_n=$(grep -c '^FAIL' "$RESULTS" 2>/dev/null || true)
 
 {
     echo "EyvesCloud 全新系统一键验收报告"
