@@ -117,7 +117,7 @@ curl -fsSL -X POST "$API/releases" \
     >/dev/null 2>&1 || true
 
 rel_id="$(curl -fsSL "$API/releases/tags/${TAG}" -H "Authorization: token ${EYVESCLOUD_RELEASE_TOKEN}" \
-    | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -n 1)"
+    | grep -o '"id":[0-9]*' | head -n 1 | grep -oE '[0-9]+')"
 [ -n "$rel_id" ] || die "无法获取 release id（tag 是否已推送？）"
 log "release id=${rel_id}"
 
