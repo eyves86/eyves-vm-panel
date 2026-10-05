@@ -411,7 +411,7 @@ func webhookDeliver(wh config.WebhookSubscription, evt webhookEvent) {
 	if lastErr != nil {
 		statusStr = "error: " + lastErr.Error()
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		// 异步投递可能在进程关闭 / 测试回收全局配置后仍被执行，此处必须容忍 nil，
 		// 否则一次已排队的失败重试会以空指针崩溃拖垮整个进程。
 		if cfg == nil {
@@ -437,7 +437,6 @@ func webhookDeliver(wh config.WebhookSubscription, evt webhookEvent) {
 			break
 		}
 	})
-	config.SaveConfigLogged()
 }
 
 // webhookDispatch 将事件分发给所有匹配的启用订阅（异步，不阻塞调用方）。

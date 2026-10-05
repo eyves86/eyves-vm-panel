@@ -183,10 +183,9 @@ func createSSHKey(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		cfg.SSHKeys = append(cfg.SSHKeys, newKey)
 	})
-	config.SaveConfigLogged()
 	auditRequest(r, "ssh_key.create", newKey.Name, fmt.Sprintf("fingerprint=%s", fingerprint), true, "")
 
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: newKey})
@@ -238,7 +237,7 @@ func updateSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Name too long"})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SSHKeys {
 			if cfg.SSHKeys[i].ID == id {
 				cfg.SSHKeys[i].Name = name
@@ -246,7 +245,6 @@ func updateSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 	})
-	config.SaveConfigLogged()
 	auditRequest(r, "ssh_key.update", key.Name, fmt.Sprintf("id=%s", id), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -265,7 +263,7 @@ func deleteSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "Access denied to this SSH key"})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		// 从 key 列表中移除
 		newList := make([]config.SSHKey, 0, len(cfg.SSHKeys))
 		for _, k := range cfg.SSHKeys {
@@ -284,7 +282,6 @@ func deleteSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 	})
-	config.SaveConfigLogged()
 	auditRequest(r, "ssh_key.delete", key.Name, fmt.Sprintf("id=%s", id), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }

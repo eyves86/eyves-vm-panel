@@ -1318,7 +1318,7 @@ func (q *TaskQueue) Cancel(taskID string) (canceled bool, running bool) {
 	q.mu.Unlock()
 
 	_ = config.AppendTaskLog(taskID, "WARN", "任务已由管理员取消")
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Tasks {
 			if cfg.Tasks[i].ID != taskID {
 				continue
@@ -1333,6 +1333,5 @@ func (q *TaskQueue) Cancel(taskID string) (canceled bool, running bool) {
 			return
 		}
 	})
-	config.SaveConfigLogged()
 	return true, false
 }

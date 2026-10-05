@@ -338,7 +338,7 @@ func deleteSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 		})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		newGroups := make([]secgroup.Group, 0, len(cfg.SecGroups))
 		for _, g := range cfg.SecGroups {
 			if g.ID != id {
@@ -354,7 +354,6 @@ func deleteSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		cfg.SecGroupRules = newRules
 	})
-	config.SaveConfig()
 	auditRequest(r, "secgroup.delete", g.Name, "id="+id, true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -436,7 +435,7 @@ func replaceAllSecGroupRules(w http.ResponseWriter, r *http.Request, groupID str
 			return
 		}
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		remaining := make([]secgroup.Rule, 0, len(cfg.SecGroupRules))
 		for _, r := range cfg.SecGroupRules {
 			if r.GroupID != groupID {
@@ -445,7 +444,6 @@ func replaceAllSecGroupRules(w http.ResponseWriter, r *http.Request, groupID str
 		}
 		cfg.SecGroupRules = append(remaining, req.Rules...)
 	})
-	config.SaveConfig()
 	auditRequest(r, "secgroup.rule_replace", groupID, fmt.Sprintf("count=%d", len(req.Rules)), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: fmt.Sprintf("Replaced %d rules", len(req.Rules))})
 }
@@ -473,7 +471,7 @@ func handleSecGroupRuleItem(w http.ResponseWriter, r *http.Request, groupID, rul
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 			return
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SecGroupRules {
 				if cfg.SecGroupRules[i].ID == ruleID && cfg.SecGroupRules[i].GroupID == groupID {
 					if req.Direction != nil {
@@ -507,10 +505,9 @@ func handleSecGroupRuleItem(w http.ResponseWriter, r *http.Request, groupID, rul
 				}
 			}
 		})
-		config.SaveConfig()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 	case http.MethodDelete:
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			remaining := make([]secgroup.Rule, 0, len(cfg.SecGroupRules))
 			for _, r := range cfg.SecGroupRules {
 				if !(r.ID == ruleID && r.GroupID == groupID) {
@@ -519,7 +516,6 @@ func handleSecGroupRuleItem(w http.ResponseWriter, r *http.Request, groupID, rul
 			}
 			cfg.SecGroupRules = remaining
 		})
-		config.SaveConfig()
 		auditRequest(r, "secgroup.rule_delete", ruleID, "group="+groupID, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 	default:

@@ -1064,7 +1064,7 @@ func (m *Manager) AttachISO(id int, isoPath string) error {
 		}
 	}
 	config.AppConfigMu.RUnlock()
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
 				cfg.Containers[i].OptionalISOID = isoID
@@ -1073,7 +1073,6 @@ func (m *Manager) AttachISO(id int, isoPath string) error {
 			}
 		}
 	})
-	config.SaveConfigLogged()
 	return nil
 }
 
@@ -1099,7 +1098,7 @@ func (m *Manager) DetachISO(id int) error {
 		return fmt.Errorf("virsh detach-disk failed: %v, output: %s", err, outStr)
 	}
 	// 清空 config 里的可选 ISO 记录。
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
 				cfg.Containers[i].OptionalISOID = ""
@@ -1108,7 +1107,6 @@ func (m *Manager) DetachISO(id int) error {
 			}
 		}
 	})
-	config.SaveConfigLogged()
 	return nil
 }
 
@@ -1116,7 +1114,7 @@ func (m *Manager) DetachISO(id int) error {
 // Destroy/Reinstall/Clone/EnterRescue 都会调用：重装或克隆的 VM 不应该带着旧的挂载 ISO；
 // EnterRescue 时旧的 CD-ROM 会和 rescue ISO 在 boot order 里冲突，需要先 detach。
 func clearOptionalISO(id int) {
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
 				cfg.Containers[i].OptionalISOID = ""
@@ -1125,7 +1123,6 @@ func clearOptionalISO(id int) {
 			}
 		}
 	})
-	config.SaveConfigLogged()
 }
 
 func (m *Manager) DestroyContainer(id int) error {

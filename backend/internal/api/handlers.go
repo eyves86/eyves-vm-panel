@@ -517,7 +517,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		}
 		// 原子更新 NodeID + 节点容器计数
 		var oldNodeID string
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.Containers {
 				if cfg.Containers[i].ID != id {
 					continue
@@ -527,7 +527,6 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		})
-		config.SaveConfig()
 		auditDetail := fmt.Sprintf("from=%s to=%s force=%v virt=%s", oldNodeID, targetNodeID, req.Force, container.Virtualization)
 		auditRequest(r, "container.migrate", container.Name, auditDetail, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{"node_id": targetNodeID}})
@@ -2423,7 +2422,7 @@ func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *co
 	}
 
 	// 更新 config 中的规格（runtime 层已更新，这里同步持久化）
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID != id {
 				continue
@@ -2440,7 +2439,6 @@ func handleContainerResize(w http.ResponseWriter, r *http.Request, id int, c *co
 			break
 		}
 	})
-	config.SaveConfigLogged()
 
 	detail := fmt.Sprintf("vcpu=%d ram_mb=%d disk_gb=%.1f", req.VCPU, req.RAMMB, req.DiskGB)
 	auditRequest(r, "container.resize", c.Name, detail, true, "")

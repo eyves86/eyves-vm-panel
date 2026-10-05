@@ -188,7 +188,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 		// 挂起/恢复：agent 端做配置标记 + 电源操作。
 		if action == "suspend" {
 			_ = stopByRuntime(id)
-			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 				for i := range cfg.Containers {
 					if cfg.Containers[i].ID == id {
 						cfg.Containers[i].Suspended = true
@@ -197,9 +197,8 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			})
-			config.SaveConfigLogged()
 		} else {
-			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 				for i := range cfg.Containers {
 					if cfg.Containers[i].ID == id {
 						cfg.Containers[i].Suspended = false
@@ -209,7 +208,6 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			})
-			config.SaveConfigLogged()
 			_ = startByRuntime(id)
 		}
 	case "reset-password":
@@ -333,7 +331,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.Containers {
 				if cfg.Containers[i].ID != id {
 					continue
@@ -350,7 +348,6 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		})
-		config.SaveConfigLogged()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "resized", Data: map[string]interface{}{"vcpu": container.VCPU, "ram_mb": container.RAMMB, "disk_gb": container.DiskGB}})
 		return
 	case "snapshot":
@@ -434,7 +431,7 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// agent 侧也更新本机 config（主控会同步拉回）
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			newC := *src
 			newC.ID = req.NewID
 			newC.UUID = req.NewUUID
@@ -456,7 +453,6 @@ func HandleAgentContainerAction(w http.ResponseWriter, r *http.Request) {
 			newC.Status = "stopped"
 			cfg.Containers = append(cfg.Containers, newC)
 		})
-		config.SaveConfigLogged()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "container cloned on agent node"})
 		return
 	case "recipes/execute":

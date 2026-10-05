@@ -269,7 +269,7 @@ func updateRecipe(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Recipes {
 			if cfg.Recipes[i].ID != id {
 				continue
@@ -302,7 +302,6 @@ func updateRecipe(w http.ResponseWriter, r *http.Request, id string) {
 			break
 		}
 	})
-	config.SaveConfig()
 	auditRequest(r, "recipe.update", existing.Name, "id="+id, true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -321,7 +320,7 @@ func deleteRecipe(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		out := make([]config.Recipe, 0, len(cfg.Recipes))
 		for _, recipe := range cfg.Recipes {
 			if recipe.ID != id {
@@ -330,7 +329,6 @@ func deleteRecipe(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		cfg.Recipes = out
 	})
-	config.SaveConfig()
 	auditRequest(r, "recipe.delete", existing.Name, "id="+id, true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }

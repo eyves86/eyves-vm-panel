@@ -2978,6 +2978,16 @@ func MutateGlobal(fn func(*EyvescloudConfig)) error {
 	return saveConfigToDB()
 }
 
+// MutateGlobalLogged 同 MutateGlobal，但在落库失败时按调用位置留痕。
+// 用于那些"改配置后紧跟着再 SaveConfig*()"的调用点——那些调用点的本意就是
+// "变更必须落库且失败要可见"，此前用一次额外全量重写来实现可见性；改为
+// 单次落库 + 失败日志，去掉重复的整库 DELETE+INSERT（写放大）。
+func MutateGlobalLogged(fn func(*EyvescloudConfig)) {
+	if err := MutateGlobal(fn); err != nil {
+		logSaveFailure(err, 2)
+	}
+}
+
 // UpdateContainer 整体替换容器配置（按 ID 匹配），写回 DB。
 // 用于 HVM 设置等元数据持久化。
 func UpdateContainer(c *Container) error {
@@ -4317,6 +4327,12 @@ func IsValidContainerNameSyntax(name string) bool {
 	return true
 }
 
+// 审计/登录日志的保留条数上限。内存切片与 SQLite 表用同一上限，增量追加后两者保持一致。
+const (
+	auditLogKeep = 500
+	loginLogKeep = 200
+)
+
 // AddAuditLog adds an audit log entry
 func AddAuditLog(action, target, detail, user string) {
 	if AppConfig == nil {
@@ -4331,11 +4347,13 @@ func AddAuditLog(action, target, detail, user string) {
 	}
 	AppConfigMu.Lock()
 	AppConfig.AuditLogs = append(AppConfig.AuditLogs, log)
-	if len(AppConfig.AuditLogs) > 500 {
-		AppConfig.AuditLogs = AppConfig.AuditLogs[len(AppConfig.AuditLogs)-500:]
+	if len(AppConfig.AuditLogs) > auditLogKeep {
+		AppConfig.AuditLogs = AppConfig.AuditLogs[len(AppConfig.AuditLogs)-auditLogKeep:]
 	}
 	AppConfigMu.Unlock()
-	SaveConfig()
+	if err := appendAuditLogRow(log, auditLogKeep); err != nil {
+		logSaveFailure(err, 2)
+	}
 }
 
 func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success bool, errMsg string) {
@@ -4360,11 +4378,13 @@ func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success
 	}
 	log.Hash = auditLogHash(log)
 	AppConfig.AuditLogs = append(AppConfig.AuditLogs, log)
-	if len(AppConfig.AuditLogs) > 500 {
-		AppConfig.AuditLogs = AppConfig.AuditLogs[len(AppConfig.AuditLogs)-500:]
+	if len(AppConfig.AuditLogs) > auditLogKeep {
+		AppConfig.AuditLogs = AppConfig.AuditLogs[len(AppConfig.AuditLogs)-auditLogKeep:]
 	}
 	AppConfigMu.Unlock()
-	SaveConfig()
+	if err := appendAuditLogRow(log, auditLogKeep); err != nil {
+		logSaveFailure(err, 2)
+	}
 }
 
 // auditLogHash 用 P8-3 auditchain 包相同的 canonical 字段顺序计算 SHA-256。
@@ -4409,11 +4429,13 @@ func AddLoginLog(username, ip, userAgent string, success bool) {
 	}
 	AppConfigMu.Lock()
 	AppConfig.LoginLogs = append(AppConfig.LoginLogs, log)
-	if len(AppConfig.LoginLogs) > 200 {
-		AppConfig.LoginLogs = AppConfig.LoginLogs[len(AppConfig.LoginLogs)-200:]
+	if len(AppConfig.LoginLogs) > loginLogKeep {
+		AppConfig.LoginLogs = AppConfig.LoginLogs[len(AppConfig.LoginLogs)-loginLogKeep:]
 	}
 	AppConfigMu.Unlock()
-	SaveConfig()
+	if err := appendLoginLogRow(log, loginLogKeep); err != nil {
+		logSaveFailure(err, 2)
+	}
 }
 
 // ResetAdminPassword resets the admin password from CLI

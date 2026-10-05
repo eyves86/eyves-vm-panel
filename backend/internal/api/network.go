@@ -76,10 +76,9 @@ func HandleRegions(w http.ResponseWriter, r *http.Request) {
 			Location:  strings.TrimSpace(req.Location),
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			cfg.Regions = append(cfg.Regions, region)
 		})
-		config.SaveConfig()
 		auditRequest(r, "region.create", region.Name, fmt.Sprintf("创建区域 %s", region.Name), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: region})
 	default:
@@ -196,8 +195,7 @@ func HandleIPGroups(w http.ResponseWriter, r *http.Request) {
 			Standby:   normalizeIPList(req.Standby),
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.IPGroups = append(cfg.IPGroups, group) })
-		config.SaveConfig()
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.IPGroups = append(cfg.IPGroups, group) })
 		auditRequest(r, "ipgroup.create", name, "创建 IP 组", true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: group})
 	default:
@@ -454,8 +452,7 @@ func HandleISOs(w http.ResponseWriter, r *http.Request) {
 			OS:        strings.TrimSpace(req.OS),
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
-		config.SaveConfig()
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
 		auditRequest(r, "iso.create", name, "添加 ISO 镜像", true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: iso})
 	default:
@@ -586,8 +583,7 @@ func HandleISOUpload(w http.ResponseWriter, r *http.Request) {
 		OS:        osName,
 		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
-	config.SaveConfig()
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
 	auditRequest(r, "iso.upload", iso.Name, "本地上传 ISO 镜像", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: iso})
 }

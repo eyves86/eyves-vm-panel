@@ -1708,6 +1708,65 @@ func saveLoginLogs(tx *sql.Tx) error {
 	return nil
 }
 
+// appendAuditLogRow 增量追加一行审计日志（不再触发整库 DELETE+INSERT），并按 id 裁剪到 keep 行。
+// 调用方已在 AppConfigMu 内把同一行 append 进内存切片并做同口径裁剪，故 DB 与内存始终一致。
+// keep<=0 表示不裁剪。
+func appendAuditLogRow(log AuditLog, keep int) error {
+	successSet := 0
+	success := 0
+	if log.Success != nil {
+		successSet = 1
+		if *log.Success {
+			success = 1
+		}
+	}
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if db == nil {
+		return fmt.Errorf("sqlite database is not initialized")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO audit_logs(time, action, target, detail, user, ip, user_agent, success_set, success, error)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		log.Time, log.Action, log.Target, log.Detail, log.User, log.IP, log.UserAgent, successSet, success, log.Error); err != nil {
+		return err
+	}
+	if keep > 0 {
+		if _, err := tx.Exec(`DELETE FROM audit_logs WHERE id NOT IN (SELECT id FROM audit_logs ORDER BY id DESC LIMIT ?)`, keep); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// appendLoginLogRow 同 appendAuditLogRow，作用于 login_logs。
+func appendLoginLogRow(log SavedLoginLog, keep int) error {
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	if db == nil {
+		return fmt.Errorf("sqlite database is not initialized")
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO login_logs(time, username, ip, user_agent, success) VALUES (?, ?, ?, ?, ?)`,
+		log.Time, log.Username, log.IP, log.UserAgent, boolInt(log.Success)); err != nil {
+		return err
+	}
+	if keep > 0 {
+		if _, err := tx.Exec(`DELETE FROM login_logs WHERE id NOT IN (SELECT id FROM login_logs ORDER BY id DESC LIMIT ?)`, keep); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func saveEnabledImages(tx *sql.Tx) error {
 	for i, id := range AppConfig.EnabledImages {
 		if _, err := tx.Exec(`INSERT INTO enabled_images(position, image_id) VALUES (?, ?)`, i, id); err != nil {
