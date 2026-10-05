@@ -414,7 +414,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		var oldOwnerID string
 		var ownerUsername string
 		var foundName string
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.Containers {
 				if cfg.Containers[i].ID != id {
 					continue
@@ -457,7 +457,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
 			return
 		}
-		if err := config.SaveConfig(); err != nil {
+		if saveErr != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
 			return
 		}
@@ -1371,10 +1371,6 @@ func suspendContainer(w http.ResponseWriter, r *http.Request, id int, suspend bo
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Container not found"})
 		return
 	}
-	if err := config.SaveConfig(); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
-		return
-	}
 
 	// suspend 时对运行中的容器排入强制停机任务（走统一任务队列，含审计）
 	if suspend && wasRunning {
@@ -1523,10 +1519,6 @@ func updateContainerTags(w http.ResponseWriter, r *http.Request, id int) {
 	})
 	if !updated {
 		errResponse(w, http.StatusNotFound, "NOT_FOUND", "Container not found")
-		return
-	}
-	if err := config.SaveConfig(); err != nil {
-		errResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save config")
 		return
 	}
 	auditRequest(r, "container.tags", c.Name,
@@ -2340,13 +2332,9 @@ func cloneContainer(w http.ResponseWriter, r *http.Request, srcID int) {
 	}
 
 	// 保存
-	var ok bool
-	ok = false
-	config.AppConfigMu.Lock()
-	config.AppConfig.Containers = append(config.AppConfig.Containers, newContainer)
-	config.SaveConfig()
-	config.AppConfigMu.Unlock()
-	_ = ok
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		cfg.Containers = append(cfg.Containers, newContainer)
+	})
 
 	// 给 PublicIPv4s 分配（从池中取，保持与创建流程一致）
 	// 这里简化：不自动分配，让用户后续通过 /api/containers/{id}/public-ipv4 分配

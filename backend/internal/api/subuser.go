@@ -1727,7 +1727,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		}
 		var removed config.SubUser
 		var freedContainers []string
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -1750,7 +1750,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
 		}
-		if err := config.SaveConfig(); err != nil {
+		if saveErr != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
 			return
 		}
@@ -1854,7 +1854,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 
 		var updated config.SubUser
 		var unboundNames []string
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -1891,7 +1891,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
 		}
-		if err := config.SaveConfig(); err != nil {
+		if saveErr != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
 			return
 		}

@@ -97,7 +97,7 @@ func HandleRegionItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Regions[:0]
 		for _, rg := range cfg.Regions {
 			if rg.ID == id {
@@ -112,7 +112,6 @@ func HandleRegionItem(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Region not found"})
 		return
 	}
-	config.SaveConfig()
 	auditRequest(r, "region.delete", id, "删除区域", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -222,7 +221,7 @@ func HandleIPGroupItem(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 		found := false
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.IPGroups {
 				if cfg.IPGroups[i].ID == id {
 					if strings.TrimSpace(req.Name) != "" {
@@ -239,12 +238,11 @@ func HandleIPGroupItem(w http.ResponseWriter, r *http.Request, id string) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "IP group not found"})
 			return
 		}
-		config.SaveConfig()
 		auditRequest(r, "ipgroup.update", id, "更新 IP 组", true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 	case http.MethodDelete:
 		found := false
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			out := cfg.IPGroups[:0]
 			for _, g := range cfg.IPGroups {
 				if g.ID == id {
@@ -259,7 +257,6 @@ func HandleIPGroupItem(w http.ResponseWriter, r *http.Request, id string) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "IP group not found"})
 			return
 		}
-		config.SaveConfig()
 		auditRequest(r, "ipgroup.delete", id, "删除 IP 组", true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 	default:
@@ -290,7 +287,7 @@ func HandleIPGroupFailover(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	var group *config.IPGroup
 	var demoted string
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.IPGroups {
 			if cfg.IPGroups[i].ID != id {
 				continue
@@ -323,7 +320,7 @@ func HandleIPGroupFailover(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	// Best-effort: containers referencing the demoted IP now carry the new active IP.
 	if demoted != "" && demoted != target {
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 			for k := range cfg.Containers {
 				c := &cfg.Containers[k]
 				for j := range c.PublicIPv4s {
@@ -334,7 +331,6 @@ func HandleIPGroupFailover(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		})
 	}
-	config.SaveConfig()
 	auditRequest(r, "ipgroup.failover", group.Name, fmt.Sprintf("故障切换 IP %s", target), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: group})
 }
@@ -472,7 +468,7 @@ func HandleISOItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var removedPath string
 	found := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		out := cfg.ISOFiles[:0]
 		for _, iso := range cfg.ISOFiles {
 			if iso.ID == id {
@@ -494,7 +490,6 @@ func HandleISOItem(w http.ResponseWriter, r *http.Request) {
 			_ = os.Remove(removedPath)
 		}
 	}
-	config.SaveConfig()
 	auditRequest(r, "iso.delete", id, "删除 ISO 镜像", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }

@@ -270,10 +270,9 @@ func createSecGroup(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	config.AppConfigMu.Lock()
-	config.AppConfig.SecGroups = append(config.AppConfig.SecGroups, group)
-	config.SaveConfig()
-	config.AppConfigMu.Unlock()
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		cfg.SecGroups = append(cfg.SecGroups, group)
+	})
 	auditRequest(r, "secgroup.create", group.Name, "id="+group.ID, true, "")
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: group})
 }
@@ -292,7 +291,7 @@ func updateSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Security group not found"})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SecGroups {
 			if cfg.SecGroups[i].ID == id {
 				if req.Name != nil {
@@ -305,8 +304,8 @@ func updateSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 	})
-	if err := config.SaveConfig(); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+	if saveErr != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: saveErr.Error()})
 		return
 	}
 	auditRequest(r, "secgroup.update", id, "", true, "")
@@ -404,10 +403,9 @@ func createSecGroupRule(w http.ResponseWriter, r *http.Request, groupID string) 
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	config.AppConfigMu.Lock()
-	config.AppConfig.SecGroupRules = append(config.AppConfig.SecGroupRules, rule)
-	config.SaveConfig()
-	config.AppConfigMu.Unlock()
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		cfg.SecGroupRules = append(cfg.SecGroupRules, rule)
+	})
 	auditRequest(r, "secgroup.rule_create", groupID, "rule_id="+rule.ID, true, "")
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: rule})
 }
@@ -543,7 +541,6 @@ func bindSecGroupToContainer(w http.ResponseWriter, r *http.Request, containerID
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Already bound"})
 		return
 	}
-	config.SaveConfig()
 	auditRequest(r, "secgroup.bind", groupID, fmt.Sprintf("container_id=%d", containerID), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -565,7 +562,6 @@ func unbindSecGroupFromContainer(w http.ResponseWriter, r *http.Request, contain
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Not bound"})
 		return
 	}
-	config.SaveConfig()
 	auditRequest(r, "secgroup.unbind", groupID, fmt.Sprintf("container_id=%d", containerID), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 }
@@ -588,7 +584,6 @@ func setContainerSecGroups(w http.ResponseWriter, r *http.Request, containerID i
 	config.MutateContainerByID(containerID, func(c *config.Container) {
 		c.SecGroupIDs = append([]string(nil), req.GroupIDs...)
 	})
-	config.SaveConfig()
 	auditRequest(r, "secgroup.bind_set", fmt.Sprintf("%d", containerID),
 		fmt.Sprintf("groups=%s", strings.Join(req.GroupIDs, ",")), true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true})

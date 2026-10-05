@@ -898,10 +898,9 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 		MaxRAMMB:     req.MaxRAMMB,
 		MaxDiskGB:    req.MaxDiskGB,
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.Regions = append(cfg.Regions, region)
-	})
-	if err := config.SaveConfig(); err != nil {
+	}); err != nil {
 		v2Internal(w, r, "保存区域失败："+err.Error())
 		return
 	}
@@ -974,7 +973,7 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var updated config.Region
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Regions {
 			if cfg.Regions[i].ID != regionID {
 				continue
@@ -1002,7 +1001,6 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "区域不存在："+regionID)
 		return
 	}
-	config.SaveConfigLogged()
 	auditRequest(r, "api.v2.region.update", updated.Name, "", true, "")
 	v2OK(w, r, v2RegionView(updated))
 }
@@ -1026,7 +1024,7 @@ func v2RegionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Regions[:0]
 		for _, region := range cfg.Regions {
 			if region.ID == regionID {
@@ -1041,7 +1039,6 @@ func v2RegionDelete(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "区域不存在："+regionID)
 		return
 	}
-	config.SaveConfigLogged()
 	auditRequest(r, "api.v2.region.delete", regionID, "", true, "")
 	v2NoContent(w, r)
 }

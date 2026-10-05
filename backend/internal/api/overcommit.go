@@ -75,15 +75,15 @@ func HandleOvercommitSettings(w http.ResponseWriter, r *http.Request) {
 		} else {
 			ksm = config.GetKSMTuning()
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			cfg.MemoryOvercommitEnabled = req.MemoryOvercommitEnabled
 			cfg.MemoryOvercommitRatio = req.MemoryOvercommitRatio
 			cfg.NATSubnetOversubscription = req.NATSubnetOversubscription
 			cfg.DiskOvercommitRatio = req.DiskOvercommitRatio
 			cfg.KSMTuning = ksm
 		})
-		if err := config.SaveConfig(); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		if saveErr != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: saveErr.Error()})
 			return
 		}
 		// 保存后立即尝试应用 KSM 内核参数（不可写时返回警告而非失败）。

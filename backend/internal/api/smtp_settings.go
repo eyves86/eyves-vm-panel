@@ -152,10 +152,6 @@ func HandleSMTPSettings(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 			return
 		}
-		if err := config.SaveConfig(); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
-			return
-		}
 		InitSMTPSender()
 		auditRequest(r, "smtp.settings.update", "smtp", "enabled="+fmt.Sprint(req.Enabled), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "SMTP settings updated"})

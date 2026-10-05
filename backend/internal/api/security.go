@@ -1700,7 +1700,7 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 			return
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			if req.AutoShutdown != nil {
 				cfg.SecurityAutoShutdown = *req.AutoShutdown
 			}
@@ -1714,8 +1714,8 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 				cfg.AbuseDetectionEnabled = *req.AbuseDetection
 			}
 		})
-		if err := config.SaveConfig(); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		if saveErr != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: saveErr.Error()})
 			return
 		}
 		// 开关变更后立即生效：开启则下发规则，关闭则清理自有链。

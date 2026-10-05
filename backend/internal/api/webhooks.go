@@ -228,10 +228,10 @@ func createWebhook(w http.ResponseWriter, r *http.Request) {
 			wh.OwnerType = ctx.Type
 		}
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.Webhooks = append(cfg.Webhooks, wh)
 	})
-	if err := config.SaveConfig(); err != nil {
+	if saveErr != nil {
 		errResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save config")
 		return
 	}
@@ -283,7 +283,7 @@ func updateWebhook(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Webhooks {
 			if cfg.Webhooks[i].ID != id {
 				continue
@@ -311,7 +311,7 @@ func updateWebhook(w http.ResponseWriter, r *http.Request, id string) {
 			break
 		}
 	})
-	if err := config.SaveConfig(); err != nil {
+	if saveErr != nil {
 		errResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save config")
 		return
 	}
@@ -329,7 +329,7 @@ func deleteWebhook(w http.ResponseWriter, r *http.Request, id string) {
 		errResponse(w, http.StatusForbidden, "FORBIDDEN", "Not allowed to delete this webhook")
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		out := make([]config.WebhookSubscription, 0, len(cfg.Webhooks))
 		for _, wh := range cfg.Webhooks {
 			if wh.ID != id {
@@ -338,7 +338,7 @@ func deleteWebhook(w http.ResponseWriter, r *http.Request, id string) {
 		}
 		cfg.Webhooks = out
 	})
-	if err := config.SaveConfig(); err != nil {
+	if saveErr != nil {
 		errResponse(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to save config")
 		return
 	}

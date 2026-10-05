@@ -975,7 +975,7 @@ func (m *Manager) EnterRescue(id int, isoID, isoPath string) error {
 	// virsh detach-disk 在设备不存在时会返回非零 exit code——我们视为幂等成功。
 	_ = execWithTimeout(cmdTimeoutMedium, "virsh", "detach-disk", name, "sdb").Run()
 	clearOptionalISO(id)
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
 				cfg.Containers[i].RescueEnabled = true
@@ -983,8 +983,7 @@ func (m *Manager) EnterRescue(id int, isoID, isoPath string) error {
 				cfg.Containers[i].RescueISOPath = isoPath
 			}
 		}
-	})
-	if err := config.SaveConfig(); err != nil {
+	}); err != nil {
 		return err
 	}
 	if curr := config.FindContainer(id); curr != nil {
@@ -1008,7 +1007,7 @@ func (m *Manager) ExitRescue(id int) error {
 	if err := m.StopContainer(id); err != nil {
 		return fmt.Errorf("failed to stop VM before exiting rescue: %v", err)
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if cfg.Containers[i].ID == id {
 				cfg.Containers[i].RescueEnabled = false
@@ -1016,8 +1015,7 @@ func (m *Manager) ExitRescue(id int) error {
 				cfg.Containers[i].RescueISOPath = ""
 			}
 		}
-	})
-	if err := config.SaveConfig(); err != nil {
+	}); err != nil {
 		return err
 	}
 	if curr := config.FindContainer(id); curr != nil {
