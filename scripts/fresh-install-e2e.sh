@@ -19,6 +19,9 @@
 #   EYVESCLOUD_E2E_KEEP=1                   跳过卸载（保留安装现场）
 #   EYVESCLOUD_E2E_FORCE=1                  检测到已有安装时仍继续
 #   EYVESCLOUD_E2E_ADMIN_USER / _ADMIN_PASS 首启凭据缺失时的回退登录账号
+#   EYVESCLOUD_E2E_MODES=1                  追加覆盖 controller-only / agent-only 安装模式
+#                                           （在主流程卸载后、同一台干净机上依次执行）
+#   EYVESCLOUD_E2E_SKIP_IDEMPOTENT=1        跳过同版本重复安装的幂等断言
 #
 set -u
 
@@ -176,6 +179,7 @@ export EYVESCLOUD_LOG_FILE="$REPORT_DIR/install-script.log"
 
 INSTALL_CWD="$REPORT_DIR"
 INSTALL_SH_RUN="$INSTALL_SH"
+LOCAL_BIN_VERSION=""
 if [ -n "${EYVESCLOUD_E2E_LOCAL_BIN:-}" ]; then
     if [ -f "$EYVESCLOUD_E2E_LOCAL_BIN" ]; then
         stage="$REPORT_DIR/stage"; mkdir -p "$stage"
@@ -184,6 +188,15 @@ if [ -n "${EYVESCLOUD_E2E_LOCAL_BIN:-}" ]; then
         INSTALL_CWD="$stage"; INSTALL_SH_RUN="$stage/install.sh"
         record PASS "使用本地二进制（跳过下载/校验）" "$EYVESCLOUD_E2E_LOCAL_BIN"
         log "本地二进制版本：$( "$stage/eyvescloud" --version 2>/dev/null | head -1 )"
+        # 本地模式若未显式指定版本，则取二进制自报版本作为目标版本。
+        # 原因：默认 latest 会去 Release API 解析目标 tag（当前发布版较旧），
+        # 已装版本高于它时会触发「拒绝回退安装」，幂等断言无法进行。
+        LOCAL_BIN_VERSION="$( "$stage/eyvescloud" --version 2>/dev/null \
+            | sed -n 's/^EyvesCloud[[:space:]]*v\?//p' | head -1 )"
+        if [ "$VER" = "latest" ] && [ -n "$LOCAL_BIN_VERSION" ]; then
+            VER="$LOCAL_BIN_VERSION"
+            log "本地模式已固定目标版本：$VER"
+        fi
     else
         record FAIL "本地二进制存在" "$EYVESCLOUD_E2E_LOCAL_BIN"
         exit 2
@@ -200,6 +213,40 @@ else
     record FAIL "安装脚本退出码 0" "rc=$install_rc，见 install.log"
 fi
 tail -n 5 "$REPORT_DIR/install.log" 2>/dev/null | sed 's/^/    install> /' | tee -a "$MAIN_LOG" >/dev/null
+
+# --- 2a) 真实下载路径：断言「确实执行了哈希与签名校验」，防止校验被静默跳过 ---
+if [ -z "${EYVESCLOUD_E2E_LOCAL_BIN:-}" ]; then
+    if grep -q '校验清单签名验证通过（ed25519）' "$REPORT_DIR/install.log" 2>/dev/null; then
+        record PASS "真实下载：ed25519 清单签名验证通过"
+    else
+        record FAIL "真实下载：ed25519 清单签名验证通过" "install.log 未见签名验证通过日志"
+    fi
+    if grep -qE '校验通过：.*SHA-256' "$REPORT_DIR/install.log" 2>/dev/null; then
+        record PASS "真实下载：SHA-256 校验通过"
+    else
+        record FAIL "真实下载：SHA-256 校验通过" "install.log 未见 SHA-256 校验日志"
+    fi
+else
+    record SKIP "真实下载：签名/哈希校验" "本地二进制模式跳过下载与校验"
+fi
+
+# --- 2b) 幂等：同版本重复安装应直接跳过（rc=0 且不重装）---
+if [ "${EYVESCLOUD_E2E_SKIP_IDEMPOTENT:-0}" = "1" ]; then
+    record SKIP "幂等：同版本重复安装被跳过" "EYVESCLOUD_E2E_SKIP_IDEMPOTENT=1"
+elif [ "$install_rc" != "0" ]; then
+    record SKIP "幂等：同版本重复安装被跳过" "首次安装未成功，跳过"
+else
+    if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH_RUN" install ) \
+            >"$REPORT_DIR/install-rerun.log" 2>&1 </dev/null; then
+        if grep -q '无需重复安装' "$REPORT_DIR/install-rerun.log" 2>/dev/null; then
+            record PASS "幂等：同版本重复安装被跳过"
+        else
+            record WARN "幂等：同版本重复安装被跳过" "rc=0 但未出现「无需重复安装」提示"
+        fi
+    else
+        record FAIL "幂等：同版本重复安装退出码 0" "rc=$?，见 install-rerun.log"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # 步骤 3：服务与端口就绪
@@ -360,6 +407,74 @@ EOF
     still_busy=0
     if have ss && ss -ltn 2>/dev/null | grep -q ":${PANEL_PORT}[[:space:]]"; then still_busy=1; fi
     [ "$still_busy" = "0" ] && record PASS "端口 ${PANEL_PORT} 已释放" || record FAIL "端口 ${PANEL_PORT} 已释放" "仍被占用"
+fi
+
+# ---------------------------------------------------------------------------
+# 步骤 5.5：安装模式覆盖（controller-only / agent-only）
+#   仅当 EYVESCLOUD_E2E_MODES=1 时执行；在主流程卸载后、同一台机上依次验证。
+#   目的是确认「模式选择」这条分支不会装错服务、不会互相污染。
+# ---------------------------------------------------------------------------
+uninstall_quiet() {
+    EYVESCLOUD_LOG_FILE="$REPORT_DIR/uninstall-modes.log" EYVESCLOUD_UNINSTALL_CONFIRM=1 \
+        bash "$INSTALL_SH" uninstall >/dev/null 2>&1 </dev/null || true
+}
+
+if [ "${EYVESCLOUD_E2E_MODES:-0}" = "1" ] && [ "${EYVESCLOUD_E2E_KEEP:-0}" != "1" ]; then
+    hdr "步骤 5.5：安装模式覆盖"
+    PANEL_UNIT="/etc/systemd/system/eyvescloud.service"
+    AGENT_UNIT="/etc/systemd/system/eyvescloud-agent.service"
+
+    # --- controller-only ---
+    if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" EYVESCLOUD_INSTALL_MODE=controller \
+            bash "$INSTALL_SH_RUN" install ) >"$REPORT_DIR/mode-controller.log" 2>&1 </dev/null; then
+        record PASS "模式 controller：安装退出码 0"
+        [ -f "$PANEL_UNIT" ] && record PASS "模式 controller：面板单元已安装" \
+                             || record FAIL "模式 controller：面板单元已安装" "$PANEL_UNIT 不存在"
+        if [ -e "$AGENT_UNIT" ] || [ -e "${AGENT_UNIT}.disabled" ]; then
+            record FAIL "模式 controller：未安装 agent 单元" "存在 $AGENT_UNIT"
+        else
+            record PASS "模式 controller：未安装 agent 单元"
+        fi
+        cr=0
+        for _ in $(seq 1 30); do
+            if [ "$(http_code "$BASE/api/health")" = "200" ]; then cr=1; break; fi
+            if have systemctl && systemctl is-active --quiet eyvescloud 2>/dev/null; then cr=1; break; fi
+            sleep 2
+        done
+        [ "$cr" = "1" ] && record PASS "模式 controller：服务/端口就绪" \
+                        || record FAIL "模式 controller：服务/端口就绪"
+    else
+        record FAIL "模式 controller：安装退出码 0" "rc=$?，见 mode-controller.log"
+    fi
+    uninstall_quiet
+
+    # --- agent-only ---
+    # 主控地址用 TEST-NET-2（不可路由）：只为验证单元落盘与启动分支，
+    # 不要求真的能连上主控；也避免命中「回环 agent 自愈停用」逻辑。
+    if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" EYVESCLOUD_INSTALL_MODE=agent \
+            EYVESCLOUD_CONTROLLER="https://198.51.100.10:${PANEL_PORT}" \
+            bash "$INSTALL_SH_RUN" install ) >"$REPORT_DIR/mode-agent.log" 2>&1 </dev/null; then
+        record PASS "模式 agent：安装退出码 0"
+        [ -f "$AGENT_UNIT" ] && record PASS "模式 agent：agent 单元已安装" \
+                             || record FAIL "模式 agent：agent 单元已安装" "$AGENT_UNIT 不存在"
+        if [ -f "$PANEL_UNIT" ]; then
+            record FAIL "模式 agent：未安装面板单元" "存在 $PANEL_UNIT"
+        else
+            record PASS "模式 agent：未安装面板单元"
+        fi
+        [ -x /usr/local/bin/eyvescloud ] && record PASS "模式 agent：二进制已安装" \
+                                        || record FAIL "模式 agent：二进制已安装"
+    else
+        record FAIL "模式 agent：安装退出码 0" "rc=$?，见 mode-agent.log"
+    fi
+    uninstall_quiet
+
+    # 收尾：确认两种模式卸载后同样无残留
+    if [ -e "$PANEL_UNIT" ] || [ -e "$AGENT_UNIT" ] || [ -e "${AGENT_UNIT}.disabled" ]; then
+        record FAIL "模式覆盖后无单元残留" "仍存在 eyvescloud 单元"
+    else
+        record PASS "模式覆盖后无单元残留"
+    fi
 fi
 
 # ---------------------------------------------------------------------------

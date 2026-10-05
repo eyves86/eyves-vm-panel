@@ -2307,7 +2307,12 @@ check_upgrade_compatibility() {
         return
     fi
     log "检测到已安装版本 ${installed}，目标版本 ${target}"
-    if [ "$installed" = "$target" ]; then
+    # 归一化比较：二进制自报版本为「2.2.46」，而 Release tag 形如「v2.2.46」。
+    # 若不剥离前缀，二者字符串不相等 → 已装最新版重复执行 install 仍会重装
+    # （重新下载 + 覆盖），幂等性形同虚设。
+    _installed_n="${installed#v}"
+    _target_n="${target#v}"
+    if [ "$_installed_n" = "$_target_n" ]; then
         log "已安装版本与目标版本一致，无需重复安装。"
         if [ "${EYVESCLOUD_FORCE_REINSTALL:-0}" != "1" ]; then
             print_summary

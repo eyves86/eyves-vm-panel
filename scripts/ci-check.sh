@@ -122,6 +122,16 @@ verify_contracts() {
   else
     bad "CI 构建未内嵌 releasePubKeyHex（自升级验签将被静默跳过）"
   fi
+
+  # 9) 安装幂等：已装版本（二进制自报 "2.2.46"）与 Release tag（"v2.2.46"）前缀
+  #    不同，直接字符串比较永远不等 → 已是最新仍会重新下载覆盖安装，幂等失效。
+  #    必须在比较前剥离前导 v。
+  if sed -n '/check_upgrade_compatibility()/,/^}/p' "$ROOT/install.sh" \
+       | grep -qE '_target_n="\$\{target#v\}"'; then
+    ok "安装幂等：版本比较已归一化（剥离前导 v）"
+  else
+    bad "安装幂等退化：未对 target 版本剥离前导 v（重复安装不会跳过）"
+  fi
 }
 
 # ---------------------------------------------------------------------------
