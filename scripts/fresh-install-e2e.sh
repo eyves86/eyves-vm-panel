@@ -14,6 +14,8 @@
 # 可选环境变量：
 #   EYVESCLOUD_VERSION=latest|vX.Y.Z        安装版本（默认 latest）
 #   EYVESCLOUD_INSTALL_SH=/path/install.sh  使用本地 install.sh（默认从仓库 main 拉取）
+#   EYVESCLOUD_E2E_LOCAL_BIN=/path/eyvescloud  用本地二进制安装（跳过下载/校验），
+#                                           用于验证未发版的修复
 #   EYVESCLOUD_E2E_KEEP=1                   跳过卸载（保留安装现场）
 #   EYVESCLOUD_E2E_FORCE=1                  检测到已有安装时仍继续
 #   EYVESCLOUD_E2E_ADMIN_USER / _ADMIN_PASS 首启凭据缺失时的回退登录账号
@@ -165,12 +167,33 @@ fi
 
 # ---------------------------------------------------------------------------
 # 步骤 2：安装
+#   默认走「真实下载 + 校验」；设 EYVESCLOUD_E2E_LOCAL_BIN=<二进制路径> 时用本地
+#   构建（install.sh 见到 ./eyvescloud 即跳过下载），用于验证未发版的修复。
 # ---------------------------------------------------------------------------
-hdr "步骤 2：安装（真实下载 + 校验路径）"
+hdr "步骤 2：安装"
 VER="${EYVESCLOUD_VERSION:-latest}"
 export EYVESCLOUD_LOG_FILE="$REPORT_DIR/install-script.log"
+
+INSTALL_CWD="$REPORT_DIR"
+INSTALL_SH_RUN="$INSTALL_SH"
+if [ -n "${EYVESCLOUD_E2E_LOCAL_BIN:-}" ]; then
+    if [ -f "$EYVESCLOUD_E2E_LOCAL_BIN" ]; then
+        stage="$REPORT_DIR/stage"; mkdir -p "$stage"
+        cp -f "$INSTALL_SH" "$stage/install.sh"
+        cp -f "$EYVESCLOUD_E2E_LOCAL_BIN" "$stage/eyvescloud"; chmod +x "$stage/eyvescloud"
+        INSTALL_CWD="$stage"; INSTALL_SH_RUN="$stage/install.sh"
+        record PASS "使用本地二进制（跳过下载/校验）" "$EYVESCLOUD_E2E_LOCAL_BIN"
+        log "本地二进制版本：$( "$stage/eyvescloud" --version 2>/dev/null | head -1 )"
+    else
+        record FAIL "本地二进制存在" "$EYVESCLOUD_E2E_LOCAL_BIN"
+        exit 2
+    fi
+else
+    log "走发行版下载 + SHA-256/签名校验路径"
+fi
+
 install_rc=0
-if EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH" install >"$REPORT_DIR/install.log" 2>&1 </dev/null; then
+if ( cd "$INSTALL_CWD" && EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH_RUN" install ) >"$REPORT_DIR/install.log" 2>&1 </dev/null; then
     record PASS "安装脚本退出码 0"
 else
     install_rc=$?
