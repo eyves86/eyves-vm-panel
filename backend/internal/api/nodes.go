@@ -690,6 +690,30 @@ func handleNodeItem(w http.ResponseWriter, r *http.Request, nodeID string) {
 	}
 }
 
+// nodeHeartbeatPersistEvery throttles whole-DB persistence of telemetry-only
+// heartbeats. The agent beats every 10s; persisting every beat means a full
+// rewrite of every table, which is unacceptable at 10k-node scale. Memory state
+// is still refreshed on every beat (the panel reads memory).
+const nodeHeartbeatPersistEvery = 60 * time.Second
+
+var (
+	nodeHeartbeatSaveMu  sync.Mutex
+	nodeHeartbeatSavedAt = map[string]time.Time{}
+)
+
+// nodeHeartbeatSaveDue reports whether this node's beat is due for persistence
+// (first beat, or >= throttle interval). It stamps the time on hit so that the
+// caller can reuse the decision when nothing structural changed.
+func nodeHeartbeatSaveDue(nodeID string) bool {
+	nodeHeartbeatSaveMu.Lock()
+	defer nodeHeartbeatSaveMu.Unlock()
+	if t, ok := nodeHeartbeatSavedAt[nodeID]; ok && time.Since(t) < nodeHeartbeatPersistEvery {
+		return false
+	}
+	nodeHeartbeatSavedAt[nodeID] = time.Now()
+	return true
+}
+
 // handleNodeHeartbeat 由被控 agent 周期性上报资源、容器清单与在线状态。
 // 心跳携带的容器摘要会与主控本地容器列表做增量同步：
 //   - 已存在（同 UUID）：更新状态/资源字段，确保 NodeID 归属正确
@@ -726,39 +750,76 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 		return
 	}
-	_, ok = config.UpdateNode(nodeID, func(n *config.Node) {
-		n.LastSeen = time.Now().Format("2006-01-02 15:04:05")
-		n.Status = "online"
-		if req.Version != "" {
+	now := time.Now().Format("2006-01-02 15:04:05")
+	// Heartbeat write-amplification control: the agent heartbeats every 10s and
+	// most beats only carry telemetry jitter (mem/disk usage, container traffic,
+	// live metrics). Rewriting the whole DB (DELETE+INSERT of every table) on each
+	// beat is catastrophic at 10k nodes. The controller memory state is refreshed on
+	// every beat (the panel reads memory); only the *telemetry-only* whole-DB write
+	// is throttled to >= nodeHeartbeatPersistEvery. Structural changes (node
+	// online/offline, container add/remove, status/suspend/quota/expiry changes) are
+	// persisted immediately. The first beat after a controller restart always
+	// persists, so DB telemetry lags at most 60s and is refreshed within 10s of restart.
+	due := nodeHeartbeatSaveDue(nodeID)
+	var statusChanges []containerStatusChange
+	notFound := false
+	config.MutateGlobalSaveIf(func(cfg *config.EyvescloudConfig) bool {
+		var n *config.Node
+		for i := range cfg.Nodes {
+			if cfg.Nodes[i].ID == nodeID {
+				n = &cfg.Nodes[i]
+				break
+			}
+		}
+		if n == nil {
+			notFound = true
+			return false
+		}
+		structural := false
+		if n.Status != "online" {
+			n.Status = "online"
+			structural = true
+		}
+		if req.Version != "" && n.Version != req.Version {
 			n.Version = req.Version
+			structural = true
 		}
-		if req.OSName != "" {
+		if req.OSName != "" && n.OSName != req.OSName {
 			n.OSName = req.OSName
+			structural = true
 		}
-		if req.CPUCount > 0 {
+		if req.CPUCount > 0 && n.CPUCount != req.CPUCount {
 			n.CPUCount = req.CPUCount
+			structural = true
 		}
-		if req.RAMTotalMB > 0 {
+		if req.RAMTotalMB > 0 && n.RAMTotalMB != req.RAMTotalMB {
 			n.RAMTotalMB = req.RAMTotalMB
+			structural = true
 		}
-		n.RAMUsedMB = req.RAMUsedMB
-		if req.DiskTotalGB > 0 {
+		if req.DiskTotalGB > 0 && n.DiskTotalGB != req.DiskTotalGB {
 			n.DiskTotalGB = req.DiskTotalGB
+			structural = true
 		}
+		// Telemetry fields only refresh memory state; they are not structural.
+		n.RAMUsedMB = req.RAMUsedMB
 		n.DiskUsedGB = req.DiskUsedGB
 		n.ContainerCount = req.ContainerCount
+		n.LastSeen = now
+		if req.ContainerSummaries != nil {
+			if syncAgentContainersUnlocked(cfg, nodeID, *req.ContainerSummaries, &statusChanges) {
+				structural = true
+			}
+		}
+		return structural || due
 	})
-	if !ok {
+	if notFound {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 		return
 	}
 
-	// 增量同步容器列表（agent 上报了 containers 字段就同步——空数组同样有效，
-	// 否则节点上清空容器后主控永远无法进入 orphan 清理）。
-	if req.ContainerSummaries != nil {
-		syncAgentContainers(nodeID, *req.ContainerSummaries)
+	for _, ch := range statusChanges {
+		config.FireContainerStatusHook(ch.id, ch.name, ch.old, ch.new)
 	}
-
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "ok"})
 }
 
@@ -816,10 +877,17 @@ func allocateNodeContainerID(cfg *config.EyvescloudConfig) int {
 	return id
 }
 
-// syncAgentContainers 将 agent 心跳上报的容器摘要增量合并到主控容器列表。
-// 策略：按 UUID 匹配（ID 在不同节点可能重复，UUID 全局唯一）。
-func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
-	// 指标写入主控 metric history（跨节点容器详情/监控页数据源）
+// syncAgentContainersUnlocked merges agent-reported container summaries into the
+// controller container list. Match by UUID (IDs may collide across nodes; UUIDs are
+// globally unique). Caller must hold AppConfigMu write lock (guaranteed by
+// MutateGlobalSaveIf). Returns whether a structural change occurred that must be
+// persisted immediately: container add/remove, status/suspend/quota/expiry/
+// virtualization/template changes. Pure telemetry refreshes (traffic counters, IP,
+// SSH port) only update memory state and are persisted by the heartbeat throttle.
+func syncAgentContainersUnlocked(cfg *config.EyvescloudConfig, nodeID string, summaries []heartbeatContainerSummary, statusChanges *[]containerStatusChange) bool {
+	structural := false
+
+	// Metric history write (data source for cross-node container detail/monitor pages).
 	for _, s := range summaries {
 		if s.UUID == "" || s.MetricTS == 0 {
 			continue
@@ -827,102 +895,124 @@ func syncAgentContainers(nodeID string, summaries []heartbeatContainerSummary) {
 		appendAgentMetricPoint(s)
 	}
 
-	// 状态变更收集：锁内记录、锁外触发钩子。这是跨节点容器事件的
-	// 唯一投递路径（agent 侧被 webhookStatusHook 的 agent 守卫跳过）。
-	var statusChanges []containerStatusChange
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
-		// 1) 标记该节点现有容器为待清理
-		orphaned := make(map[string]bool) // UUID -> true
-		for i := range cfg.Containers {
-			if cfg.Containers[i].NodeID == nodeID {
-				orphaned[cfg.Containers[i].UUID] = true
-			}
+	// 1) mark this node's existing containers as pending-cleanup
+	orphaned := make(map[string]bool) // UUID -> true
+	for i := range cfg.Containers {
+		if cfg.Containers[i].NodeID == nodeID {
+			orphaned[cfg.Containers[i].UUID] = true
 		}
+	}
 
-		// 2) 处理 agent 上报的每个容器
-		for _, s := range summaries {
-			if s.UUID == "" {
+	// 2) handle each container reported by the agent
+	for _, s := range summaries {
+		if s.UUID == "" {
+			continue
+		}
+		found := false
+		for i := range cfg.Containers {
+			if cfg.Containers[i].UUID != s.UUID {
 				continue
 			}
-			// 找到现有容器
-			found := false
-			for i := range cfg.Containers {
-				if cfg.Containers[i].UUID == s.UUID {
-					// 更新心跳同步的字段（主控侧独占字段如 OwnerSubUserID/SSHPassword 保留）
-					cfg.Containers[i].NodeID = nodeID
-					if s.ID > 0 {
-						cfg.Containers[i].NodeLocalID = s.ID
-					}
-					if cfg.Containers[i].Status != s.Status {
-						statusChanges = append(statusChanges, containerStatusChange{
-							id:   cfg.Containers[i].ID,
-							name: cfg.Containers[i].Name,
-							old:  cfg.Containers[i].Status,
-							new:  s.Status,
-						})
-						cfg.Containers[i].Status = s.Status
-					}
-					cfg.Containers[i].Virtualization = s.Virtualization
-					if s.Template != "" {
-						cfg.Containers[i].Template = s.Template
-					}
-					cfg.Containers[i].Suspended = s.Suspended
-					cfg.Containers[i].VCPU = s.VCPU
-					cfg.Containers[i].RAMMB = s.RAMMB
-					cfg.Containers[i].DiskGB = s.DiskGB
-					cfg.Containers[i].ExpiresAt = s.ExpiresAt
-					if s.IP != "" {
-						cfg.Containers[i].IP = s.IP
-					}
-					if s.SSHPort > 0 {
-						cfg.Containers[i].SSHPort = s.SSHPort
-					}
-					cfg.Containers[i].TrafficUsedRX = s.TrafficUsedRX
-					cfg.Containers[i].TrafficUsedTX = s.TrafficUsedTX
-					orphaned[s.UUID] = false
-					found = true
-					break
-				}
+			c := &cfg.Containers[i]
+			// Update heartbeat-synced fields (controller-exclusive fields like
+			// OwnerSubUserID/SSHPassword are preserved).
+			if c.NodeID != nodeID {
+				c.NodeID = nodeID
+				structural = true
 			}
-			if !found {
-				// 主控没有此容器：从 agent 推送的摘要新增。
-				// 主控侧 ID 必须全局唯一（SQLite 主键）：节点本地 ID 可能与本机
-				// 容器撞号（实测：节点 id=3 与本机 id=3 撞 → 整笔保存事务主键冲突
-				// 回滚 → 所有配置写入静默失败）。这里分配主控唯一 ID，
-				// 节点本地 ID 另存 NodeLocalID 供代理调用。
-				newC := config.Container{
-					ID: allocateNodeContainerID(cfg), NodeLocalID: s.ID,
-					UUID: s.UUID, Name: s.Name,
-					Status: s.Status, Virtualization: s.Virtualization, Template: s.Template,
-					Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
-					DiskGB: s.DiskGB, NodeID: nodeID,
-					IP: s.IP, SSHPort: s.SSHPort,
-					ExpiresAt: s.ExpiresAt, TrafficUsedRX: s.TrafficUsedRX,
-					TrafficUsedTX: s.TrafficUsedTX,
-				}
-				cfg.Containers = append(cfg.Containers, newC)
+			if s.ID > 0 && c.NodeLocalID != s.ID {
+				c.NodeLocalID = s.ID
+				structural = true
 			}
+			if c.Status != s.Status {
+				*statusChanges = append(*statusChanges, containerStatusChange{
+					id:   c.ID,
+					name: c.Name,
+					old:  c.Status,
+					new:  s.Status,
+				})
+				c.Status = s.Status
+				structural = true
+			}
+			if c.Virtualization != s.Virtualization {
+				c.Virtualization = s.Virtualization
+				structural = true
+			}
+			if s.Template != "" && c.Template != s.Template {
+				c.Template = s.Template
+				structural = true
+			}
+			if c.Suspended != s.Suspended {
+				c.Suspended = s.Suspended
+				structural = true
+			}
+			if c.VCPU != s.VCPU {
+				c.VCPU = s.VCPU
+				structural = true
+			}
+			if c.RAMMB != s.RAMMB {
+				c.RAMMB = s.RAMMB
+				structural = true
+			}
+			if c.DiskGB != s.DiskGB {
+				c.DiskGB = s.DiskGB
+				structural = true
+			}
+			if c.ExpiresAt != s.ExpiresAt {
+				c.ExpiresAt = s.ExpiresAt
+				structural = true
+			}
+			// Telemetry: refresh memory only.
+			if s.IP != "" {
+				c.IP = s.IP
+			}
+			if s.SSHPort > 0 {
+				c.SSHPort = s.SSHPort
+			}
+			c.TrafficUsedRX = s.TrafficUsedRX
+			c.TrafficUsedTX = s.TrafficUsedTX
+			orphaned[s.UUID] = false
+			found = true
+			break
 		}
-
-		// 3) 主控有但 agent 没上报的容器：标记 orphaned=true
-		for i := range cfg.Containers {
-			if orphaned[cfg.Containers[i].UUID] {
-				if cfg.Containers[i].Status != "orphaned" {
-					statusChanges = append(statusChanges, containerStatusChange{
-						id:   cfg.Containers[i].ID,
-						name: cfg.Containers[i].Name,
-						old:  cfg.Containers[i].Status,
-						new:  "orphaned",
-					})
-					cfg.Containers[i].Status = "orphaned"
-				}
+		if !found {
+			// Not present on the controller: add from the agent summary. The
+			// controller-side ID must be globally unique (SQLite primary key):
+			// node-local IDs may collide with local containers (observed: node
+			// id=3 vs local id=3 -> whole save tx PK conflict -> all writes fail
+			// silently). Allocate a controller-unique ID; keep the node-local ID
+			// in NodeLocalID for proxy calls.
+			newC := config.Container{
+				ID: allocateNodeContainerID(cfg), NodeLocalID: s.ID,
+				UUID: s.UUID, Name: s.Name,
+				Status: s.Status, Virtualization: s.Virtualization, Template: s.Template,
+				Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
+				DiskGB: s.DiskGB, NodeID: nodeID,
+				IP: s.IP, SSHPort: s.SSHPort,
+				ExpiresAt: s.ExpiresAt, TrafficUsedRX: s.TrafficUsedRX,
+				TrafficUsedTX: s.TrafficUsedTX,
 			}
+			cfg.Containers = append(cfg.Containers, newC)
+			structural = true
 		}
-	})
-	config.SaveConfigLogged()
-	for _, ch := range statusChanges {
-		config.FireContainerStatusHook(ch.id, ch.name, ch.old, ch.new)
 	}
+
+	// 3) containers the controller has but the agent did not report: mark orphaned
+	for i := range cfg.Containers {
+		if orphaned[cfg.Containers[i].UUID] {
+			if cfg.Containers[i].Status != "orphaned" {
+				*statusChanges = append(*statusChanges, containerStatusChange{
+					id:   cfg.Containers[i].ID,
+					name: cfg.Containers[i].Name,
+					old:  cfg.Containers[i].Status,
+					new:  "orphaned",
+				})
+				cfg.Containers[i].Status = "orphaned"
+				structural = true
+			}
+		}
+	}
+	return structural
 }
 
 // appendAgentMetricPoint 把 agent 心跳上报的指标点写入主控 metric history，

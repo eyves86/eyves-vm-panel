@@ -2988,6 +2988,22 @@ func MutateGlobalLogged(fn func(*EyvescloudConfig)) {
 	}
 }
 
+// MutateGlobalSaveIf 在写锁内执行 fn，由 fn 决定本次是否需要落库。
+// 用于心跳等“高频、多数无实质变化”的写入路径：把变更与落库判定放在同一把
+// 锁内，避免重复加锁，并在无实质变化时跳过整库重写（写放大）。落库失败时按
+// 调用位置留痕。返回 fn 的判定结果（是否已落库）。
+func MutateGlobalSaveIf(fn func(*EyvescloudConfig) bool) bool {
+	AppConfigMu.Lock()
+	defer AppConfigMu.Unlock()
+	if !fn(AppConfig) {
+		return false
+	}
+	if err := saveConfigToDB(); err != nil {
+		logSaveFailure(err, 2)
+	}
+	return true
+}
+
 // UpdateContainer 整体替换容器配置（按 ID 匹配），写回 DB。
 // 用于 HVM 设置等元数据持久化。
 func UpdateContainer(c *Container) error {
@@ -4001,7 +4017,7 @@ func UpdateContainerStatus(id int, status string) {
 		// 闭包 + defer：panic 时仍能安全释放锁（HTTP 层有 recover 中间件兜底）。
 		AppConfigMu.Lock()
 		defer AppConfigMu.Unlock()
-		if c := findContainerUnlocked(id); c != nil {
+		if c := findContainerUnlocked(id); c != nil && c.Status != status {
 			name, oldStatus = c.Name, c.Status
 			c.Status = status
 			SaveConfigToDBLogged()
@@ -4063,6 +4079,9 @@ func UpdateContainerStatusAndRestore(id int, status string, restoreOnHostBoot bo
 		AppConfigMu.Lock()
 		defer AppConfigMu.Unlock()
 		if c := findContainerUnlocked(id); c != nil {
+			if c.Status == status && c.RestoreOnHostBoot == restoreOnHostBoot {
+				return
+			}
 			name, oldStatus = c.Name, c.Status
 			c.Status = status
 			c.RestoreOnHostBoot = restoreOnHostBoot
@@ -4078,7 +4097,7 @@ func SetContainerRestoreOnHostBoot(id int, restore bool) {
 	AppConfigMu.Lock()
 	defer AppConfigMu.Unlock()
 	c := findContainerUnlocked(id)
-	if c != nil {
+	if c != nil && c.RestoreOnHostBoot != restore {
 		c.RestoreOnHostBoot = restore
 		SaveConfigToDBLogged()
 	}
