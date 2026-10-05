@@ -119,13 +119,21 @@ curl -fsSL -X POST "$API/releases" \
 rel_id="$(curl -fsSL "$API/releases/tags/${TAG}" -H "Authorization: token ${EYVESCLOUD_RELEASE_TOKEN}" \
     | grep -o '"id":[0-9]*' | head -n 1 | grep -oE '[0-9]+')"
 [ -n "$rel_id" ] || die "无法获取 release id（tag 是否已推送？）"
+
+# GitHub 的二进制资产上传必须走 uploads.github.com；api.github.com 对该路径返回 404。
+# 其它平台（Codeberg/Forgejo/Gitea/Gitee/GitLab）继续用各自的 API 主机。
+UPLOAD_API="$API/releases/${rel_id}/assets"
+case "$PLATFORM" in
+    github) UPLOAD_API="https://uploads.github.com/repos/${SLUG}/releases/${rel_id}/assets" ;;
+esac
+
 log "release id=${rel_id}"
 
 upload() {
     f="$1"
     [ -f "$f" ] || return 0
     log "上传 $(basename "$f")"
-    curl -fsSL -X POST "$API/releases/${rel_id}/assets?name=$(basename "$f")" \
+    curl -fsSL -X POST "$UPLOAD_API?name=$(basename "$f")" \
         -H "Authorization: token ${EYVESCLOUD_RELEASE_TOKEN}" \
         -H "Content-Type: application/octet-stream" \
         --data-binary "@$f" >/dev/null || die "上传失败：$f"
