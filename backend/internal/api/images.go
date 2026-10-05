@@ -695,8 +695,8 @@ func handleCustomKVMImageDelete(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Image is downloading; cancel it before removing the source"})
 		return
 	}
-	for i := range config.AppConfig.Containers {
-		if config.AppConfig.Containers[i].Template == req.ID {
+	for _, c := range config.ContainersView() {
+		if c.Template == req.ID {
 			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "This image is still used by a container"})
 			return
 		}

@@ -160,8 +160,15 @@ func v2NodesList(w http.ResponseWriter, r *http.Request) {
 		nodes = filtered
 	}
 	if raw := strings.TrimSpace(params.Get("region_id")); raw != "" {
+		// __none__ = 只取「未归属任何区域」的节点（开通页的「默认区域」卡片）。
 		filtered := nodes[:0]
 		for _, n := range nodes {
+			if raw == "__none__" {
+				if strings.TrimSpace(n.RegionID) == "" {
+					filtered = append(filtered, n)
+				}
+				continue
+			}
 			if n.RegionID == raw {
 				filtered = append(filtered, n)
 			}
@@ -843,26 +850,39 @@ func v2RegionsList(w http.ResponseWriter, r *http.Request) {
 	regions := append([]config.Region(nil), config.AppConfig.Regions...)
 	nodes := append([]config.Node(nil), config.AppConfig.Nodes...)
 	config.AppConfigMu.RUnlock()
+
+	// 单次遍历节点按区域累计「节点数/在线数/资源水位」；未归属区域的节点汇总进 summary，
+	// 供开通页渲染「默认区域」卡片。避免「每区域再遍历全量节点」的 O(区域×节点) 开销。
+	stats := make(map[string]*v2RegionStats, len(regions))
+	var unassigned, unassignedOnline int
+	for i := range nodes {
+		n := &nodes[i]
+		if strings.TrimSpace(n.RegionID) == "" {
+			unassigned++
+			if n.Status == "online" {
+				unassignedOnline++
+			}
+			continue
+		}
+		s := stats[n.RegionID]
+		if s == nil {
+			s = &v2RegionStats{}
+			stats[n.RegionID] = s
+		}
+		s.addNode(n)
+	}
+
 	items := make([]map[string]interface{}, 0, len(regions))
 	for _, region := range regions {
-		nodeCount, onlineCount := 0, 0
-		for _, n := range nodes {
-			if n.RegionID != region.ID {
-				continue
-			}
-			nodeCount++
-			if n.Status == "online" {
-				onlineCount++
-			}
-		}
-		view := v2RegionView(region)
-		view["node_count"] = nodeCount
-		view["node_online"] = onlineCount
-		items = append(items, view)
+		items = append(items, v2RegionView(region, stats[region.ID]))
 	}
 	total := len(items)
 	start, end := query.Slice(total)
-	v2List(w, r, items[start:end], query, total)
+	v2ListWithSummary(w, r, items[start:end], query, total, map[string]interface{}{
+		"total_nodes":       len(nodes),
+		"unassigned_nodes":  unassigned,
+		"unassigned_online": unassignedOnline,
+	})
 }
 
 func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
@@ -872,6 +892,7 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name         string  `json:"name"`
 		Location     string  `json:"location"`
+		Country      string  `json:"country"`
 		MaxInstances int     `json:"max_instances"`
 		MaxRAMMB     int64   `json:"max_ram_mb"`
 		MaxDiskGB    float64 `json:"max_disk_gb"`
@@ -889,10 +910,16 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 			"max_instances": ">=0", "max_ram_mb": ">=0", "max_disk_gb": ">=0"})
 		return
 	}
+	country, err := normalizeCountryCode(req.Country)
+	if err != nil {
+		v2BadRequest(w, r, err.Error(), map[string]string{"country": req.Country})
+		return
+	}
 	region := config.Region{
 		ID:           "rg-" + randomHex(6),
 		Name:         strings.TrimSpace(req.Name),
 		Location:     strings.TrimSpace(req.Location),
+		Country:      country,
 		CreatedAt:    time.Now().Format("2006-01-02 15:04:05"),
 		MaxInstances: req.MaxInstances,
 		MaxRAMMB:     req.MaxRAMMB,
@@ -905,17 +932,85 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRequest(r, "api.v2.region.create", region.Name, "", true, "")
-	v2Created(w, r, v2RegionView(region))
+	v2Created(w, r, v2RegionView(region, v2RegionStatsFor(region.ID)))
 }
 
-// v2RegionView 区域对外契约（含配额与当前用量，便于前端显示 x/y）。
-func v2RegionView(region config.Region) map[string]interface{} {
+// v2RegionStats 区域内的节点汇总（节点数/在线数/资源水位），取自节点心跳上报值。
+type v2RegionStats struct {
+	NodeCount   int
+	NodeOnline  int
+	RAMTotalMB  int64
+	RAMUsedMB   int64
+	DiskTotalGB float64
+	DiskUsedGB  float64
+	Containers  int
+}
+
+func (s *v2RegionStats) addNode(n *config.Node) {
+	if n == nil {
+		return
+	}
+	s.NodeCount++
+	if n.Status == "online" {
+		s.NodeOnline++
+	}
+	s.RAMTotalMB += n.RAMTotalMB
+	s.RAMUsedMB += n.RAMUsedMB
+	s.DiskTotalGB += n.DiskTotalGB
+	s.DiskUsedGB += n.DiskUsedGB
+	s.Containers += n.ContainerCount
+}
+
+// v2RegionStatsFor 计算单个区域的节点汇总（创建/修改区域时复用，保证与列表同契约）。
+func v2RegionStatsFor(regionID string) *v2RegionStats {
+	config.AppConfigMu.RLock()
+	defer config.AppConfigMu.RUnlock()
+	stats := &v2RegionStats{}
+	if config.AppConfig == nil {
+		return stats
+	}
+	for i := range config.AppConfig.Nodes {
+		if config.AppConfig.Nodes[i].RegionID == regionID {
+			stats.addNode(&config.AppConfig.Nodes[i])
+		}
+	}
+	return stats
+}
+
+// normalizeCountryCode 归一化 ISO 3166-1 alpha-2 国家/地区代码（大写）；空串 = 未设置。
+func normalizeCountryCode(raw string) (string, error) {
+	code := strings.ToUpper(strings.TrimSpace(raw))
+	if code == "" {
+		return "", nil
+	}
+	if len(code) != 2 {
+		return "", fmt.Errorf("国家/地区代码必须是 2 位 ISO 3166-1 alpha-2（如 CN/US/JP）")
+	}
+	for _, ch := range code {
+		if ch < 'A' || ch > 'Z' {
+			return "", fmt.Errorf("国家/地区代码只能包含字母：%s", strings.TrimSpace(raw))
+		}
+	}
+	return code, nil
+}
+
+// v2RegionView 区域对外契约（含配额用量与节点水位，便于前端显示 x/y 与占比）。
+func v2RegionView(region config.Region, stats *v2RegionStats) map[string]interface{} {
 	usedInstances, usedRAM, usedDisk := config.RegionUsage(region.ID)
+	if stats == nil {
+		stats = &v2RegionStats{}
+	}
 	return map[string]interface{}{
 		"id": region.ID, "name": region.Name, "location": region.Location,
+		"country":       region.Country,
 		"created_at":    v2Time(region.CreatedAt),
 		"max_instances": region.MaxInstances, "max_ram_mb": region.MaxRAMMB, "max_disk_gb": region.MaxDiskGB,
 		"used_instances": usedInstances, "used_ram_mb": usedRAM, "used_disk_gb": round2(usedDisk),
+		// 节点水位：区域内节点心跳上报值之和（与「配额用量 used_*」是不同口径，勿混用）。
+		"node_count":    stats.NodeCount, "node_online": stats.NodeOnline,
+		"node_ram_total_mb": stats.RAMTotalMB, "node_ram_used_mb": stats.RAMUsedMB,
+		"node_disk_total_gb": round2(stats.DiskTotalGB), "node_disk_used_gb": round2(stats.DiskUsedGB),
+		"node_container_count": stats.Containers,
 	}
 }
 
@@ -957,6 +1052,7 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name         *string  `json:"name"`
 		Location     *string  `json:"location"`
+		Country      *string  `json:"country"`
 		MaxInstances *int     `json:"max_instances"`
 		MaxRAMMB     *int64   `json:"max_ram_mb"`
 		MaxDiskGB    *float64 `json:"max_disk_gb"`
@@ -972,6 +1068,15 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 			"max_instances": ">=0", "max_ram_mb": ">=0", "max_disk_gb": ">=0"})
 		return
 	}
+	country := ""
+	if req.Country != nil {
+		normalized, err := normalizeCountryCode(*req.Country)
+		if err != nil {
+			v2BadRequest(w, r, err.Error(), map[string]string{"country": *req.Country})
+			return
+		}
+		country = normalized
+	}
 	var updated config.Region
 	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Regions {
@@ -983,6 +1088,9 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 			}
 			if req.Location != nil {
 				cfg.Regions[i].Location = strings.TrimSpace(*req.Location)
+			}
+			if req.Country != nil {
+				cfg.Regions[i].Country = country
 			}
 			if req.MaxInstances != nil {
 				cfg.Regions[i].MaxInstances = *req.MaxInstances
@@ -1002,7 +1110,7 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRequest(r, "api.v2.region.update", updated.Name, "", true, "")
-	v2OK(w, r, v2RegionView(updated))
+	v2OK(w, r, v2RegionView(updated, v2RegionStatsFor(updated.ID)))
 }
 
 func v2RegionDelete(w http.ResponseWriter, r *http.Request) {

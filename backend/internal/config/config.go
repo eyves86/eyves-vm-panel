@@ -875,6 +875,21 @@ func CurrentAdminPath() string {
 	return DefaultAdminPath
 }
 
+// ContainersView 在读锁下返回容器切片的头部快照。
+// 后台扫描器/采样器遍历容器时应先取一次快照，再对快照按下标取地址。
+// 直接写 `for i := range AppConfig.Containers { c := &AppConfig.Containers[i] }`
+// 会在 range 头部固定长度、每次下标访问却重新读取全局切片：若期间有
+// MutateGlobal 缩短了切片（例如清理已删除容器），下标访问就越界 panic。
+// 返回的切片与全局共用同一底层数组，因此通过它修改元素仍作用于全局配置。
+func ContainersView() []Container {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return nil
+	}
+	return AppConfig.Containers
+}
+
 // AdminPathForRequest 决定给某个前端请求注入的管理员入口路径：
 //   - 管理员路径为 "/"：始终注入 "/"（默认行为）
 //   - 请求落在管理员路径下：注入真实路径，管理端路由才会被挂载
@@ -1416,9 +1431,12 @@ type Cluster struct {
 
 // Region 是一个逻辑区域，用于把节点/存储/容器按地域分组管理。
 type Region struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Location  string `json:"location,omitempty"` // 展示用地域（城市/机房）
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Location string `json:"location,omitempty"` // 展示用地域（城市/机房）
+	// Country 为区域所属国家/地区的 ISO 3166-1 alpha-2 代码（大写，如 CN/US/JP），
+	// 供管理端展示国旗。空表示未设置。
+	Country   string `json:"country,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 	// 区域级配额（0 = 不限制）：统计口径为「归属该区域的节点上的实例总量」。
 	// 创建实例时按目标节点所属区域校验，避免把同一区域的资源超卖。

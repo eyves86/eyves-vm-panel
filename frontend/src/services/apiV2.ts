@@ -272,8 +272,18 @@ export interface V2Region {
   id: string
   name: string
   location?: string
+  /** ISO 3166-1 alpha-2 国家/地区代码（大写，如 CN/US/JP）；空 = 未设置。 */
+  country?: string
+  created_at?: string
+  // 节点水位（区域内节点心跳上报值之和，与下面的配额用量是不同口径）
   node_count?: number
   node_online?: number
+  node_ram_total_mb?: number
+  node_ram_used_mb?: number
+  node_disk_total_gb?: number
+  node_disk_used_gb?: number
+  node_container_count?: number
+  // 配额（0 = 不限制）与已用量（按区域下节点上的实例统计）
   max_instances?: number
   max_ram_mb?: number
   max_disk_gb?: number
@@ -282,7 +292,31 @@ export interface V2Region {
   used_disk_gb?: number
 }
 
-export const v2ListRegions = () => call<{ items: V2Region[]; pagination?: unknown }>(client.get('/regions', { params: { all: true } }))
+export interface V2RegionSummary {
+  total_nodes?: number
+  unassigned_nodes?: number
+  unassigned_online?: number
+}
+
+export const v2ListRegions = () => call<V2List<V2Region>>(client.get('/regions', { params: { all: true } }))
+
+export interface V2RegionInput {
+  name?: string
+  location?: string
+  country?: string
+  max_instances?: number
+  max_ram_mb?: number
+  max_disk_gb?: number
+}
+
+export const v2CreateRegion = (payload: V2RegionInput) =>
+  call<V2Region>(client.post('/regions', payload))
+
+export const v2UpdateRegion = (regionId: string, payload: V2RegionInput) =>
+  call<V2Region>(client.patch(`/regions/${encodeURIComponent(regionId)}`, payload))
+
+export const v2DeleteRegion = (regionId: string) =>
+  call<Record<string, unknown>>(client.delete(`/regions/${encodeURIComponent(regionId)}`))
 
 // v2UpdateNode 修改节点（部分更新：名称/地址/TLS/区域/分组）。用于把节点归入区域，
 // 使开通页能按「区域 → 节点」两级选择。

@@ -736,6 +736,8 @@ export interface Region {
   id: string
   name: string
   location?: string
+  /** ISO 3166-1 alpha-2 国家/地区代码（大写）；与后端 config.Region.country 一致。 */
+  country?: string
   created_at?: string
 }
 
@@ -767,7 +769,7 @@ export interface MetricRetentionSettings {
 export const getRegions = () =>
   api.get<APIResponse<Region[]>>('/regions')
 
-export const createRegion = (r: { name: string; location?: string }) =>
+export const createRegion = (r: { name: string; location?: string; country?: string }) =>
   api.post<APIResponse<Region>>('/regions', r)
 
 export const deleteRegion = (id: string) =>

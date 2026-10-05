@@ -87,9 +87,9 @@ func v2OpenAPIMetadata() map[string]v2OpenAPIMeta {
 		"DELETE /api/v2/node-groups/{id}":    {Summary: "删除节点分组（自动解除成员归属）"},
 		"PUT /api/v2/node-groups/{id}/nodes": {Summary: "设置分组成员（整体替换）", Body: "node_ids[]"},
 
-		"GET /api/v2/regions":         {Summary: "区域列表（含节点数与在线数）"},
-		"POST /api/v2/regions":        {Summary: "创建区域", Body: "name / location"},
-		"PATCH /api/v2/regions/{id}":  {Summary: "修改区域"},
+		"GET /api/v2/regions":         {Summary: "区域列表（含节点数/在线数、配额用量与节点水位）"},
+		"POST /api/v2/regions":        {Summary: "创建区域", Body: "name / location / country / max_instances / max_ram_mb / max_disk_gb"},
+		"PATCH /api/v2/regions/{id}":  {Summary: "修改区域（含 country/配额）"},
 		"DELETE /api/v2/regions/{id}": {Summary: "删除区域（区域下有节点时拒绝）"},
 
 		"GET /api/v2/images":                              {Summary: "镜像目录（模板/自定义源，含下载与启用状态）", Query: []string{"page", "page_size", "all", "runtime", "type", "q"}},

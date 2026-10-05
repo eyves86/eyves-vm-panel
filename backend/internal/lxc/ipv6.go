@@ -1005,8 +1005,8 @@ func publicIPv4AddressBound(address string, iface string) bool {
 }
 
 func EnsureAllAssignedPublicIPv4s() {
-	for i := range config.AppConfig.Containers {
-		EnsureAssignedPublicIPv4s(config.AppConfig.Containers[i].PublicIPv4s)
+	for _, c := range config.ContainersView() {
+		EnsureAssignedPublicIPv4s(c.PublicIPv4s)
 	}
 }
 

@@ -254,8 +254,9 @@ func eyvescloudTag(id int) string { return "c" + strconv.Itoa(id) }
 func EnsureAllRunningPortMappings() {
 	m := NewManager()
 	m.cleanOrphanedPortMappings()
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if c.Status != "running" || strings.TrimSpace(c.IP) == "" {
 			if err := m.CleanPortMappings(c.ID); err != nil {
 				fmt.Printf("Warning: failed to clean inactive port mappings for %s: %v\n", c.Name, err)
@@ -275,9 +276,10 @@ func (m *Manager) cleanOrphanedPortMappings() {
 	if err != nil {
 		return
 	}
-	configured := make(map[int]bool, len(config.AppConfig.Containers))
-	for i := range config.AppConfig.Containers {
-		configured[config.AppConfig.Containers[i].ID] = true
+	containers := config.ContainersView()
+	configured := make(map[int]bool, len(containers))
+	for i := range containers {
+		configured[containers[i].ID] = true
 	}
 	seen := map[int]bool{}
 	for _, match := range taggedContainerIDPattern.FindAllSubmatch(output, -1) {
@@ -871,8 +873,9 @@ func ValidateNATSubnetCapacity(planned []ContainerConfig) error {
 
 	lxcUsed := 0
 	kvmUsed := 0
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if c.IsKVM() {
 			kvmUsed++
 		} else {

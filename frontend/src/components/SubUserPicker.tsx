@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronDown, Loader2, Search, UserCog } from 'lucide-react'
 import { listSubUsersPaged, type SubUser } from '../services/api'
 import { useLanguage } from '../contexts/LanguageContext'
@@ -54,6 +55,8 @@ export default function SubUserPicker({
   const [error, setError] = useState(false)
   const [picked, setPicked] = useState<{ id: string; label: string } | null>(null)
   const reqIdRef = useRef(0)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebounced(search.trim()), 300)
@@ -92,6 +95,46 @@ export default function SubUserPicker({
     setDebounced('')
   }, [open])
 
+  // 弹出层渲染到 body（portal）并按触发器位置做 fixed 定位，
+  // 避免被容器表格的 overflow 容器裁剪（否则靠近表底的行的选项会被截断不可见）。
+  const reposition = useCallback(() => {
+    const menu = menuRef.current
+    const trigger = triggerRef.current
+    if (!menu || !trigger) return
+    const r = trigger.getBoundingClientRect()
+    // fixed 定位下 w-full 会相对视口解析，改为与触发器等宽。
+    if (menuWidthClass === 'w-full') menu.style.width = `${r.width}px`
+    else menu.style.width = ''
+    const w = menu.offsetWidth
+    const h = menu.offsetHeight
+    let left = r.left
+    if (left + w > window.innerWidth - 8) left = Math.max(8, window.innerWidth - 8 - w)
+    let top = r.bottom + 4
+    if (top + h > window.innerHeight - 8) {
+      const above = r.top - 4 - h
+      top = above >= 8 ? above : Math.max(8, window.innerHeight - 8 - h)
+    }
+    menu.style.left = `${left}px`
+    menu.style.top = `${top}px`
+  }, [menuWidthClass])
+
+  useLayoutEffect(() => {
+    if (!open) return
+    reposition()
+    const onMove = () => reposition()
+    window.addEventListener('scroll', onMove, true)
+    window.addEventListener('resize', onMove)
+    return () => {
+      window.removeEventListener('scroll', onMove, true)
+      window.removeEventListener('resize', onMove)
+    }
+  }, [open, reposition])
+
+  // 内容尺寸变化（加载/错误/结果条数）后重新定位，保证弹出层在视口内。
+  useEffect(() => {
+    if (open) reposition()
+  }, [open, items.length, loading, error, total, reposition])
+
   const leading = leadingOptions.find((o) => o.value === value)
   const bound = value !== ''
   let displayLabel: string
@@ -115,6 +158,7 @@ export default function SubUserPicker({
     <div className={`relative inline-block ${className}`}>
       <button
         type="button"
+        ref={triggerRef}
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         className={triggerClassName}
@@ -129,10 +173,14 @@ export default function SubUserPicker({
         )}
       </button>
 
-      {open && (
+      {open && createPortal(
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className={`absolute left-0 top-full z-50 mt-1 ${menuWidthClass} rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900`}>
+          <div className="fixed inset-0 z-[60]" onClick={() => setOpen(false)} />
+          <div
+            ref={menuRef}
+            style={{ position: 'fixed', left: -9999, top: -9999 }}
+            className={`z-[70] ${menuWidthClass} rounded-md border border-gray-200 bg-white shadow-lg dark:border-gray-700 dark:bg-gray-900`}
+          >
             <div className="border-b border-gray-100 p-2 dark:border-gray-800">
               <div className="flex items-center gap-1.5 rounded border border-gray-200 px-2 dark:border-gray-700">
                 <Search className="h-3.5 w-3.5 shrink-0 text-gray-400" />
@@ -206,7 +254,8 @@ export default function SubUserPicker({
               </div>
             )}
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   )

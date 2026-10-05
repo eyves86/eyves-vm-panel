@@ -20,8 +20,9 @@ func validateCumulativeDiskQuota(reqDiskGB, reqDataDiskGB float64) error {
 	}
 	allowable := host.Disk.TotalGB * config.GetDiskOvercommitRatio()
 	sum := reqDiskGB + reqDataDiskGB
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		sum += c.DiskGB + c.DataDiskGB
 	}
 	if sum > allowable {
@@ -48,10 +49,8 @@ func validateCumulativeRAMQuota(reqRamMB int) error {
 	}
 	allowable := float64(host.RAM.TotalMB) * ratio
 	sum := float64(reqRamMB)
-	if config.AppConfig != nil {
-		for i := range config.AppConfig.Containers {
-			sum += float64(config.AppConfig.Containers[i].RAMMB)
-		}
+	for _, c := range config.ContainersView() {
+		sum += float64(c.RAMMB)
 	}
 	if sum > allowable {
 		return fmt.Errorf(

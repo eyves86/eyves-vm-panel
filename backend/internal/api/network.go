@@ -60,6 +60,7 @@ func HandleRegions(w http.ResponseWriter, r *http.Request) {
 		var req struct {
 			Name     string `json:"name"`
 			Location string `json:"location,omitempty"`
+			Country  string `json:"country,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request"})
@@ -70,10 +71,16 @@ func HandleRegions(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "region name is required"})
 			return
 		}
+		country, err := normalizeCountryCode(req.Country)
+		if err != nil {
+			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
+			return
+		}
 		region := config.Region{
 			ID:        newNetworkID("rg"),
 			Name:      name,
 			Location:  strings.TrimSpace(req.Location),
+			Country:   country,
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
 		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {

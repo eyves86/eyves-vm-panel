@@ -6,6 +6,9 @@ frontend/node_modules/
 /frontend/dist/
 /web/
 
+# Generated flag assets (copied from node_modules/flag-icons by npm prebuild)
+/frontend/public/flags/
+
 # Go embedded frontend build output.
 # Keep only the placeholder so `go build` can compile before frontend assets exist.
 backend/internal/server/web/*

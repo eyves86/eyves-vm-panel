@@ -838,7 +838,8 @@ export default function ContainerDetail() {
   const handleReinstall = async () => {
     if (!containerIdentifier || !selectedTemplate) return
     // 危险动作分级确认：重装会清空系统盘，要求输入实例名防手滑。
-    const typed = (await dialog.prompt('重装系统确认', `输入实例名 ${container?.name} 以确认重装（系统盘将被清空）`))
+    // 必须把实例名作为 expect 传入，prompt 才会渲染输入框（否则只有提示、无处输入）。
+    const typed = (await dialog.prompt('重装系统确认', `输入实例名 ${container?.name} 以确认重装（系统盘将被清空）`, container?.name || ''))
     if (typed === null) return
     if (typed.trim() !== container?.name) {
       await dialog.alert('确认失败', '输入的实例名不匹配，重装已取消')

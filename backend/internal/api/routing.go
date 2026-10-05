@@ -152,8 +152,9 @@ func handleRoutingGet(w http.ResponseWriter, r *http.Request) {
 
 	nat4StartPort, nat4EndPort := config.NATPortRange()
 
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		for _, pm := range c.PortMappings {
 			if config.NATPortInRange(pm.HostPort) {
 				usedPorts[pm.HostPort] = true

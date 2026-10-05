@@ -124,8 +124,9 @@ func (m *Manager) instancesDir() string {
 
 func (m *Manager) instanceDir(name string) string {
 	if config.AppConfig != nil {
-		for i := range config.AppConfig.Containers {
-			c := &config.AppConfig.Containers[i]
+		containers := config.ContainersView()
+		for i := range containers {
+			c := &containers[i]
 			if c.IsKVM() && c.VirshName() == name && strings.TrimSpace(c.DiskImage) != "" {
 				return filepath.Dir(c.DiskImage)
 			}
@@ -3921,8 +3922,9 @@ func (m *Manager) StartNetworkSyncMonitor() {
 }
 
 func (m *Manager) syncRunningNetworks() {
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if !c.IsKVM() {
 			continue
 		}
@@ -3952,8 +3954,9 @@ func (m *Manager) syncRunningNetworks() {
 }
 
 func (m *Manager) applyIPv6Guards() {
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if !c.IsKVM() || c.MACAddress == "" {
 			continue
 		}
@@ -3975,8 +3978,9 @@ func (m *Manager) updateAllRates() {
 	usageMu.Lock()
 	defer usageMu.Unlock()
 
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if !c.IsKVM() {
 			continue
 		}
@@ -4284,8 +4288,9 @@ func (m *Manager) StopExpiredContainers(now time.Time) {
 func (m *Manager) StopTrafficExceededContainers(now time.Time) {
 	currentMonth := now.Format("2006-01")
 	saved := false
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if !c.IsKVM() || c.Status != "running" {
 			continue
 		}

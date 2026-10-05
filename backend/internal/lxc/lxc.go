@@ -115,8 +115,9 @@ func (m *Manager) updateAllRates() {
 	usageMu.Lock()
 	defer usageMu.Unlock()
 
-	for i := range config.AppConfig.Containers {
-		c := &config.AppConfig.Containers[i]
+	containers := config.ContainersView()
+	for i := range containers {
+		c := &containers[i]
 		if c.IsKVM() {
 			delete(lastUsage, c.VirshName())
 			delete(rateCache, c.VirshName())
@@ -208,8 +209,8 @@ func (m *Manager) updateAllRates() {
 	// Clean up stale entries
 	for name := range rateCache {
 		found := false
-		for i := range config.AppConfig.Containers {
-			if config.AppConfig.Containers[i].LxcName() == name && config.AppConfig.Containers[i].Status == "running" {
+		for i := range containers {
+			if containers[i].LxcName() == name && containers[i].Status == "running" {
 				found = true
 				break
 			}
