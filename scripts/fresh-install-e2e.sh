@@ -25,7 +25,7 @@
 #
 set -u
 
-REPO_RAW_INSTALL_URL="https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh"
+REPO_RAW_INSTALL_URL="https://raw.githubusercontent.com/eyves86/eyves-vm-panel/main/install.sh"
 PANEL_PORT="${EYVESCLOUD_E2E_PORT:-8999}"
 BASE="http://127.0.0.1:${PANEL_PORT}"
 DATA_DIR="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}"

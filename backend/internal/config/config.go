@@ -1502,7 +1502,7 @@ type ISOFile struct {
 //   - token: 可选，私有仓库需要
 //   - asset_prefix: 可选，release 产物前缀；默认 eyvescloud
 //
-// 留空时 initConfig 会写入官方仓库（Codeberg）默认值。
+// 留空时 initConfig 会写入官方仓库（GitHub）默认值。
 type UpdateSource struct {
 	Platform    string `json:"platform"`
 	Owner       string `json:"owner"`
@@ -1515,7 +1515,7 @@ type UpdateSource struct {
 // defaultUpdateSourceComponents 从 version.Repo（"platform:owner/name"）解析
 // 官方默认更新源，保证「面板默认更新地址」与二进制内置仓库单一来源、不会漂移。
 func defaultUpdateSourceComponents() (platform, owner, repo string) {
-	platform, owner, repo = "codeberg", "fenhaolost", "eyves-vm-panel"
+	platform, owner, repo = "github", "eyves86", "eyves-vm-panel"
 	raw := strings.TrimSpace(version.Repo)
 	if idx := strings.Index(raw, ":"); idx > 0 && !strings.HasPrefix(raw, "http") {
 		if p := strings.ToLower(strings.TrimSpace(raw[:idx])); p != "" {
@@ -1534,7 +1534,7 @@ func defaultUpdateSourceComponents() (platform, owner, repo string) {
 	return platform, owner, repo
 }
 
-// NormalizeUpdateSource 补齐默认值：留空 platform/owner/repo → 官方仓库（Codeberg）；
+// NormalizeUpdateSource 补齐默认值：留空 platform/owner/repo → 官方仓库（GitHub）；
 // 留空 branch → main；留空 asset_prefix → eyvescloud。
 func NormalizeUpdateSource(u UpdateSource) UpdateSource {
 	defPlatform, defOwner, defRepo := defaultUpdateSourceComponents()
@@ -1636,7 +1636,7 @@ type EyvescloudConfig struct {
 	// 支持 GitHub / Codeberg / Gitee / GitLab 四大平台，填入 owner/repo + 可选 token
 	// 即可从各平台的 Releases 拉取最新版本，统一产物命名：
 	//   eyvescloud-linux-amd64.tar.gz / eyvescloud-linux-arm64.tar.gz
-	// 留空时默认从官方仓库（codeberg.org/fenhaolost/eyves-vm-panel）检查。
+	// 留空时默认从官方仓库（github.com/eyves86/eyves-vm-panel）检查。
 	UpdateSource  UpdateSource     `json:"update_source"`
 	Regions       []Region         `json:"regions,omitempty"`
 	NodeGroups    []NodeGroup      `json:"node_groups,omitempty"`

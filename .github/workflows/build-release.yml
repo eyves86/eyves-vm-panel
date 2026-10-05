@@ -116,6 +116,9 @@ jobs:
           fi
 
       - name: Publish
+        # 仅发布「已签名」的产物：缺少 EYVESCLOUD_SIGNING_KEY Secret 时不发布，
+        # 避免流出无签名 release（升级器会拒绝验签，且破坏 F-7 验签链）。
+        if: hashFiles('artifacts/SHA256SUMS.minisig') != ''
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -136,7 +139,8 @@ jobs:
     # 需要 write:repository 权限）后本任务会把同一批产物同步发布到 Codeberg。
     env:
       CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
-    if: env.CODEBERG_TOKEN != ''
+    # 说明：job 级 if 不支持 env 上下文（GitHub 会把整个 workflow 判为「无效文件」，
+    # 表现为运行记录名为文件路径且 0 个 job）。故把「是否有 token」的判断下放到 step。
     steps:
       - uses: actions/checkout@v4
 
@@ -166,6 +170,7 @@ jobs:
           fi
 
       - name: Publish to Codeberg
+        if: env.CODEBERG_TOKEN != ''
         env:
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
           TAG: ${{ github.ref_name }}
@@ -178,7 +183,9 @@ jobs:
             -H "Authorization: token $CODEBERG_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$payload" >/dev/null || true
-          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | sed -n 's/.*"id":\([0-9]*\).*/\1/p' | head -n 1)"
+          # 取首个 "id"（release id）。不能用贪婪 sed 's/.*"id":.../'：单行 JSON 里
+          # 末尾还有 author.id，会取错。
+          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | grep -o '"id":[0-9]*' | head -n 1 | grep -oE '[0-9]+')"
           [ -n "$id" ] || { echo "无法获取 Codeberg release id"; exit 1; }
           for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.minisig' -o -name 'SHA256SUMS.minisign' \)); do
             echo "upload $f"

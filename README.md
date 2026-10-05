@@ -46,7 +46,7 @@
 **① 装主控**（一台服务器上执行）：
 
 ```bash
-curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo sh
+curl -fsSL https://raw.githubusercontent.com/eyves86/eyves-vm-panel/main/install.sh | sudo sh
 ```
 
 装完终端会打印**登录地址和初始密码**，浏览器打开登录。
@@ -61,10 +61,10 @@ curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/instal
 ```bash
 EYVESCLOUD_LANG=zh          # 面板语言 zh / en
 EYVESCLOUD_VERSION=latest   # 固定版本，如 v2.2.33
-EYVESCLOUD_REPO=codeberg:fenhaolost/eyves-vm-panel   # 更新源
+EYVESCLOUD_REPO=github:eyves86/eyves-vm-panel   # 更新源
 ```
 
-卸载：`curl -fsSL https://codeberg.org/fenhaolost/eyves-vm-panel/raw/branch/main/install.sh | sudo sh -s -- uninstall`
+卸载：`curl -fsSL https://raw.githubusercontent.com/eyves86/eyves-vm-panel/main/install.sh | sudo sh -s -- uninstall`
 
 </details>
 

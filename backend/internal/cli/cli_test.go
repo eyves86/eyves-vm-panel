@@ -89,7 +89,7 @@ func TestResolveRepoSource(t *testing.T) {
 		{"gitee URL", "https://gitee.com/user/repo", "gitee", "user", "repo"},
 		{"gitlab URL", "https://gitlab.com/group/repo", "gitlab", "group", "repo"},
 		{"github URL fallback", "https://github.com/user/repo", "github", "user", "repo"},
-		{"empty → default official repo (codeberg)", "", "codeberg", "fenhaolost", "eyves-vm-panel"},
+		{"empty → default official repo (github)", "", "github", "eyves86", "eyves-vm-panel"},
 		{"gh alias", "gh:user/repo", "github", "user", "repo"},
 		{"cb alias", "cb:user/repo", "codeberg", "user", "repo"},
 		{"gl alias", "gl:group/repo", "gitlab", "group", "repo"},

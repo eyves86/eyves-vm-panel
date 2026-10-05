@@ -664,7 +664,7 @@ type repoSource struct {
 
 // resolveRepoSource 把各种仓库标识格式归一化成 repoSource。
 // 规则：
-//   - 空 → 返回官方默认仓库（Codeberg: fenhaolost/eyves-vm-panel）
+//   - 空 → 返回官方默认仓库（GitHub: eyves86/eyves-vm-panel）
 //   - "github:" / "gh:" 前缀 → GitHub
 //   - "codeberg:" / "cb:" 前缀 → Codeberg
 //   - "gitee:" / "gt:" 前缀 → Gitee
@@ -733,8 +733,8 @@ func resolveRepoSource(repo string) repoSource {
 
 	// 回退：没解析出 owner/repo → 官方默认仓库（Codeberg）。
 	if owner == "" || name == "" {
-		platform = "codeberg"
-		owner = "fenhaolost"
+		platform = "github"
+		owner = "eyves86"
 		name = "eyves-vm-panel"
 	}
 
@@ -1092,7 +1092,7 @@ func FetchReleasesList(repo string, limit int) ([]GithubReleaseListItem, error) 
 // resolveUpdateRepo 解析本次更新使用的仓库标识，优先级：
 //  1. 环境变量 EYVESCLOUD_REPO（部署级覆盖 / 紧急切换源）
 //  2. 面板配置 update_source（platform + owner/repo，管理员可在设置中指定镜像）
-//  3. 二进制内置官方仓库 version.Repo（codeberg:fenhaolost/eyves-vm-panel）
+//  3. 二进制内置官方仓库 version.Repo（github:eyves86/eyves-vm-panel）
 //
 // 三者统一走 resolveRepoSource，因此都支持 "owner/name" 与 "platform:owner/name"。
 func resolveUpdateRepo() string {

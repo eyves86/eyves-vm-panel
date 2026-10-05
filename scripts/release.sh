@@ -28,7 +28,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-REPO="${EYVESCLOUD_REPO:-codeberg:fenhaolost/eyves-vm-panel}"
+REPO="${EYVESCLOUD_REPO:-github:eyves86/eyves-vm-panel}"
 PUBKEY="${EYVESCLOUD_RELEASE_PUBKEY:-Xyv7jh+bDXBzIf57+PhyfzCUsfEPOIuyUog/j6burGI=}"
 DRY_RUN=0
 ALLOW_UNSIGNED=0

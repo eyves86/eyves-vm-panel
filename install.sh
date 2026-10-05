@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
-REPO="${EYVESCLOUD_REPO:-codeberg:fenhaolost/eyves-vm-panel}"
+REPO="${EYVESCLOUD_REPO:-github:eyves86/eyves-vm-panel}"
 
 # ---- 发行版来源仓库解析（支持 Codeberg / GitHub / Gitee / GitLab）----
 # REPO 接受三种写法：
-#   1) platform:owner/name   例：codeberg:fenhaolost/eyves-vm-panel
+#   1) platform:owner/name   例：github:eyves86/eyves-vm-panel
 #   2) https://host/owner/name（按域名推断平台）
-#   3) owner/name（默认官方平台 Codeberg）
+#   3) owner/name（默认官方平台 GitHub）
 REPO_PLATFORM=""
 REPO_SLUG=""
 case "$REPO" in
@@ -27,7 +27,7 @@ case "$REPO" in
     codeberg:*|cb:*) REPO_PLATFORM="codeberg"; REPO_SLUG="${REPO#*:}" ;;
     gitee:*|gt:*)    REPO_PLATFORM="gitee";    REPO_SLUG="${REPO#*:}" ;;
     gitlab:*|gl:*)   REPO_PLATFORM="gitlab";   REPO_SLUG="${REPO#*:}" ;;
-    *)               REPO_PLATFORM="codeberg"; REPO_SLUG="$REPO" ;;
+    *)               REPO_PLATFORM="github"; REPO_SLUG="$REPO" ;;
 esac
 REPO_SLUG="${REPO_SLUG#/}"
 REPO_SLUG="${REPO_SLUG%/}"
@@ -43,9 +43,9 @@ if [ -n "$REPO_SLUG" ]; then
     esac
 fi
 if [ -z "$REPO_SLUG" ]; then
-    echo "警告：EYVESCLOUD_REPO 无法解析为 owner/repo（$REPO），回退到官方仓库 codeberg:fenhaolost/eyves-vm-panel" >&2
-    REPO_PLATFORM="codeberg"
-    REPO_SLUG="fenhaolost/eyves-vm-panel"
+    echo "警告：EYVESCLOUD_REPO 无法解析为 owner/repo（$REPO），回退到官方仓库 github:eyves86/eyves-vm-panel" >&2
+    REPO_PLATFORM="github"
+    REPO_SLUG="eyves86/eyves-vm-panel"
 fi
 
 # 各平台网页 / Release API / 产物下载地址模板
