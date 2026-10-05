@@ -1,0 +1,42 @@
+# Codeberg（Forgejo Actions）发版流水线。
+#
+# 为什么放这里：本仓库远端是 codeberg.org，Codeberg 只读取 .forgejo/workflows/。
+# 原发版工作流在 .github/workflows/build-release.yml，且没有 GitHub 镜像仓库，
+# 等于从未运行过——发版一直靠人工。本工作流把「打 tag → 构建 → 签名 → 发布到
+# Codeberg Release」串起来，逻辑复用 scripts/release.sh（同一套命令人工也能跑）。
+#
+# 前置条件（仓库设置）：
+#   1) Codeberg 仓库需启用 Actions；
+#   2) 配置 Secret EYVESCLOUD_SIGNING_KEY（ed25519 私钥 seed 的 hex，releasetool keygen 生成）。
+#      未配置时本工作流会**拒绝发无签名 release**（会破坏面板自升级验签）。
+#   （创建 release 用 Forgejo 自动注入的 github.token；如失败可加 Secret CODEBERG_TOKEN 覆盖。）
+
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    name: 构建并发布 ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 构建 + 签名 + 发布
+        env:
+          EYVESCLOUD_RELEASE_TOKEN: ${{ secrets.CODEBERG_TOKEN || github.token }}
+          EYVESCLOUD_SIGNING_KEY: ${{ secrets.EYVESCLOUD_SIGNING_KEY }}
+        run: bash scripts/release.sh "${{ github.ref_name }}"
