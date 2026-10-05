@@ -120,10 +120,10 @@ type VMReadinessCheck struct {
 
 // Container represents an LXC container configuration
 type Container struct {
-	ID             int     `json:"id"`
-	UUID           string  `json:"uuid"`
-	Name           string  `json:"name"`
-	NodeID         string  `json:"node_id,omitempty"` // 所在节点 ID；空 = 主控本机（向后兼容）
+	ID     int    `json:"id"`
+	UUID   string `json:"uuid"`
+	Name   string `json:"name"`
+	NodeID string `json:"node_id,omitempty"` // 所在节点 ID；空 = 主控本机（向后兼容）
 	// NodeLocalID 是实例在被控节点上的本地 ID（代理调用 /api/agent/containers/{该值}/...）。
 	// 与主控侧 ID（c.ID，全局唯一）分离：节点本地 ID 可能与本机容器撞号。
 	NodeLocalID    int     `json:"node_local_id,omitempty"`
@@ -989,8 +989,14 @@ type SubUser struct {
 	ImageLimitConfigured bool     `json:"image_limit_configured,omitempty"`
 	Token                string   `json:"-"`
 	AccessCode           string   `json:"access_code"`
-	CreatedAt            string   `json:"created_at"`
-	TokenVersion         int      `json:"token_version"`
+	// AccessCodePassword 是「访问码登录」专用口令，与账号密码（PassHash）相互独立：
+	//   - 账号密码用于用户名/邮箱登录，仅子用户本人持有；
+	//   - 访问码密码用于访问码 + 口令登录（可分享给他人管理已绑定容器）。
+	// 该口令必须可回显（管理员/用户端均需展示），因此以 AES-256-GCM 可逆加密落库
+	// （见 store_sqlite.go 的 save/load），内存中为明文。
+	AccessCodePassword string `json:"access_code_password,omitempty"`
+	CreatedAt          string `json:"created_at"`
+	TokenVersion       int    `json:"token_version"`
 }
 
 // subUserRoleForStorage normalizes a sub-user role for persistence.
@@ -1324,13 +1330,13 @@ type NotificationConfig struct {
 // The controller generates InstallKey (used once by the agent install script)
 // and Token (used for heartbeat and controller->agent API calls).
 type Node struct {
-	ID                  string   `json:"id"`
-	Name                string   `json:"name"`
-	Address             string   `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Address string `json:"address,omitempty"` // 被控自身面板地址 http(s)://host:port
 	// PublicHost 是该节点上容器对外提供服务的接入地址（公网 IP 或域名）。
 	// 留空时由 Address 的 host 推导。用于生成容器的 SSH/RDP 接入端点
 	// （NAT 端口映射挂在节点上，端点必须指向节点而不是主控）。
-	PublicHost string `json:"public_host,omitempty"`
+	PublicHost          string   `json:"public_host,omitempty"`
 	Token               string   `json:"token,omitempty"`
 	InstallKey          string   `json:"install_key,omitempty"`
 	InstallKeyCreatedAt string   `json:"install_key_created_at,omitempty"`
@@ -1607,20 +1613,20 @@ type EyvescloudConfig struct {
 	// 即可从各平台的 Releases 拉取最新版本，统一产物命名：
 	//   eyvescloud-linux-amd64.tar.gz / eyvescloud-linux-arm64.tar.gz
 	// 留空时默认从官方仓库（codeberg.org/fenhaolost/eyves-vm-panel）检查。
-	UpdateSource           UpdateSource           `json:"update_source"`
-	Regions                []Region               `json:"regions,omitempty"`
-	NodeGroups             []NodeGroup            `json:"node_groups,omitempty"`
-	Clusters               []Cluster              `json:"clusters,omitempty"`
-	IPGroups               []IPGroup              `json:"ip_groups,omitempty"`
-	ISOFiles               []ISOFile              `json:"iso_files,omitempty"`
-	SecGroups              []secgroup.Group       `json:"sec_groups,omitempty"`
-	SecGroupRules          []secgroup.Rule        `json:"sec_group_rules,omitempty"`
+	UpdateSource  UpdateSource     `json:"update_source"`
+	Regions       []Region         `json:"regions,omitempty"`
+	NodeGroups    []NodeGroup      `json:"node_groups,omitempty"`
+	Clusters      []Cluster        `json:"clusters,omitempty"`
+	IPGroups      []IPGroup        `json:"ip_groups,omitempty"`
+	ISOFiles      []ISOFile        `json:"iso_files,omitempty"`
+	SecGroups     []secgroup.Group `json:"sec_groups,omitempty"`
+	SecGroupRules []secgroup.Rule  `json:"sec_group_rules,omitempty"`
 	// SecurityGroupEnforced 控制安全组规则是否真正下发到防火墙。
 	//
 	// 默认 false：规则会被保存但不生效。默认策略是 drop，某个容器的放行规则
 	// 配得不全时一旦启用就会直接断网——这个风险必须由管理员显式承担，不能由
 	// 升级动作替他决定。开启后由 api.StartSecurityGroupEnforcer 周期同步。
-	SecurityGroupEnforced bool `json:"security_group_enforced,omitempty"`
+	SecurityGroupEnforced  bool                   `json:"security_group_enforced,omitempty"`
 	MetricRetentionDays    int                    `json:"metric_retention_days"`
 	AuditRetentionDays     int                    `json:"audit_retention_days"`
 	BackupSettings         BackupSettings         `json:"backup_settings"`

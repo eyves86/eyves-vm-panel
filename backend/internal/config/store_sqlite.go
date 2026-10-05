@@ -299,6 +299,7 @@ func ensureSchema() error {
 			password TEXT,
 			pass_hash TEXT,
 			access_code TEXT,
+			access_code_password TEXT,
 			created_at TEXT,
 			token_version INTEGER,
 			allowed_image_ids TEXT,
@@ -576,6 +577,8 @@ func ensureSchemaMigrations() error {
 		{"sub_users", "image_limit_configured", "INTEGER NOT NULL DEFAULT 0"},
 		{"sub_users", "role", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"sub_users", "tenant", "TEXT NOT NULL DEFAULT ''"},
+		// 访问码专用口令（加密落库）。存量行默认空，加载时自动回填随机口令。
+		{"sub_users", "access_code_password", "TEXT NOT NULL DEFAULT ''"},
 		{"containers", "network_down_mbps", "INTEGER NOT NULL DEFAULT 0"},
 		{"containers", "network_up_mbps", "INTEGER NOT NULL DEFAULT 0"},
 		{"containers", "io_read_mbps", "INTEGER NOT NULL DEFAULT 0"},
@@ -1326,8 +1329,18 @@ func saveSubUsers(tx *sql.Tx) error {
 			}
 			accessCodeEnc = enc
 		}
-		if _, err := tx.Exec(`INSERT INTO sub_users(id, username, password, pass_hash, access_code, created_at, token_version, allowed_image_ids, image_limit_configured, role, tenant)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, su.ID, su.Username, "", su.PassHash, accessCodeEnc, su.CreatedAt, su.TokenVersion, allowedImageIDs, boolInt(su.ImageLimitConfigured), subUserRoleForStorage(su.Role), su.Tenant); err != nil {
+		// access_code_password 同样加密落库：该口令可由管理员/用户端回显，
+		// 明文落库等于 DB 泄漏即口令泄漏。
+		accessCodePasswordEnc := su.AccessCodePassword
+		if accessCodePasswordEnc != "" {
+			enc, err := EncryptNodeToken(su.AccessCodePassword)
+			if err != nil {
+				return fmt.Errorf("加密子用户 %s access_code_password 失败: %w", su.Username, err)
+			}
+			accessCodePasswordEnc = enc
+		}
+		if _, err := tx.Exec(`INSERT INTO sub_users(id, username, password, pass_hash, access_code, access_code_password, created_at, token_version, allowed_image_ids, image_limit_configured, role, tenant)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, su.ID, su.Username, "", su.PassHash, accessCodeEnc, accessCodePasswordEnc, su.CreatedAt, su.TokenVersion, allowedImageIDs, boolInt(su.ImageLimitConfigured), subUserRoleForStorage(su.Role), su.Tenant); err != nil {
 			return err
 		}
 		for i, name := range su.ContainerNames {
@@ -1874,7 +1887,7 @@ func loadContainerIPv6Addresses(containerID int) ([]IPv6Assignment, error) {
 }
 
 func loadSubUsers() ([]SubUser, error) {
-	rows, err := db.Query(`SELECT id, username, password, pass_hash, access_code, created_at, token_version, allowed_image_ids, image_limit_configured, role, tenant FROM sub_users ORDER BY created_at, id`)
+	rows, err := db.Query(`SELECT id, username, password, pass_hash, access_code, access_code_password, created_at, token_version, allowed_image_ids, image_limit_configured, role, tenant FROM sub_users ORDER BY created_at, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -1884,7 +1897,7 @@ func loadSubUsers() ([]SubUser, error) {
 		var su SubUser
 		var allowedImageIDs sql.NullString
 		var imageLimitConfigured int
-		if err := rows.Scan(&su.ID, &su.Username, &su.Password, &su.PassHash, &su.AccessCode, &su.CreatedAt, &su.TokenVersion, &allowedImageIDs, &imageLimitConfigured, &su.Role, &su.Tenant); err != nil {
+		if err := rows.Scan(&su.ID, &su.Username, &su.Password, &su.PassHash, &su.AccessCode, &su.AccessCodePassword, &su.CreatedAt, &su.TokenVersion, &allowedImageIDs, &imageLimitConfigured, &su.Role, &su.Tenant); err != nil {
 			return nil, err
 		}
 		su.AllowedImageIDs = decodeStringSlice(allowedImageIDs.String)
@@ -1901,6 +1914,14 @@ func loadSubUsers() ([]SubUser, error) {
 				su.AccessCode = ""
 			}
 		}
+		// access_code_password 同口径解密；解密失败置空，稍后按空值回填新口令。
+		if su.AccessCodePassword != "" {
+			if plain, err := DecryptNodeToken(su.AccessCodePassword); err == nil {
+				su.AccessCodePassword = plain
+			} else if strings.HasPrefix(su.AccessCodePassword, "enc:") {
+				su.AccessCodePassword = ""
+			}
+		}
 		result = append(result, su)
 	}
 	if err := rows.Err(); err != nil {
@@ -1908,6 +1929,23 @@ func loadSubUsers() ([]SubUser, error) {
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err
+	}
+	// 存量迁移：为尚无访问码口令的子用户回填随机口令（升级即生效，无需人工干预）。
+	// 口令以密文直接 UPDATE 落库，失败则保持为空（该行访问码登录会被拒绝，
+	// 管理员可在后台重置），不阻断启动。
+	for i := range result {
+		if result[i].AccessCodePassword != "" {
+			continue
+		}
+		pw := generateRandomString(16)
+		enc, encErr := EncryptNodeToken(pw)
+		if encErr != nil {
+			continue
+		}
+		if _, execErr := db.Exec(`UPDATE sub_users SET access_code_password = ? WHERE id = ?`, enc, result[i].ID); execErr != nil {
+			continue
+		}
+		result[i].AccessCodePassword = pw
 	}
 	for i := range result {
 		result[i].ContainerNames, err = loadStringList("sub_user_container_names", "container_name", "sub_user_id", result[i].ID)

@@ -174,27 +174,38 @@ func TestSubUserSelfRotatePassword(t *testing.T) {
 	}
 }
 
-// TestSubUserAccessCodeLoginStillWorksAfterRotation 访问码登录使用轮换后的新密码。
-func TestSubUserAccessCodeLoginStillWorksAfterRotation(t *testing.T) {
+// TestSubUserAccessCodeLoginUsesAccessCodePassword 访问码登录只认「访问码密码」，
+// 与账号密码彻底解耦：账号密码在访问码端点必须被拒绝。
+func TestSubUserAccessCodeLoginUsesAccessCodePassword(t *testing.T) {
 	previous := config.AppConfig
 	t.Cleanup(func() { config.AppConfig = previous })
-	hash, _ := bcrypt.GenerateFromPassword([]byte("newpass-xyz-123"), bcrypt.DefaultCost)
+	hash, _ := bcrypt.GenerateFromPassword([]byte("account-pass-123"), bcrypt.DefaultCost)
 	config.AppConfig = &config.EyvescloudConfig{
 		JWTSecret: "s",
 		SubUsers: []config.SubUser{{
 			ID: "s1", Username: "u1", PassHash: string(hash), AccessCode: "code-abc",
-			Role: "operator", ContainerUUIDs: []string{"uuid-1"},
+			AccessCodePassword: "share-pass-456",
+			Role:               "operator", ContainerUUIDs: []string{"uuid-1"},
 		}},
 		Containers: []config.Container{{Name: "web", UUID: "uuid-1"}},
 	}
 
-	body, _ := json.Marshal(map[string]string{"code": "code-abc", "password": "newpass-xyz-123"})
+	// 正确口令：访问码密码 → 200。
+	body, _ := json.Marshal(map[string]string{"code": "code-abc", "password": "share-pass-456"})
 	rec := httptest.NewRecorder()
 	HandleSubUserAccessCode(rec, httptest.NewRequest(http.MethodPost, "/api/sub-user/access", bytes.NewReader(body)))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("access-code login after self rotation: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("access-code login with access-code password: status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), `"container_uuids":["uuid-1"]`) {
 		t.Fatalf("access-code login should carry bound container uuids, body=%s", rec.Body.String())
+	}
+
+	// 账号密码：绝不能通过访问码端点登录。
+	body, _ = json.Marshal(map[string]string{"code": "code-abc", "password": "account-pass-123"})
+	rec = httptest.NewRecorder()
+	HandleSubUserAccessCode(rec, httptest.NewRequest(http.MethodPost, "/api/sub-user/access", bytes.NewReader(body)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("access-code login must reject the account password: status = %d, want 401; body=%s", rec.Code, rec.Body.String())
 	}
 }

@@ -34,8 +34,8 @@ type APIResponse struct {
 	// Code 是机器可读错误码（企业级 API 契约）：仅在失败时出现，如
 	// INVALID_REQUEST / NOT_FOUND / FORBIDDEN / RATE_LIMITED / BAD_GATEWAY /
 	// INTERNAL_ERROR。成功响应省略该字段，向后兼容。
-	Code    string `json:"code,omitempty"`
-	Message string `json:"message,omitempty"`
+	Code    string      `json:"code,omitempty"`
+	Message string      `json:"message,omitempty"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
@@ -50,6 +50,9 @@ type AuthContext struct {
 	Scopes         []string
 	ContainerUUIDs []string
 	Role           string // 子用户角色 operator/viewer；仅登录凭据持有的写权限受其约束
+	// Via 记录子用户会话的来源（account / access_code）。访问码会话据此
+	// 被禁止修改账号密码（见 HandleSubUserChangePassword / SelfRotatePassword）。
+	Via string
 }
 
 const (
@@ -609,6 +612,9 @@ func authContextFromClaims(claims jwt.MapClaims) AuthContext {
 		auth := AuthContext{Type: authTypeSubUser, Username: subUser, Actor: "user:" + subUser}
 		if role, _ := claims["role"].(string); role != "" {
 			auth.Role = role
+		}
+		if via, _ := claims["via"].(string); via != "" {
+			auth.Via = via
 		}
 		if values, ok := claims["container_uuids"].([]interface{}); ok {
 			for _, value := range values {

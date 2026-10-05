@@ -147,6 +147,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/sub-user/change-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserChangePassword)))
 	mux.HandleFunc("/api/sub-user/profile", corsMiddleware(api.AuthMiddleware(api.HandleSubUserProfile)))
 	mux.HandleFunc("/api/sub-user/rotate-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserSelfRotatePassword)))
+	mux.HandleFunc("/api/sub-user/rotate-access-code-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserSelfRotateAccessCodePassword)))
 	mux.HandleFunc("/api/sub-users", corsMiddleware(api.AdminMiddleware(api.HandleSubUserList)))
 	mux.HandleFunc("/api/sub-users/", corsMiddleware(api.AdminMiddleware(api.HandleSubUserAction)))
 	mux.HandleFunc("/api/audit-logs", corsMiddleware(api.AdminMiddleware(api.HandleAuditLogs)))
@@ -348,6 +349,7 @@ func setupRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/sub-user/change-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserChangePassword)))
 	mux.HandleFunc("/api/v1/sub-user/profile", corsMiddleware(api.AuthMiddleware(api.HandleSubUserProfile)))
 	mux.HandleFunc("/api/v1/sub-user/rotate-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserSelfRotatePassword)))
+	mux.HandleFunc("/api/v1/sub-user/rotate-access-code-password", corsMiddleware(api.AuthMiddleware(api.HandleSubUserSelfRotateAccessCodePassword)))
 	mux.HandleFunc("/api/v1/usage", corsMiddleware(api.AuthMiddleware(api.HandleUsageExport)))
 	mux.HandleFunc("/api/v1/smtp", corsMiddleware(api.AdminMiddleware(api.HandleSMTPSettings)))
 	mux.HandleFunc("/api/v1/smtp/test", corsMiddleware(api.AdminMiddleware(api.HandleSMTPTest)))
@@ -521,7 +523,7 @@ func recoverPanicMiddleware(next http.Handler) http.Handler {
 
 // limitRequestBody 限制请求体大小，防止超大请求体导致内存占用（DoS）。
 func limitRequestBody(next http.Handler) http.Handler {
-	const maxBodyBytes = 64 << 20            // 64 MiB
+	const maxBodyBytes = 64 << 20                        // 64 MiB
 	const maxStreamingUpload = (20 << 30) + (1024 << 20) // ~20 GiB ISO 上传/备份还原
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// 大文件流式上传/还原端点不受通用 64 MiB 限制（受各自 handler 内部独立上限约束）。

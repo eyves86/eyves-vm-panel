@@ -245,7 +245,9 @@ func v2UserCreate(w http.ResponseWriter, r *http.Request) {
 		ContainerNames: names,
 		ContainerUUIDs: req.ContainerUUIDs,
 		AccessCode:     randomHex(8),
-		CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
+		// 访问码口令与账号密码分离，随账号生成（可随时在后台查看/重置）。
+		AccessCodePassword: randomHex(16),
+		CreatedAt:          time.Now().Format("2006-01-02 15:04:05"),
 	}
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.SubUsers = append(cfg.SubUsers, subUser)
@@ -263,7 +265,8 @@ func v2UserCreate(w http.ResponseWriter, r *http.Request) {
 	v2Created(w, r, map[string]interface{}{
 		"id": subUser.ID, "username": subUser.Username, "role": subUserRole(subUser.Role),
 		"password": password, "access_code": subUser.AccessCode, // 一次性凭据
-		"container_uuids": subUser.ContainerUUIDs,
+		"access_code_password": subUser.AccessCodePassword, // 访问码专用口令（可回显）
+		"container_uuids":      subUser.ContainerUUIDs,
 	})
 }
 
