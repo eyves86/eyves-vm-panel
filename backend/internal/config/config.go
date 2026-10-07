@@ -4686,8 +4686,22 @@ func ResetAdminPassword(newPassword string) error {
 	return SaveConfig()
 }
 
+// lxcRoot 是本机 LXC 容器目录的根。抽成变量只为让测试能构造「根目录缺失」场景。
+var lxcRoot = "/var/lib/lxc"
+
 // CleanStaleContainers removes containers from config if their LXC directory doesn't exist
 func CleanStaleContainers() {
+	// 前置守卫：本机 LXC 根目录不在时**整体跳过**。
+	//
+	// 这里的逻辑是「看不到就当作不存在」，前提是「本该看得到」。整机重启时挂载可能
+	// 晚于本服务就绪（独立 /var、数据盘、存储被挪走、LXC 目录被重建），此时根目录
+	// 缺失会把配置里**全部**本机容器当成过期记录删掉——记录一删，容器还在跑但面板
+	// 再也管不到它，且全程静默（同类事故见过一次：v2.2.36 把节点容器全删了）。
+	// 根目录缺失说明环境没就绪，不等于「容器都没了」。
+	if _, err := os.Stat(lxcRoot); err != nil {
+		fmt.Printf("Skipping stale container cleanup: %s unavailable (%v)\n", lxcRoot, err)
+		return
+	}
 	valid := make([]Container, 0)
 	changed := false
 	for _, c := range AppConfig.Containers {
@@ -4703,6 +4717,11 @@ func CleanStaleContainers() {
 				valid = append(valid, c)
 				continue
 			}
+			// 同上：镜像所在目录整体缺失（挂载未就绪）属于不可判定，保留记录。
+			if _, err := os.Stat(filepath.Dir(c.DiskImage)); err != nil {
+				valid = append(valid, c)
+				continue
+			}
 			if _, err := os.Stat(c.DiskImage); os.IsNotExist(err) {
 				fmt.Printf("Cleaning stale KVM config: %s (disk image not found)\n", c.VirshName())
 				changed = true
@@ -4711,7 +4730,7 @@ func CleanStaleContainers() {
 			valid = append(valid, c)
 			continue
 		}
-		lxcDir := "/var/lib/lxc/" + c.LxcName()
+		lxcDir := lxcRoot + "/" + c.LxcName()
 		if _, err := os.Stat(lxcDir); os.IsNotExist(err) {
 			fmt.Printf("Cleaning stale container config: %s (LXC dir not found)\n", c.LxcName())
 			changed = true

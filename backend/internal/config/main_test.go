@@ -33,6 +33,28 @@ func TestDataDirRedirectedInTests(t *testing.T) {
 	}
 }
 
+// TestCleanStaleContainersKeepsRecordsWhenLXCRootMissing 锁定「环境没就绪不得清库」：
+// LXC 根目录缺失时必须整体跳过，而不是把全部本机容器记录当成过期记录删掉。
+func TestCleanStaleContainersKeepsRecordsWhenLXCRootMissing(t *testing.T) {
+	prevCfg, prevRoot := AppConfig, lxcRoot
+	t.Cleanup(func() {
+		AppConfig = prevCfg
+		lxcRoot = prevRoot
+	})
+
+	lxcRoot = filepath.Join(t.TempDir(), "lxc-not-mounted-yet")
+	AppConfig = &EyvescloudConfig{Containers: []Container{
+		{ID: 1, Name: "c1", Virtualization: "lxc"},
+		{ID: 2, Name: "c2", Virtualization: "lxc"},
+	}}
+
+	CleanStaleContainers()
+
+	if got := len(AppConfig.Containers); got != 2 {
+		t.Fatalf("根目录缺失时不得清库：容器记录 2 → %d", got)
+	}
+}
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "eyvescloud-configtest-")
 	if err != nil {
