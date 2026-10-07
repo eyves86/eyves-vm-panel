@@ -41,7 +41,7 @@ func HandleLanguage(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 			return
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.Language = config.NormalizeLanguage(req.Language)
 		})
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
@@ -58,8 +58,10 @@ func HandleTaskQueueSettings(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: globalQueue.Settings()})
 	case http.MethodPut, http.MethodPost:
+		// max_pending 缺省（0）表示「不修改」，保持旧版前端只发 concurrency 时的行为。
 		var req struct {
 			Concurrency int `json:"concurrency"`
+			MaxPending  int `json:"max_pending"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
@@ -69,18 +71,30 @@ func HandleTaskQueueSettings(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "任务并发数必须在 1 到 16 之间"})
 			return
 		}
-		previous := config.AppConfig.TaskConcurrency
-		if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		current := globalQueue.Settings()
+		maxPending := current.MaxPending
+		if req.MaxPending > 0 {
+			if req.MaxPending > config.MaxTaskQueueMaxPending {
+				jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: fmt.Sprintf("队列积压上限必须在 1 到 %d 之间", config.MaxTaskQueueMaxPending)})
+				return
+			}
+			maxPending = req.MaxPending
+		}
+		previous, previousPending := config.AppConfig.TaskConcurrency, config.AppConfig.TaskQueueMaxPending
+		if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.TaskConcurrency = req.Concurrency
+			cfg.TaskQueueMaxPending = maxPending
 		}); err != nil {
-			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 				cfg.TaskConcurrency = previous
+				cfg.TaskQueueMaxPending = previousPending
 			})
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "保存任务队列设置失败"})
 			return
 		}
 		globalQueue.SetConcurrency(req.Concurrency)
-		auditRequest(r, "settings.task_queue", "task_concurrency", fmt.Sprintf("concurrency=%d", req.Concurrency), true, "")
+		globalQueue.SetMaxPending(maxPending)
+		auditRequest(r, "settings.task_queue", "task_queue", fmt.Sprintf("concurrency=%d max_pending=%d", req.Concurrency, maxPending), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "任务队列设置已保存", Data: globalQueue.Settings()})
 	default:
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
@@ -177,7 +191,7 @@ func HandleAdminPasswordChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminPassHash = string(hash)
 		cfg.AdminTokenVersion++ // invalidate all previously issued admin tokens
 	})
@@ -210,7 +224,7 @@ func HandleAdminUsernameChange(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminUser = req.NewUsername
 		cfg.AdminTokenVersion++ // username change revokes existing admin tokens
 	})

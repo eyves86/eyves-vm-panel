@@ -87,7 +87,7 @@ func v2WebhookCreate(w http.ResponseWriter, r *http.Request) {
 		Enabled:    enabled,
 		CreatedAt:  time.Now().Format("2006-01-02 15:04:05"),
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Webhooks = append(cfg.Webhooks, subscription)
 	})
 	auditRequest(r, "api.v2.webhook.create", subscription.Name, subscription.URL, true, "")
@@ -121,7 +121,7 @@ func v2WebhookUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	found := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Webhooks {
 			if cfg.Webhooks[i].ID != webhookID {
 				continue
@@ -160,7 +160,7 @@ func v2WebhookDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	webhookID := strings.TrimSpace(r.PathValue("id"))
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Webhooks[:0]
 		for i := range cfg.Webhooks {
 			if cfg.Webhooks[i].ID == webhookID {
@@ -397,7 +397,7 @@ func v2UserRotatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SubUsers {
 			if cfg.SubUsers[i].ID != userID && !strings.EqualFold(cfg.SubUsers[i].Username, userID) {
 				continue
@@ -468,7 +468,7 @@ func v2AdminCreate(w http.ResponseWriter, r *http.Request) {
 		Role:      config.NormalizeAdminRole(req.Role),
 		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Admins = append(cfg.Admins, account)
 	})
 	auditRequest(r, "api.v2.admin.create", username, "role="+account.Role, true, "")
@@ -507,7 +507,7 @@ func v2AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		newHash = string(hash)
 	}
 	found := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Admins {
 			if cfg.Admins[i].ID != adminID && !strings.EqualFold(cfg.Admins[i].Username, adminID) {
 				continue
@@ -548,7 +548,7 @@ func v2AdminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Admins[:0]
 		for i := range cfg.Admins {
 			if cfg.Admins[i].ID == adminID || strings.EqualFold(cfg.Admins[i].Username, adminID) {

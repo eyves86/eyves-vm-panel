@@ -713,6 +713,59 @@ func apiRateLimitMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// agentGatewayHandler 构造 Agent 网关的处理器链：恢复 panic + 限制请求体 + gzip 解压。
+// 刻意不复用面板的 panelAccessMiddleware —— 那会强制校验管理入口随机路径/访问码，
+// 而节点根本没有浏览器会话。网关只认节点令牌，由 handleNodeHeartbeat 内部做常量
+// 时间比较，因此这里不需要（也不应该）套用面板的访问控制。
+func agentGatewayHandler() http.Handler {
+	return recoverPanicMiddleware(limitRequestBody(gzipMiddleware(api.AgentGatewayMux())))
+}
+
+// startAgentGatewayIfEnabled 在配置了 EYVESCLOUD_AGENT_GATEWAY_ADDR 时启动独立网关。
+// 失败必须显式告警但绝不致命：面板自身仍要能起来（心跳继续走面板监听器兜底）。
+func startAgentGatewayIfEnabled(tlsCfg *tls.Config) {
+	addr := config.AgentGatewayAddr()
+	if addr == "" {
+		return
+	}
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		log.Printf("警告：Agent 网关未启动（%s）：%v；节点心跳仍由面板监听器承载", addr, err)
+		return
+	}
+	serveAgentGateway(ln, tlsCfg)
+}
+
+// serveAgentGateway 用已建立的监听器提供节点入站服务（后台 goroutine，非阻塞）。
+// 独立成函数以便测试：可在 127.0.0.1:0 上监听并拿到真实端口。
+func serveAgentGateway(ln net.Listener, tlsCfg *tls.Config) {
+	srv := &http.Server{
+		Handler:   agentGatewayHandler(),
+		TLSConfig: tlsCfg,
+		// 与面板监听器同一套超时基线（审计 H-7）：节点入站同样是公网暴露面。
+		ReadHeaderTimeout: 15 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	scheme := "http"
+	if tlsCfg != nil {
+		scheme = "https"
+	}
+	log.Printf("EyvesCloud Agent 网关监听 %s://%s（仅节点入站上报 /api/nodes/{id}/heartbeat，不暴露面板/管理接口）", scheme, ln.Addr().String())
+	go func() {
+		var serveErr error
+		if tlsCfg != nil {
+			serveErr = srv.ServeTLS(ln, "", "")
+		} else {
+			serveErr = srv.Serve(ln)
+		}
+		if serveErr != nil && serveErr != http.ErrServerClosed {
+			log.Printf("Agent 网关退出（%s）：%v", ln.Addr().String(), serveErr)
+		}
+	}()
+}
+
 // Run starts the HTTP server
 func Run() error {
 	// Use embedded frontend files
@@ -732,6 +785,9 @@ func Run() error {
 	api.StartRecyclePurgeWorker()
 	// 事件订阅引擎：容器状态变更 → Webhook 回调（幂等注册）。
 	api.StartWebhookEngine()
+	// 心跳落库批处理：把「一请求一事务」改为按窗口合并（见 config/store_batch.go）。
+	// 30k 节点 × 10s 心跳 = 3000 次/秒，逐次提交会把单写者 SQLite 变成墙。
+	config.StartDeferredSaver()
 
 	mux := http.NewServeMux()
 	setupRoutes(mux)
@@ -797,10 +853,14 @@ func Run() error {
 		if redirectPort := config.AppConfig.SSL.HTTPRedirectPort; redirectPort > 0 && redirectPort != config.AppConfig.Port {
 			go serveHTTPToHTTPSRedirect(redirectPort, config.AppConfig.Port)
 		}
+		// 独立 Agent 网关复用面板证书，节点入站同样走 TLS。
+		startAgentGatewayIfEnabled(server.TLSConfig)
 		log.Printf("EyvesCloud Web Server SSL enabled on https://0.0.0.0:%d", config.AppConfig.Port)
 		return server.ServeTLS(listener, "", "")
 	}
 
+	// 明文部署（无 TLS）下网关同样只提供心跳入站。
+	startAgentGatewayIfEnabled(nil)
 	warnIfPlaintextExposed(addr)
 	return server.Serve(listener)
 }

@@ -235,10 +235,15 @@ func createRecipe(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:   now,
 	}
 
-	config.AppConfigMu.Lock()
-	config.AppConfig.Recipes = append(config.AppConfig.Recipes, recipe)
-	config.SaveConfig()
-	config.AppConfigMu.Unlock()
+	// 必须走 MutateGlobal* 而不是手写 Lock+SaveConfig：SaveConfig 内部会再次
+	// 获取 AppConfigMu（Go 的 sync.Mutex 不可重入），手写锁会在同一把锁上自锁，
+	// 请求永久挂起并连带冻结整个面板（所有配置读写都等这把锁）。
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
+		cfg.Recipes = append(cfg.Recipes, recipe)
+	}); err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
+		return
+	}
 
 	auditRequest(r, "recipe.create", recipe.Name, "id="+recipe.ID, true, "")
 	jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: recipe})
@@ -269,7 +274,7 @@ func updateRecipe(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Recipes {
 			if cfg.Recipes[i].ID != id {
 				continue
@@ -320,7 +325,7 @@ func deleteRecipe(w http.ResponseWriter, r *http.Request, id string) {
 		return
 	}
 
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		out := make([]config.Recipe, 0, len(cfg.Recipes))
 		for _, recipe := range cfg.Recipes {
 			if recipe.ID != id {

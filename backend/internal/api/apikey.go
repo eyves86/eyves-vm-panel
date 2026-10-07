@@ -149,8 +149,9 @@ func createApiKey(w http.ResponseWriter, r *http.Request) {
 		Disabled:       req.Disabled,
 		ContainerUUIDs: normalizeStringSlice(req.ContainerUUIDs),
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalSaveCatalogExact(func(cfg *config.EyvescloudConfig) config.DirtySet {
 		cfg.ApiKeys = append(cfg.ApiKeys, key)
+		return config.DirtySet{APIKeys: []config.ApiKeyConfig{key}}
 	})
 	auditRequest(r, "apikey.create", key.Name, "scopes="+strings.Join(key.Scopes, ","), true, "")
 
@@ -187,7 +188,7 @@ func updateApiKey(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalSaveCatalogExact(func(cfg *config.EyvescloudConfig) config.DirtySet {
 		for i := range cfg.ApiKeys {
 			if cfg.ApiKeys[i].ID != keyID {
 				continue
@@ -204,8 +205,9 @@ func updateApiKey(w http.ResponseWriter, r *http.Request) {
 			cfg.ApiKeys[i].ContainerUUIDs = normalizeStringSlice(req.ContainerUUIDs)
 			copyKey := cfg.ApiKeys[i]
 			updated = &copyKey
-			return
+			return config.DirtySet{APIKeys: []config.ApiKeyConfig{copyKey}}
 		}
+		return config.DirtySet{}
 	})
 	if updated == nil {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "API key not found"})
@@ -378,10 +380,12 @@ func validateApiKeyDetails(rawKey, clientIP string) (*config.ApiKeyConfig, bool)
 
 	if needsRehash {
 		if newHash, err := hashAPIKey(rawKey); err == nil {
-			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+			config.MutateGlobalSaveCatalogExact(func(cfg *config.EyvescloudConfig) config.DirtySet {
 				if idx < len(cfg.ApiKeys) && cfg.ApiKeys[idx].ID == live.ID {
 					cfg.ApiKeys[idx].KeyHash = newHash
+					return config.DirtySet{APIKeys: []config.ApiKeyConfig{cfg.ApiKeys[idx]}}
 				}
+				return config.DirtySet{}
 			})
 		}
 	}
@@ -482,21 +486,35 @@ func updateApiKeyLastUsed(rawKey string) {
 	updateApiKeyLastUsedForKey(key, "")
 }
 
+// apiKeyLastUsedThrottle 是 api_key.last_used 的落库节流窗口。本函数在**每一次** API Key
+// 请求上都会调用；last_used 仅是审计字段，30 秒粒度足够，故同键在窗口内不再重复落库
+// （进一步减少事务次数）。窗口外的写入走「目录精确声明」入口，只写这一行，成本与目录
+// 规模无关。
+const apiKeyLastUsedThrottle = 30 * time.Second
+
 func updateApiKeyLastUsedForKey(key *config.ApiKeyConfig, ip string) {
 	if key == nil {
 		return
 	}
-	now := time.Now().Format("2006-01-02 15:04:05")
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	now := time.Now()
+	// key 是鉴权时抓取的快照：窗口内的重复请求看到同一个 LastUsed，据此跳过。
+	if last, err := time.ParseInLocation("2006-01-02 15:04:05", key.LastUsed, time.Local); err == nil &&
+		now.Sub(last) < apiKeyLastUsedThrottle {
+		return
+	}
+	stamp := now.Format("2006-01-02 15:04:05")
+	config.MutateGlobalSaveCatalogExact(func(cfg *config.EyvescloudConfig) config.DirtySet {
 		for i := range cfg.ApiKeys {
-			if cfg.ApiKeys[i].ID == key.ID {
-				cfg.ApiKeys[i].LastUsed = now
-				if ip != "" {
-					cfg.ApiKeys[i].LastUsedIP = ip
-				}
-				return
+			if cfg.ApiKeys[i].ID != key.ID {
+				continue
 			}
+			cfg.ApiKeys[i].LastUsed = stamp
+			if ip != "" {
+				cfg.ApiKeys[i].LastUsedIP = ip
+			}
+			return config.DirtySet{APIKeys: []config.ApiKeyConfig{cfg.ApiKeys[i]}}
 		}
+		return config.DirtySet{}
 	})
 }
 

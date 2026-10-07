@@ -546,11 +546,13 @@ func v2NodeDelete(w http.ResponseWriter, r *http.Request) {
 		v2Conflict(w, r, fmt.Sprintf("该节点上仍有 %d 个实例，如需强制删除请加 ?force=true", len(onNode)))
 		return
 	}
-	if !config.RemoveNode(node.ID) {
+	removed, conts := config.RemoveNode(node.ID)
+	if !removed {
 		v2NotFound(w, r, "节点不存在")
 		return
 	}
-	auditRequest(r, "api.v2.node.delete", node.Name, "删除节点", true, "")
+	auditRequest(r, "api.v2.node.delete", node.Name,
+		fmt.Sprintf("删除节点（一并移除 %d 个实例记录）", conts), true, "")
 	v2NoContent(w, r)
 }
 
@@ -925,7 +927,7 @@ func v2RegionsCreate(w http.ResponseWriter, r *http.Request) {
 		MaxRAMMB:     req.MaxRAMMB,
 		MaxDiskGB:    req.MaxDiskGB,
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Regions = append(cfg.Regions, region)
 	}); err != nil {
 		v2Internal(w, r, "保存区域失败："+err.Error())
@@ -1078,7 +1080,7 @@ func v2RegionUpdate(w http.ResponseWriter, r *http.Request) {
 		country = normalized
 	}
 	var updated config.Region
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Regions {
 			if cfg.Regions[i].ID != regionID {
 				continue
@@ -1132,7 +1134,7 @@ func v2RegionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed := false
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Regions[:0]
 		for _, region := range cfg.Regions {
 			if region.ID == regionID {

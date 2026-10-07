@@ -141,6 +141,17 @@ func v2Upstream(w http.ResponseWriter, r *http.Request, message string) {
 	v2Error(w, r, http.StatusBadGateway, v2CodeUpstreamError, message, nil)
 }
 
+// v2QueueFull 容器操作队列触发背压上限：快速失败（429），并在 details 中回带已受理
+// 的任务 ID，避免部分入队时调用方丢失已排队的任务。
+func v2QueueFull(w http.ResponseWriter, r *http.Request, err error, accepted []EnqueueOutcome) {
+	details := map[string]interface{}{"accepted_task_ids": outcomeIDs(accepted)}
+	message := err.Error()
+	if n := len(accepted); n > 0 {
+		message = message + "（已受理 " + strconv.Itoa(n) + " 个，请稍后重试其余）"
+	}
+	v2Error(w, r, http.StatusTooManyRequests, v2CodeRateLimited, message, details)
+}
+
 // ---------------------------------------------------------------------------
 // 分页 / 排序 / 过滤
 // ---------------------------------------------------------------------------
@@ -207,9 +218,9 @@ type v2Pagination struct {
 
 // v2ListData 列表响应体：data.items + data.pagination。
 type v2ListData struct {
-	Items      interface{}   `json:"items"`
-	Pagination v2Pagination  `json:"pagination"`
-	Summary    interface{}   `json:"summary,omitempty"`
+	Items      interface{}  `json:"items"`
+	Pagination v2Pagination `json:"pagination"`
+	Summary    interface{}  `json:"summary,omitempty"`
 }
 
 func v2List(w http.ResponseWriter, r *http.Request, items interface{}, query v2PageQuery, total int) {

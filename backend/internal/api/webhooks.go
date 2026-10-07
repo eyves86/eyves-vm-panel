@@ -228,7 +228,7 @@ func createWebhook(w http.ResponseWriter, r *http.Request) {
 			wh.OwnerType = ctx.Type
 		}
 	}
-	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Webhooks = append(cfg.Webhooks, wh)
 	})
 	if saveErr != nil {
@@ -283,7 +283,7 @@ func updateWebhook(w http.ResponseWriter, r *http.Request, id string) {
 			return
 		}
 	}
-	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Webhooks {
 			if cfg.Webhooks[i].ID != id {
 				continue
@@ -329,7 +329,7 @@ func deleteWebhook(w http.ResponseWriter, r *http.Request, id string) {
 		errResponse(w, http.StatusForbidden, "FORBIDDEN", "Not allowed to delete this webhook")
 		return
 	}
-	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := make([]config.WebhookSubscription, 0, len(cfg.Webhooks))
 		for _, wh := range cfg.Webhooks {
 			if wh.ID != id {
@@ -411,7 +411,7 @@ func webhookDeliver(wh config.WebhookSubscription, evt webhookEvent) {
 	if lastErr != nil {
 		statusStr = "error: " + lastErr.Error()
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		// 异步投递可能在进程关闭 / 测试回收全局配置后仍被执行，此处必须容忍 nil，
 		// 否则一次已排队的失败重试会以空指针崩溃拖垮整个进程。
 		if cfg == nil {

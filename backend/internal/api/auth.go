@@ -426,7 +426,7 @@ func HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		// 若使用了备份码，持久化消费后的哈希列表。
 		if len(consumed) != len(backupHashes) && consumed != nil {
-			_ = config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.AdminBackupCodes = consumed })
+			_ = config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) { cfg.AdminBackupCodes = consumed })
 		}
 	}
 
@@ -498,7 +498,7 @@ func handleExtraAdminLogin(w http.ResponseWriter, r *http.Request, username, pas
 	}
 	loginLimiter.reset(rateKey)
 	RecordLoginLog(acct.Username, ip, ua, true)
-	_ = config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	_ = config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Admins {
 			if cfg.Admins[i].ID == acct.ID {
 				cfg.Admins[i].LastLoginAt = time.Now().Format("2006-01-02 15:04:05")
@@ -547,7 +547,7 @@ func HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminPassHash = string(hash)
 		cfg.AdminTokenVersion++ // invalidate all previously issued admin tokens
 	})

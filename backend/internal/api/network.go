@@ -83,7 +83,7 @@ func HandleRegions(w http.ResponseWriter, r *http.Request) {
 			Country:   country,
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 			cfg.Regions = append(cfg.Regions, region)
 		})
 		auditRequest(r, "region.create", region.Name, fmt.Sprintf("创建区域 %s", region.Name), true, "")
@@ -104,7 +104,7 @@ func HandleRegionItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed := false
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Regions[:0]
 		for _, rg := range cfg.Regions {
 			if rg.ID == id {
@@ -201,7 +201,7 @@ func HandleIPGroups(w http.ResponseWriter, r *http.Request) {
 			Standby:   normalizeIPList(req.Standby),
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.IPGroups = append(cfg.IPGroups, group) })
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) { cfg.IPGroups = append(cfg.IPGroups, group) })
 		auditRequest(r, "ipgroup.create", name, "创建 IP 组", true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: group})
 	default:
@@ -228,7 +228,7 @@ func HandleIPGroupItem(w http.ResponseWriter, r *http.Request, id string) {
 			}
 		}
 		found := false
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.IPGroups {
 				if cfg.IPGroups[i].ID == id {
 					if strings.TrimSpace(req.Name) != "" {
@@ -249,7 +249,7 @@ func HandleIPGroupItem(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 	case http.MethodDelete:
 		found := false
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 			out := cfg.IPGroups[:0]
 			for _, g := range cfg.IPGroups {
 				if g.ID == id {
@@ -294,7 +294,7 @@ func HandleIPGroupFailover(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	var group *config.IPGroup
 	var demoted string
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.IPGroups {
 			if cfg.IPGroups[i].ID != id {
 				continue
@@ -455,7 +455,7 @@ func HandleISOs(w http.ResponseWriter, r *http.Request) {
 			OS:        strings.TrimSpace(req.OS),
 			CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 		}
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
 		auditRequest(r, "iso.create", name, "添加 ISO 镜像", true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: iso})
 	default:
@@ -475,7 +475,7 @@ func HandleISOItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var removedPath string
 	found := false
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		out := cfg.ISOFiles[:0]
 		for _, iso := range cfg.ISOFiles {
 			if iso.ID == id {
@@ -585,7 +585,7 @@ func HandleISOUpload(w http.ResponseWriter, r *http.Request) {
 		OS:        osName,
 		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) { cfg.ISOFiles = append(cfg.ISOFiles, iso) })
 	auditRequest(r, "iso.upload", iso.Name, "本地上传 ISO 镜像", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: iso})
 }

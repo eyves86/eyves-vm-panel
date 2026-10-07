@@ -44,7 +44,7 @@ func updateWebSSHOriginSettings(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.WebSSHAllowedOrigins = normalized
 	})
 	auditRequest(r, "settings.webssh_origins", "WebSSH Origin", "origins="+strings.Join(normalized, ","), true, "")

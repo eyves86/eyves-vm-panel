@@ -184,6 +184,12 @@ func resetConfigStoreForTest(t *testing.T) {
 		}
 		db = nil
 	}
+	// 遥测库（telemetry.db）与配置库生命周期一致，重置时同样必须关闭，
+	// 否则句柄会泄漏到下一个用例的临时目录。
+	CloseTelemetryDB()
+	// 行指纹是进程级状态（persistedRows），必须随 db 一起复位，
+	// 否则上一个用例的指纹会泄漏到下一个用例，导致增量落库误判为「无变化」。
+	resetPersistedRows()
 	AppConfig = nil
 	configPath = ""
 }

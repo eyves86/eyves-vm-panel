@@ -130,7 +130,7 @@ func main() {
 		agent.StartEmbeddedNodeSide()
 
 		// Restore persisted state
-		api.ConfigureTaskQueue(cfg.TaskConcurrency)
+		api.ConfigureTaskQueue(cfg.TaskConcurrency, cfg.TaskQueueMaxPending)
 		api.RestoreTasks()
 		api.RestoreLoginLogs()
 
@@ -216,6 +216,10 @@ func installShutdownStateCapture() {
 	go func() {
 		sig := <-signals
 		fmt.Fprintf(os.Stderr, "Received %s, capturing workload restore state...\n", sig)
+		// 先补刷心跳批处理的最后一个窗口（正常重启不该丢窗口），再落恢复标记。
+		if err := config.FlushDeferredSaves(); err != nil {
+			fmt.Fprintf(os.Stderr, "flush pending heartbeat saves: %v\n", err)
+		}
 		shutdownCaptureOnce.Do(api.CaptureRuntimeRestoreState)
 		os.Exit(0)
 	}()

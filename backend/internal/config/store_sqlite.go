@@ -157,34 +157,44 @@ func openConfigDB() error {
 	if db != nil {
 		return nil
 	}
+	// P1：env 门控 —— 设置 EYVESCLOUD_PG_DSN 时配置库走 Postgres（实验性），否则保持
+	// SQLite（默认，行为不变）。PG 无本地库文件 / 无 WAL，故跳过 chmod 与遗留指标迁移；
+	// 遥测库当前仍是本机 SQLite（P1-c），PG 下同样打开。
+	if dsn := strings.TrimSpace(os.Getenv(pgDSNEnv)); dsn != "" {
+		if err := openPostgresConfigDB(dsn); err != nil {
+			return err
+		}
+		return openTelemetryDB()
+	}
+	configDBIsPostgres = false
 	dbPath := getDBPath()
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return fmt.Errorf("failed to create database directory: %v", err)
 	}
-	next, err := sql.Open("sqlite", dbPath)
+	next, err := sql.Open("sqlite", sqliteDSN(dbPath, configDBPragmas))
 	if err != nil {
 		return fmt.Errorf("failed to open sqlite database: %v", err)
 	}
 	next.SetMaxOpenConns(1)
 	next.SetMaxIdleConns(1)
+
 	// 安全加固：SQLite 文件含 AdminPassHash / JWTSecret / ApiKeyHash 等敏感字段，
 	// 无论是否新建，都把它严格锁到当前用户可读。
-	_ = os.Chmod(dbPath, 0600)
-
-	for _, stmt := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA busy_timeout=5000",
-		"PRAGMA foreign_keys=ON",
-	} {
-		if _, err := next.Exec(stmt); err != nil {
-			_ = next.Close()
-			return fmt.Errorf("failed to initialize sqlite pragma: %v", err)
-		}
-	}
-
+	// 注意 chmod 必须放在 ensureSchema 之后：sql.Open 是惰性的，文件要等到第一次
+	// 执行语句时才落盘，提前 chmod 会打在尚不存在的路径上静默失败（首次启动即以
+	// 0644 落盘，直到下次启动才被纠正）。
 	db = next
-	return ensureSchema()
+	if err := ensureSchema(); err != nil {
+		return err
+	}
+	_ = os.Chmod(dbPath, 0600)
+	// 遥测独立成库（P1-c）：必须在 db 就绪之后打开，迁移会从旧的 config.db
+	// 读取遗留指标行。openTelemetryDB 内部不再取 dbMu（此处已持有），锁序 dbMu → telemetryMu。
+	if err := openTelemetryDB(); err != nil {
+		return err
+	}
+	migrateLegacyMetrics()
+	return nil
 }
 
 func ensureSchema() error {
@@ -447,32 +457,8 @@ func ensureSchema() error {
 			path TEXT,
 			size_bytes INTEGER
 		)`,
-		`CREATE TABLE IF NOT EXISTS container_metrics (
-			container_key TEXT NOT NULL,
-			ts INTEGER NOT NULL,
-			cpu REAL NOT NULL DEFAULT 0,
-			memory REAL NOT NULL DEFAULT 0,
-			network_rx REAL NOT NULL DEFAULT 0,
-			network_tx REAL NOT NULL DEFAULT 0,
-			disk_read REAL NOT NULL DEFAULT 0,
-			disk_write REAL NOT NULL DEFAULT 0
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_container_metrics_key_ts ON container_metrics (container_key, ts)`,
-		`CREATE TABLE IF NOT EXISTS container_metrics_hourly (
-			container_key TEXT NOT NULL,
-			hour INTEGER NOT NULL,
-			count INTEGER NOT NULL DEFAULT 0,
-			avg_cpu REAL NOT NULL DEFAULT 0,
-			max_cpu REAL NOT NULL DEFAULT 0,
-			avg_memory REAL NOT NULL DEFAULT 0,
-			max_memory REAL NOT NULL DEFAULT 0,
-			avg_network_rx REAL NOT NULL DEFAULT 0,
-			avg_network_tx REAL NOT NULL DEFAULT 0,
-			avg_disk_read REAL NOT NULL DEFAULT 0,
-			avg_disk_write REAL NOT NULL DEFAULT 0,
-			PRIMARY KEY (container_key, hour)
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_metrics_hourly_hour ON container_metrics_hourly (hour)`,
+		// 遥测表（container_metrics / container_metrics_hourly）已迁至独立的
+		// telemetry.db，由 ensureTelemetrySchema 建表，见 telemetry_db.go。
 		// P0-1 存储抽象层：卷表，把卷与容器/池解耦。
 		// 卷记录独立于 saveConfigToDB 的全量快照流程（不在其 DELETE 列表中），
 		// 采用即时 CRUD，与 security_conntrack_snapshots 的直写模式一致。
@@ -486,6 +472,41 @@ func ensureSchema() error {
 			created_at TEXT NOT NULL
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_volumes_container ON volumes (attached_to_container_id)`,
+		// P2：节点从 app_meta 的单行 JSON 改为**每节点一行**。此前 30k 节点下一次
+		// 心跳保存要重新序列化 9.5MB JSON + 重加密全部节点 token（实测 220ms/次），
+		// 而心跳只改一个节点。行级化后单次保存只写 1 行（见 store_rows.go 的 diffNodes）。
+		// token / install_key 仍逐行 AES-GCM 加密落库，且只在所属节点行变化时才重新加密。
+		`CREATE TABLE IF NOT EXISTS nodes (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL DEFAULT '',
+			address TEXT NOT NULL DEFAULT '',
+			public_host TEXT NOT NULL DEFAULT '',
+			token TEXT NOT NULL DEFAULT '',
+			install_key TEXT NOT NULL DEFAULT '',
+			install_key_created_at TEXT NOT NULL DEFAULT '',
+			install_key_ip TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL DEFAULT '',
+			last_seen TEXT NOT NULL DEFAULT '',
+			version TEXT NOT NULL DEFAULT '',
+			os_name TEXT NOT NULL DEFAULT '',
+			cpu_count INTEGER NOT NULL DEFAULT 0,
+			ram_total_mb INTEGER NOT NULL DEFAULT 0,
+			ram_used_mb INTEGER NOT NULL DEFAULT 0,
+			disk_total_gb REAL NOT NULL DEFAULT 0,
+			disk_used_gb REAL NOT NULL DEFAULT 0,
+			container_count INTEGER NOT NULL DEFAULT 0,
+			region_id TEXT NOT NULL DEFAULT '',
+			node_group_id TEXT NOT NULL DEFAULT '',
+			cluster_id TEXT NOT NULL DEFAULT '',
+			virt_types TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL DEFAULT '',
+			maintenance_mode INTEGER NOT NULL DEFAULT 0,
+			maintenance_since TEXT NOT NULL DEFAULT '',
+			tls_skip_verify INTEGER NOT NULL DEFAULT 0,
+			allow_private_addr INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_nodes_region ON nodes (region_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_nodes_node_group ON nodes (node_group_id)`,
 		// P1-1 节点状态机 + 租约锁
 		`CREATE TABLE IF NOT EXISTS node_leases (
 			node_id TEXT PRIMARY KEY,
@@ -667,17 +688,23 @@ func ensureSchemaMigrations() error {
 			return err
 		}
 	}
+	// 这几条是「NULL → 默认值」的一次性回填，只对历史遗留行有意义。必须带 IS NULL
+	// 谓词：否则每次启动都会改写整张表（10w 容器 = 每次启动 10w 行更新），而回填完成
+	// 后它本就是空操作，白白制造写放大。谓词让首次回填后自然归零。
 	if _, err := db.Exec(`UPDATE containers
 		SET lan_ipv4_mode = COALESCE(lan_ipv4_mode, ''),
 		    lan_interface = COALESCE(lan_interface, ''),
 		    lan_ipv4_address = COALESCE(lan_ipv4_address, ''),
 		    lan_ipv4_prefix_len = COALESCE(lan_ipv4_prefix_len, 0),
-		    lan_ipv4_gateway = COALESCE(lan_ipv4_gateway, '')`); err != nil {
+		    lan_ipv4_gateway = COALESCE(lan_ipv4_gateway, '')
+		WHERE lan_ipv4_mode IS NULL OR lan_interface IS NULL OR lan_ipv4_address IS NULL
+		   OR lan_ipv4_prefix_len IS NULL OR lan_ipv4_gateway IS NULL`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE containers
 		SET storage_pool_id = COALESCE(storage_pool_id, ''),
-		    storage_path = COALESCE(storage_path, '')`); err != nil {
+		    storage_path = COALESCE(storage_path, '')
+		WHERE storage_pool_id IS NULL OR storage_path IS NULL`); err != nil {
 		return err
 	}
 	if _, err := db.Exec(`UPDATE tasks
@@ -685,7 +712,9 @@ func ensureSchemaMigrations() error {
 		    cfg_lan_interface = COALESCE(cfg_lan_interface, ''),
 		    cfg_lan_ipv4_address = COALESCE(cfg_lan_ipv4_address, ''),
 		    cfg_lan_ipv4_prefix_len = COALESCE(cfg_lan_ipv4_prefix_len, 0),
-		    cfg_lan_ipv4_gateway = COALESCE(cfg_lan_ipv4_gateway, '')`); err != nil {
+		    cfg_lan_ipv4_gateway = COALESCE(cfg_lan_ipv4_gateway, '')
+		WHERE cfg_lan_ipv4_mode IS NULL OR cfg_lan_interface IS NULL OR cfg_lan_ipv4_address IS NULL
+		   OR cfg_lan_ipv4_prefix_len IS NULL OR cfg_lan_ipv4_gateway IS NULL`); err != nil {
 		return err
 	}
 	return nil
@@ -766,6 +795,7 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		// 管理员显式关闭后会写入 "0"，此后保持关闭。
 		AbuseDetectionEnabled:     atobDefault(meta, "abuse_detection_enabled", true),
 		TaskConcurrency:           atoi(meta["task_concurrency"]),
+		TaskQueueMaxPending:       atoi(meta["task_queue_max_pending"]),
 		Language:                  meta["language"],
 		LoginFooterText:           meta["login_footer_text"],
 		LoginFooterHidden:         atob(meta["login_footer_hidden"]),
@@ -819,7 +849,37 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		_ = json.Unmarshal([]byte(raw), &cfg.RemoteBackupSettings)
 	}
 	if raw := strings.TrimSpace(meta["smtp_settings"]); raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cfg.SMTPSettings)
+		// password 为 at-rest 密文，需先解密再反序列化（存量明文原样通过）。
+		if err := unmarshalDecryptingFields(raw, &cfg.SMTPSettings, []string{"password"}); err != nil {
+			log.Printf("Warning: 解析已存 SMTP 设置失败（按空处理）: %v", err)
+		}
+	}
+	// 企业集成 / 运维集合（此前完全未落库，重启即丢）。解析失败按空处理，
+	// 不让一条损坏记录把整个面板拖得起不来。
+	if raw := strings.TrimSpace(meta["ssh_keys"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.SSHKeys)
+	}
+	if raw := strings.TrimSpace(meta["webhooks"]); raw != "" {
+		if err := unmarshalDecryptingFields(raw, &cfg.Webhooks, []string{"secret"}); err != nil {
+			log.Printf("Warning: 解析已存 Webhook 失败（按空处理）: %v", err)
+		}
+	}
+	if raw := strings.TrimSpace(meta["recipes"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.Recipes)
+	}
+	if raw := strings.TrimSpace(meta["scheduled_actions"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.ScheduledActions)
+	}
+	if raw := strings.TrimSpace(meta["node_groups"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.NodeGroups)
+	}
+	if raw := strings.TrimSpace(meta["clusters"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.Clusters)
+	}
+	if raw := strings.TrimSpace(meta["notifications"]); raw != "" {
+		if err := unmarshalDecryptingFields(raw, &cfg.Notifications, []string{"smtp_password"}); err != nil {
+			log.Printf("Warning: 解析已存通知设置失败（按空处理）: %v", err)
+		}
 	}
 	if raw := strings.TrimSpace(meta["backups"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Backups)
@@ -885,27 +945,13 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 		_ = json.Unmarshal([]byte(raw), &cfg.CustomLXCImages)
 	}
 	loadPolicyState(cfg, meta)
-	if raw := strings.TrimSpace(meta["nodes"]); raw != "" {
-		_ = json.Unmarshal([]byte(raw), &cfg.Nodes)
+	// 节点自 P2 起独立成表（每节点一行），不再走 app_meta 的单行 JSON。
+	// 表为空而旧键仍在 = 正在升级，先把旧键搬进表再读，避免升级丢节点。
+	if _, err := migrateLegacyNodesRow(meta); err != nil {
+		return nil, false, err
 	}
-	// F7/P2-11：读取时把 enc:v1: 密文还原为明文 Token / InstallKey（内存态保持明文）。
-	// 存量明文值（无前缀）原样通过；解密失败不阻断启动，但该节点 Token
-	// 置空使其失效，等待重新注册——宁可断连也不能拿密文当凭据误用。
-	// install_key 解密失败同样置空（key 换发即可恢复，无需断连节点）。
-	for i := range cfg.Nodes {
-		plain, err := DecryptNodeToken(cfg.Nodes[i].Token)
-		if err != nil {
-			cfg.Nodes[i].Token = ""
-			continue
-		}
-		cfg.Nodes[i].Token = plain
-		plainKey, err := DecryptNodeToken(cfg.Nodes[i].InstallKey)
-		if err != nil {
-			cfg.Nodes[i].InstallKey = ""
-			cfg.Nodes[i].InstallKeyCreatedAt = ""
-		} else {
-			cfg.Nodes[i].InstallKey = plainKey
-		}
+	if cfg.Nodes, err = loadNodes(); err != nil {
+		return nil, false, err
 	}
 	if cfg.Nodes == nil {
 		cfg.Nodes = []Node{}
@@ -995,10 +1041,68 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if cfg.Snapshots, err = loadSnapshots(); err != nil {
 		return nil, false, err
 	}
+	// 用刚加载到的内存快照播种「已落库行指纹」：加载后内存==库，故紧接其后的
+	// 第一次保存若没有改动，不会产生任何行写入（重启不再触发一次全量重写）。
+	seedPersistedRows(cfg, meta)
 	return cfg, true, nil
 }
 
+// seedPersistedRows 由加载到的配置播种行指纹。必须在 dbMu 保护下、且与
+// saveConfigIncremental 采用同一指纹口径（containerFingerprint 会先归一别名）。
+// dbMeta 是库中实际的 app_meta 键值：用于只播种「库里确实存在」的键。
+func seedPersistedRows(cfg *EyvescloudConfig, dbMeta map[string]string) {
+	if cfg == nil {
+		return
+	}
+	// 重新装载配置后，上一次的下标缓存对新切片没有意义，先清空。
+	resetRowIndexes()
+	// 装载后内存日志 == 库内容（loadAuditLogs/loadLoginLogs 刚从库读出），
+	// 清掉可能残留的脏标记，避免一次无意义的日志表重写。
+	logsDirty = false
+	next := newRowFingerprints()
+	for _, c := range cfg.Containers {
+		next.containers[c.ID] = containerFingerprint(c)
+		code := strings.TrimSpace(c.AccessCode)
+		pw := strings.TrimSpace(c.AccessCodePassword)
+		if code != "" || pw != "" {
+			next.accessLinks[c.UUID] = fingerprint([2]string{code, pw})
+		}
+	}
+	for _, n := range cfg.Nodes {
+		next.nodes[n.ID] = fingerprint(n)
+	}
+	for _, su := range cfg.SubUsers {
+		next.subUsers[su.ID] = fingerprint(su)
+	}
+	for _, k := range cfg.ApiKeys {
+		next.apiKeys[k.ID] = fingerprint(k)
+	}
+	for _, s := range cfg.Snapshots {
+		next.snapshots[s.ID] = fingerprint(s)
+	}
+	for _, t := range cfg.Tasks {
+		next.tasks[t.ID] = fingerprint(t)
+	}
+	next.enabledImages = fingerprint(cfg.EnabledImages)
+	next.meta = seedMetaFingerprints(cfg, dbMeta)
+	persistedRows = next
+}
+
+// saveConfigToDB 把内存配置落库。P1 起为**行级增量**：只写发生变化/消失的行，
+// 未变化的行不产生任何语句（设计不变量：单次操作写 O(受影响行)）。
+// 事务提交成功后才更新 persistedRows，失败（回滚）则保持旧指纹，下次重试仍会重写。
 func saveConfigToDB() error {
+	return saveConfigToDBHinted(nil)
+}
+
+// saveConfigToDBHinted 是带「脏集声明」的保存入口。hint 为 nil 时行为与全量
+// 保存完全一致（逐行指纹 diff + upsert/delete）；非 nil 时只对声明过的行重算
+// 指纹，其余行沿用上次指纹，把 O(全部行) 的指纹扫描降到 O(声明行)。
+//
+// 安全约定：声明者必须保证「声明集合 ⊇ 本次实际改动集合」；任何未改造的写入
+// 路径都应调用 saveConfigToDB()（nil hint，全量兜底）。若本次保存失败，置
+// forceFullScanNextSave，令下一次保存强制全量，避免被漏声明的改动永久丢失。
+func saveConfigToDBHinted(hint *dirtyHint) error {
 	// nil 检查必须在 dbMu 之内：CloseConfigDB 会在锁内把 db 置 nil，
 	// 后台任务队列 goroutine 若在锁外先判 nil 再拿锁，会在两者之间
 	// 被关闭方抢占，随后对 nil *sql.DB 调 Begin() 直接 panic。
@@ -1014,258 +1118,120 @@ func saveConfigToDB() error {
 	}
 	defer tx.Rollback()
 
-	for _, table := range []string{
-		"port_mappings",
-		"container_public_ipv4s",
-		"container_ipv6_addresses",
-		"container_access_links",
-		"sub_user_container_names",
-		"sub_user_container_uuids",
-		"containers",
-		"sub_users",
-		"api_keys",
-		"audit_logs",
-		"task_extra_ports",
-		"task_nat_port_mappings",
-		"tasks",
-		"login_logs",
-		"enabled_images",
-		"snapshots",
-		"app_meta",
-	} {
-		if _, err := tx.Exec("DELETE FROM " + table); err != nil {
+	next, err := saveConfigIncremental(tx, hint)
+	if err != nil {
+		forceFullScanNextSave = true
+		return err
+	}
+	// app_meta 也走行级：只写指纹变化的键（见 store_meta.go）。
+	if err := diffMeta(tx, &next); err != nil {
+		forceFullScanNextSave = true
+		return err
+	}
+	// 有界日志表（audit_logs/login_logs）默认不写：常规写入已由 appendAuditLogRow /
+	// appendLoginLogRow 增量落库，库与内存一致；只有 logsDirty 置位（追加失败自愈 /
+	// 保留期裁剪）时才重写。这去掉了「每次保存重写 ~700 行」的固定写入（#95）。
+	writeLogs := logsDirty
+	if writeLogs {
+		if err := saveBoundedLogs(tx); err != nil {
+			forceFullScanNextSave = true
 			return err
 		}
 	}
-
-	if err := saveMeta(tx); err != nil {
+	if err := tx.Commit(); err != nil {
+		forceFullScanNextSave = true
 		return err
 	}
-	if err := saveContainers(tx); err != nil {
-		return err
+	// 提交成功才清脏：失败时保持置位，下次保存继续尝试重写。
+	if writeLogs {
+		logsDirty = false
 	}
-	if err := saveContainerAccessLinks(tx); err != nil {
-		return err
-	}
-	if err := saveSubUsers(tx); err != nil {
-		return err
-	}
-	if err := saveAPIKeys(tx); err != nil {
-		return err
-	}
-	if err := saveAuditLogs(tx); err != nil {
-		return err
-	}
-	if err := saveTasksDB(tx); err != nil {
-		return err
-	}
-	if err := saveLoginLogs(tx); err != nil {
-		return err
-	}
-	if err := saveEnabledImages(tx); err != nil {
-		return err
-	}
-	if err := saveSnapshots(tx); err != nil {
-		return err
-	}
-	return tx.Commit()
+	persistedRows = next
+	return nil
 }
 
-func saveMeta(tx *sql.Tx) error {
-	sslJSON, _ := json.Marshal(AppConfig.SSL)
-	sslCertificatesJSON, _ := json.Marshal(AppConfig.SSLCertificates)
-	publicIPv4PoolJSON, _ := json.Marshal(AppConfig.PublicIPv4Pool)
-	publicIPv6PrefixesJSON, _ := json.Marshal(AppConfig.PublicIPv6Prefixes)
-	webSSHAllowedOriginsJSON, _ := json.Marshal(AppConfig.WebSSHAllowedOrigins)
-	panelAccessPolicyJSON, _ := json.Marshal(AppConfig.PanelAccessPolicy)
-	storagePoolsJSON, _ := json.Marshal(AppConfig.StoragePools)
-	customKVMImagesJSON, _ := json.Marshal(AppConfig.CustomKVMImages)
-	customLXCImagesJSON, _ := json.Marshal(AppConfig.CustomLXCImages)
-	policyRulesJSON, _ := json.Marshal(AppConfig.PolicyRules)
-	policyHistoryJSON, _ := json.Marshal(AppConfig.PolicyHistory)
-	// 安全组此前**完全没有落库**——字段只存在于内存，面板一重启所有安全组与
-	// 规则凭空消失（生产 DB 的 78 个 app_meta 键里没有任何 sec_group*）。
-	secGroupsJSON, _ := json.Marshal(AppConfig.SecGroups)
-	secGroupRulesJSON, _ := json.Marshal(AppConfig.SecGroupRules)
-	// F7/P2-11：落库前对节点 Token 副本做 AES-GCM 加密（内存态不改动，
-	// 业务层心跳校验/agent 转发仍用明文）。加密失败时拒绝落库——静默
-	// 落明文等于关掉该保护。install_key 同为密钥（一次性、24h TTL），
-	// 一并加密：短时效降低了泄露窗口，但落库明文仍是不必要的暴露面。
-	nodesForDisk := make([]Node, len(AppConfig.Nodes))
-	for i, n := range AppConfig.Nodes {
-		nodesForDisk[i] = n
-		enc, err := EncryptNodeToken(n.Token)
-		if err != nil {
-			return fmt.Errorf("加密节点 %s Token 失败: %w", n.ID, err)
-		}
-		nodesForDisk[i].Token = enc
-		encKey, err := EncryptNodeToken(n.InstallKey)
-		if err != nil {
-			return fmt.Errorf("加密节点 %s install_key 失败: %w", n.ID, err)
-		}
-		nodesForDisk[i].InstallKey = encKey
+// verifyHintCompleteness 用一次全量扫描复核刚完成的声明式保存：把全量扫描的结果与
+// 「已落库指纹」逐集合比对，返回第一个差异。比较在回滚事务里进行，不改变库状态。
+//
+// 这是 #96 大规模改造的护栏：把声明式保存路径的 handler 跑一遍后调用它，任何漏声明
+// 都会被定位到具体集合与键。**它假定调用方遵守「声明 ⊇ 已改动」契约**，故仅供那些
+// 确实遵守契约的路径/测试使用——故意违反契约的契约测试不能用它判定。
+func verifyHintCompleteness() error {
+	if db == nil {
+		return fmt.Errorf("sqlite database is not initialized")
 	}
-	nodesJSON, _ := json.Marshal(nodesForDisk)
-	regionsJSON, _ := json.Marshal(AppConfig.Regions)
-	ipGroupsJSON, _ := json.Marshal(AppConfig.IPGroups)
-	isoFilesJSON, _ := json.Marshal(AppConfig.ISOFiles)
-	nCIbackup, _ := json.Marshal(AppConfig.AdminBackupCodes)
-	backupSettingsJSON, _ := json.Marshal(AppConfig.BackupSettings)
-	instanceBackupSettingsJSON, _ := json.Marshal(AppConfig.InstanceBackupSettings)
-	remoteBackupSettingsJSON, _ := json.Marshal(AppConfig.RemoteBackupSettings)
-	smtpSettingsJSON, _ := json.Marshal(AppConfig.SMTPSettings)
-	backupsJSON, _ := json.Marshal(AppConfig.Backups)
-	instanceBackupsJSON, _ := json.Marshal(AppConfig.InstanceBackups)
-	backupPlansJSON, _ := json.Marshal(AppConfig.BackupPlans)
-	rateLimitJSON, _ := json.Marshal(AppConfig.APIRateLimit)
-	tenantsJSON, _ := json.Marshal(AppConfig.Tenants)
-	adminsJSON, _ := json.Marshal(AppConfig.Admins)
-	ksmTuningJSON, _ := json.Marshal(AppConfig.KSMTuning)
-	// TurnstileSecretKey 与节点 Token 同级敏感：AES-GCM 密文落库，内存态明文。
-	// SiteKey 本身公开（前端渲染 widget 需要），无需加密。
-	turnstileSecret := AppConfig.TurnstileSecretKey
-	if turnstileSecret != "" {
-		encTS, err := EncryptNodeToken(turnstileSecret)
-		if err != nil {
-			return fmt.Errorf("加密 Turnstile SecretKey 失败: %w", err)
-		}
-		turnstileSecret = encTS
+	tx, err := db.Begin()
+	if err != nil {
+		return err
 	}
-	// 节点对接密钥同上：一次性、24h TTL，密文落库减小泄露窗口。
-	agentPairingKey := AppConfig.AgentPairingKey
-	if agentPairingKey != "" {
-		encPK, err := EncryptNodeToken(agentPairingKey)
-		if err != nil {
-			return fmt.Errorf("加密 Agent PairingKey 失败: %w", err)
-		}
-		agentPairingKey = encPK
+	defer tx.Rollback()
+	full, err := saveConfigIncremental(tx, nil)
+	if err != nil {
+		return err
 	}
-	// 更新源：token 加密；其余字段明文（非敏感）。
-	us := NormalizeUpdateSource(AppConfig.UpdateSource)
-	usToken := ""
-	if us.Token != "" {
-		encUT, err := EncryptNodeToken(us.Token)
-		if err != nil {
-			return fmt.Errorf("加密 UpdateSource Token 失败: %w", err)
+	for _, c := range []struct {
+		name string
+		a, b map[string]string
+	}{
+		{"sub_users", full.subUsers, persistedRows.subUsers},
+		{"api_keys", full.apiKeys, persistedRows.apiKeys},
+		{"snapshots", full.snapshots, persistedRows.snapshots},
+		{"tasks", full.tasks, persistedRows.tasks},
+		{"nodes", full.nodes, persistedRows.nodes},
+		{"access_links", full.accessLinks, persistedRows.accessLinks},
+	} {
+		if diff := firstMapDiff(c.a, c.b); diff != "" {
+			return fmt.Errorf("%s: %s", c.name, diff)
 		}
-		usToken = encUT
 	}
-	// AdminTOTPSecret 与节点 Token 同级敏感（可生成管理员 2FA 通行码）：
-	// AES-GCM 密文落库，内存态保持明文；加密失败拒绝落库（同节点 token 口径）。
-	totpSecret := AppConfig.AdminTOTPSecret
-	if totpSecret != "" {
-		encTOTP, err := EncryptNodeToken(totpSecret)
-		if err != nil {
-			return fmt.Errorf("加密 admin_totp_secret 失败: %w", err)
-		}
-		totpSecret = encTOTP
+	if full.enabledImages != persistedRows.enabledImages {
+		return fmt.Errorf("enabled_images 指纹不一致")
 	}
-	// JWTSecret 是管理员 JWT 的签名密钥（渗透测试 F-02）：DB 泄漏 + 明文落库
-	// = 可离线伪造任意管理员令牌。与其它高敏凭据同级 AES-GCM 加密落库。
-	jwtSecret := AppConfig.JWTSecret
-	if jwtSecret != "" {
-		encJWT, err := EncryptNodeToken(jwtSecret)
-		if err != nil {
-			return fmt.Errorf("加密 jwt_secret 失败: %w", err)
-		}
-		jwtSecret = encJWT
-	}
-	values := map[string]string{
-		"admin_user":      AppConfig.AdminUser,
-		"admin_pass_hash": AppConfig.AdminPassHash,
-		// AdminTokenVersion 必须落库（渗透测试 F-01）：不落库时改密/重置后重启
-		// 面板会把版本重置为 0，导致**已吊销的旧管理员 JWT 复活**。
-		"admin_token_version":      strconv.Itoa(AppConfig.AdminTokenVersion),
-		"admin_totp_secret":        totpSecret, // F-02：AES-GCM 密文落库（明文仅内存态）
-		"admin_totp_enabled":       btoa(AppConfig.AdminTOTPEnabled),
-		"admin_backup_codes":       string(nCIbackup),
-		"admins":                   string(adminsJSON),
-		"admin_path":               AppConfig.AdminPath,
-		"jwt_secret":               jwtSecret, // F-02：AES-GCM 密文落库
-		"port":                     strconv.Itoa(AppConfig.Port),
-		"data_dir":                 AppConfig.DataDir,
-		"next_container_id":        strconv.Itoa(AppConfig.NextContainerID),
-		"next_vnc_port":            strconv.Itoa(AppConfig.NextVNCPort),
-		"next_ssh_port":            strconv.Itoa(AppConfig.NextSSHPort),
-		"nat_port_start":           strconv.Itoa(AppConfig.NATPortStart),
-		"nat_port_end":             strconv.Itoa(AppConfig.NATPortEnd),
-		"lxc_nat_subnet":           AppConfig.LXCNATSubnet,
-		"kvm_nat_subnet":           AppConfig.KVMNATSubnet,
-		"setup_complete":           btoa(AppConfig.SetupComplete),
-		"security_auto_shutdown":   btoa(AppConfig.SecurityAutoShutdown),
-		"arp_protection_enabled":   btoa(AppConfig.ARPProtectionEnabled),
-		"ip_anti_spoof_enabled":    btoa(AppConfig.IPAntiSpoofEnabled),
-		"abuse_detection_enabled":  btoa(AppConfig.AbuseDetectionEnabled),
-		"task_concurrency":         strconv.Itoa(AppConfig.TaskConcurrency),
-		"language":                 NormalizeLanguage(AppConfig.Language),
-		"login_footer_text":        AppConfig.LoginFooterText,
-		"login_footer_hidden":      btoa(AppConfig.LoginFooterHidden),
-		"brand_name":               AppConfig.BrandName,
-		"brand_logo":               AppConfig.BrandLogo,
-		"brand_favicon":            AppConfig.BrandFavicon,
-		"brand_login_title":        AppConfig.BrandLoginTitle,
-		"brand_powered_hidden":     btoa(AppConfig.BrandPoweredHidden),
-		"panel_domain":             AppConfig.PanelDomain,
-		"turnstile_site_key":       AppConfig.TurnstileSiteKey,
-		"turnstile_secret_key":     turnstileSecret,
-		"turnstile_admin_login":    btoa(AppConfig.TurnstileAdminLogin),
-		"turnstile_user_login":     btoa(AppConfig.TurnstileUserLogin),
-		"agent_pairing_key":        agentPairingKey,
-		"agent_pairing_key_expiry": AppConfig.AgentPairingKeyExpiry,
-		// 更新源：platform/owner/repo/branch/asset_prefix 明文；token 加密。
-		"update_source_platform":      us.Platform,
-		"update_source_owner":         us.Owner,
-		"update_source_repo":          us.Repo,
-		"update_source_branch":        us.Branch,
-		"update_source_asset_prefix":  us.AssetPrefix,
-		"update_source_token":         usToken, // 已加密（空 token → 空）。
-		"ssl":                         string(sslJSON),
-		"ssl_certificates":            string(sslCertificatesJSON),
-		"public_ipv4_pool":            string(publicIPv4PoolJSON),
-		"public_ipv6_prefixes":        string(publicIPv6PrefixesJSON),
-		"webssh_allowed_origins":      string(webSSHAllowedOriginsJSON),
-		"panel_access_policy":         string(panelAccessPolicyJSON),
-		"storage_pools":               string(storagePoolsJSON),
-		"custom_kvm_images":           string(customKVMImagesJSON),
-		"custom_lxc_images":           string(customLXCImagesJSON),
-		"policy_rules":                string(policyRulesJSON),
-		"policy_history":              string(policyHistoryJSON),
-		"sec_groups":                  string(secGroupsJSON),
-		"sec_group_rules":             string(secGroupRulesJSON),
-		"security_group_enforced":     btoa(AppConfig.SecurityGroupEnforced),
-		"nodes":                       string(nodesJSON),
-		"regions":                     string(regionsJSON),
-		"ip_groups":                   string(ipGroupsJSON),
-		"iso_files":                   string(isoFilesJSON),
-		"metric_retention_days":       strconv.Itoa(AppConfig.MetricRetentionDays),
-		"audit_retention_days":        strconv.Itoa(AppConfig.AuditRetentionDays),
-		"backup_settings":             string(backupSettingsJSON),
-		"instance_backup_settings":    string(instanceBackupSettingsJSON),
-		"remote_backup_settings":      string(remoteBackupSettingsJSON),
-		"smtp_settings":               string(smtpSettingsJSON),
-		"backups":                     string(backupsJSON),
-		"instance_backups":            string(instanceBackupsJSON),
-		"backup_plans":                string(backupPlansJSON),
-		"api_rate_limit":              string(rateLimitJSON),
-		"tenants":                     string(tenantsJSON),
-		"memory_overcommit_enabled":   btoa(AppConfig.MemoryOvercommitEnabled),
-		"memory_overcommit_ratio":     strconv.FormatFloat(AppConfig.MemoryOvercommitRatio, 'f', -1, 64),
-		"nat_subnet_oversubscription": btoa(AppConfig.NATSubnetOversubscription),
-		"disk_overcommit_ratio":       strconv.FormatFloat(AppConfig.DiskOvercommitRatio, 'f', -1, 64),
-		"ksm_tuning":                  string(ksmTuningJSON),
-		"schema_version":              "1",
-		"updated_at":                  time.Now().Format("2006-01-02 15:04:05"),
-	}
-	for k, v := range values {
-		if _, err := tx.Exec("INSERT INTO app_meta(key, value) VALUES (?, ?)", k, v); err != nil {
-			return err
-		}
+	if diff := firstIntMapDiff(full.containers, persistedRows.containers); diff != "" {
+		return fmt.Errorf("containers: %s", diff)
 	}
 	return nil
 }
 
-func saveContainers(tx *sql.Tx) error {
-	for _, c := range AppConfig.Containers {
+func firstMapDiff(a, b map[string]string) string {
+	for k, v := range a {
+		if b[k] != v {
+			return fmt.Sprintf("键 %q 全量=%q 已落库=%q（未声明或未落库）", k, v, b[k])
+		}
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			return fmt.Sprintf("键 %q 已落库但全量扫描中不存在（可能被误删声明）", k)
+		}
+	}
+	return ""
+}
+
+func firstIntMapDiff(a, b map[int]string) string {
+	for k, v := range a {
+		if b[k] != v {
+			return fmt.Sprintf("ID %d 全量=%q 已落库=%q（未声明或未落库）", k, v, b[k])
+		}
+	}
+	for k := range b {
+		if _, ok := a[k]; !ok {
+			return fmt.Sprintf("ID %d 已落库但全量扫描中不存在（可能被误删声明）", k)
+		}
+	}
+	return ""
+}
+
+// upsertContainerRow 写入单个容器及其子表（端口映射 / 公网 IPv4 / IPv6）。
+// 行级口径：先删该容器的子表行与主表行，再整体插入，避免位置序列表（position
+// 主键）残留旧行。只影响该容器，O(该容器的子表行数)。
+func upsertContainerRow(tx *sql.Tx, c Container) error {
+	if err := deleteContainerChildren(tx, c.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM containers WHERE id = ?`, c.ID); err != nil {
+		return err
+	}
+	{
 		NormalizeContainerResourceAliases(&c)
 		allowedImageIDs := encodeStringSlice(c.AllowedImageIDs)
 		if _, err := tx.Exec(`INSERT INTO containers (
@@ -1329,19 +1295,35 @@ func saveContainers(tx *sql.Tx) error {
 	return nil
 }
 
-// saveContainerAccessLinks 落库「机器级访问码凭据」（access_code + access_code_password）。
-// 两者都必须能被管理端/用户端回显，故以 enc:v1: 可逆密文落库；两个都为空时不写行。
-func saveContainerAccessLinks(tx *sql.Tx) error {
-	for _, c := range AppConfig.Containers {
-		code := strings.TrimSpace(c.AccessCode)
-		pw := strings.TrimSpace(c.AccessCodePassword)
-		if code == "" && pw == "" {
-			continue
-		}
-		if _, err := tx.Exec(`INSERT INTO container_access_links (container_uuid, access_code, access_code_password)
-			VALUES (?, ?, ?)`, c.UUID, EncryptSecretAtRest(code), EncryptSecretAtRest(pw)); err != nil {
+// deleteContainerChildren 删除容器的位置序列表子行（幂等）。
+func deleteContainerChildren(tx *sql.Tx, id int) error {
+	for _, table := range []string{"port_mappings", "container_public_ipv4s", "container_ipv6_addresses"} {
+		if _, err := tx.Exec("DELETE FROM "+table+" WHERE container_id = ?", id); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// deleteContainerRow 删除容器主表行及其子表行（幂等）。访问码凭据独立成表，
+// 由 saveConfigIncremental 的 diffAccessLinks 统一处理。
+func deleteContainerRow(tx *sql.Tx, id int) error {
+	if err := deleteContainerChildren(tx, id); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM containers WHERE id = ?`, id)
+	return err
+}
+
+// upsertAccessLinkRow 落库「机器级访问码凭据」（access_code + access_code_password）。
+// 两者都必须能被管理端/用户端回显，故以 enc:v1: 可逆密文落库。
+func upsertAccessLinkRow(tx *sql.Tx, c Container) error {
+	if _, err := tx.Exec(`DELETE FROM container_access_links WHERE container_uuid = ?`, c.UUID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`INSERT INTO container_access_links (container_uuid, access_code, access_code_password)
+		VALUES (?, ?, ?)`, c.UUID, EncryptSecretAtRest(strings.TrimSpace(c.AccessCode)), EncryptSecretAtRest(strings.TrimSpace(c.AccessCodePassword))); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1379,8 +1361,15 @@ func attachContainerAccessLinks(cfg *EyvescloudConfig) error {
 	return nil
 }
 
-func saveSubUsers(tx *sql.Tx) error {
-	for _, su := range AppConfig.SubUsers {
+// upsertSubUserRow 行级写入单个子用户及其两个位置序列表（容器名 / 容器 UUID）。
+func upsertSubUserRow(tx *sql.Tx, su SubUser) error {
+	if err := deleteSubUserChildren(tx, su.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM sub_users WHERE id = ?`, su.ID); err != nil {
+		return err
+	}
+	{
 		allowedImageIDs := encodeStringSlice(su.AllowedImageIDs)
 		// access_code 加密落库（渗透测试 F-02）：访问码=免密登录凭据，明文落库
 		// 让 DB 泄漏直接等于账号泄漏。加密失败拒绝落库（与节点 token 同口径）。
@@ -1420,16 +1409,33 @@ func saveSubUsers(tx *sql.Tx) error {
 	return nil
 }
 
-func saveAPIKeys(tx *sql.Tx) error {
-	for _, k := range AppConfig.ApiKeys {
-		scopes := encodeStringSlice(k.Scopes)
-		containerUUIDs := encodeStringSlice(k.ContainerUUIDs)
-		if _, err := tx.Exec(`INSERT INTO api_keys(id, name, key_hash, key_fingerprint, prefix, ip_whitelist, created_at, last_used, scopes, expires_at, disabled, container_uuids, last_used_ip)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, k.ID, k.Name, k.KeyHash, k.KeyFingerprint, k.Prefix, k.IPWhitelist, k.CreatedAt, k.LastUsed, scopes, k.ExpiresAt, boolInt(k.Disabled), containerUUIDs, k.LastUsedIP); err != nil {
+func deleteSubUserChildren(tx *sql.Tx, id string) error {
+	for _, table := range []string{"sub_user_container_names", "sub_user_container_uuids"} {
+		if _, err := tx.Exec("DELETE FROM "+table+" WHERE sub_user_id = ?", id); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func deleteSubUserRow(tx *sql.Tx, id string) error {
+	if err := deleteSubUserChildren(tx, id); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM sub_users WHERE id = ?`, id)
+	return err
+}
+
+// upsertAPIKeyRow 行级写入单条 API Key。
+func upsertAPIKeyRow(tx *sql.Tx, k ApiKeyConfig) error {
+	if _, err := tx.Exec(`DELETE FROM api_keys WHERE id = ?`, k.ID); err != nil {
+		return err
+	}
+	scopes := encodeStringSlice(k.Scopes)
+	containerUUIDs := encodeStringSlice(k.ContainerUUIDs)
+	_, err := tx.Exec(`INSERT INTO api_keys(id, name, key_hash, key_fingerprint, prefix, ip_whitelist, created_at, last_used, scopes, expires_at, disabled, container_uuids, last_used_ip)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, k.ID, k.Name, k.KeyHash, k.KeyFingerprint, k.Prefix, k.IPWhitelist, k.CreatedAt, k.LastUsed, scopes, k.ExpiresAt, boolInt(k.Disabled), containerUUIDs, k.LastUsedIP)
+	return err
 }
 
 // SaveConntrackSnapshot stores raw conntrack lines for a container IP.
@@ -1646,7 +1652,7 @@ func saveAuditLogs(tx *sql.Tx) error {
 				success = 1
 			}
 		}
-		if _, err := tx.Exec(`INSERT INTO audit_logs(time, action, target, detail, user, ip, user_agent, success_set, success, error)
+		if _, err := tx.Exec(`INSERT INTO audit_logs(time, action, target, detail, "user", ip, user_agent, success_set, success, error)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, log.Time, log.Action, log.Target, log.Detail, log.User, log.IP, log.UserAgent, successSet, success, log.Error); err != nil {
 			return err
 		}
@@ -1654,11 +1660,18 @@ func saveAuditLogs(tx *sql.Tx) error {
 	return nil
 }
 
-func saveTasksDB(tx *sql.Tx) error {
-	for _, task := range AppConfig.Tasks {
+// upsertTaskRow 行级写入单个任务及其两个位置序列表（额外端口 / NAT 映射）。
+func upsertTaskRow(tx *sql.Tx, task SavedTask) error {
+	if err := deleteTaskChildren(tx, task.ID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM tasks WHERE id = ?`, task.ID); err != nil {
+		return err
+	}
+	{
 		cfg := parseSavedTaskConfig(task.Config)
 		if _, err := tx.Exec(`INSERT INTO tasks(
-			id, type, container_id, container_name, status, error, created_at, template_id, user, ip, user_agent,
+			id, type, container_id, container_name, status, error, created_at, template_id, "user", ip, user_agent,
 			cfg_name, cfg_virtualization, cfg_template_id, cfg_vcpu, cfg_cpu_percent, cfg_ram_mb, cfg_disk_gb,
 			cfg_network_bw_mbps, cfg_network_down_mbps, cfg_network_up_mbps,
 			cfg_monthly_traffic_gb, cfg_traffic_mode, cfg_traffic_in_gb,
@@ -1698,6 +1711,23 @@ func saveTasksDB(tx *sql.Tx) error {
 	return nil
 }
 
+func deleteTaskChildren(tx *sql.Tx, id string) error {
+	for _, table := range []string{"task_extra_ports", "task_nat_port_mappings"} {
+		if _, err := tx.Exec("DELETE FROM "+table+" WHERE task_id = ?", id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteTaskRow(tx *sql.Tx, id string) error {
+	if err := deleteTaskChildren(tx, id); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`DELETE FROM tasks WHERE id = ?`, id)
+	return err
+}
+
 func saveLoginLogs(tx *sql.Tx) error {
 	for _, log := range AppConfig.LoginLogs {
 		if _, err := tx.Exec(`INSERT INTO login_logs(time, username, ip, user_agent, success) VALUES (?, ?, ?, ?, ?)`,
@@ -1730,7 +1760,7 @@ func appendAuditLogRow(log AuditLog, keep int) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`INSERT INTO audit_logs(time, action, target, detail, user, ip, user_agent, success_set, success, error)
+	if _, err := tx.Exec(`INSERT INTO audit_logs(time, action, target, detail, "user", ip, user_agent, success_set, success, error)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		log.Time, log.Action, log.Target, log.Detail, log.User, log.IP, log.UserAgent, successSet, success, log.Error); err != nil {
 		return err
@@ -1776,14 +1806,163 @@ func saveEnabledImages(tx *sql.Tx) error {
 	return nil
 }
 
-func saveSnapshots(tx *sql.Tx) error {
-	for _, snapshot := range AppConfig.Snapshots {
-		if _, err := tx.Exec(`INSERT INTO snapshots(id, container_id, container_name, lxc_name, created_at, created_by, scheduled, path, size_bytes)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, snapshot.ID, snapshot.ContainerID, snapshot.ContainerName, snapshot.LXCName, snapshot.CreatedAt, snapshot.CreatedBy, boolInt(snapshot.Scheduled), snapshot.Path, snapshot.SizeBytes); err != nil {
-			return err
+// upsertSnapshotRow 行级写入单条快照记录。
+func upsertSnapshotRow(tx *sql.Tx, snapshot Snapshot) error {
+	if _, err := tx.Exec(`DELETE FROM snapshots WHERE id = ?`, snapshot.ID); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO snapshots(id, container_id, container_name, lxc_name, created_at, created_by, scheduled, path, size_bytes)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, snapshot.ID, snapshot.ContainerID, snapshot.ContainerName, snapshot.LXCName, snapshot.CreatedAt, snapshot.CreatedBy, boolInt(snapshot.Scheduled), snapshot.Path, snapshot.SizeBytes)
+	return err
+}
+
+// ---- P2：节点行级落库 ----
+//
+// 加密只发生在这里，且只对「指纹变化」的节点调用（见 store_rows.go 的 diffNodes），
+// 因此未改动的节点不会被重复加密。指纹取的是**明文** Node，AES-GCM 的随机 nonce
+// 不参与判定。
+
+const nodeColumns = `id, name, address, public_host, token, install_key,
+	install_key_created_at, install_key_ip, status, last_seen, version, os_name,
+	cpu_count, ram_total_mb, ram_used_mb, disk_total_gb, disk_used_gb, container_count,
+	region_id, node_group_id, cluster_id, virt_types, created_at,
+	maintenance_mode, maintenance_since, tls_skip_verify, allow_private_addr`
+
+func nodeRowValues(n Node) ([]any, error) {
+	token, err := EncryptNodeToken(n.Token)
+	if err != nil {
+		return nil, fmt.Errorf("加密节点 %s Token 失败: %w", n.ID, err)
+	}
+	installKey, err := EncryptNodeToken(n.InstallKey)
+	if err != nil {
+		return nil, fmt.Errorf("加密节点 %s install_key 失败: %w", n.ID, err)
+	}
+	return []any{
+		n.ID, n.Name, n.Address, n.PublicHost, token, installKey,
+		n.InstallKeyCreatedAt, n.InstallKeyIP, n.Status, n.LastSeen, n.Version, n.OSName,
+		n.CPUCount, n.RAMTotalMB, n.RAMUsedMB, n.DiskTotalGB, n.DiskUsedGB, n.ContainerCount,
+		n.RegionID, n.NodeGroupID, n.ClusterID, encodeStringSlice(n.VirtTypes), n.CreatedAt,
+		boolInt(n.MaintenanceMode), n.MaintenanceSince, boolInt(n.TLSSkipVerify), boolInt(n.AllowPrivateAddr),
+	}, nil
+}
+
+// upsertNodeRow 行级写入单个节点（主键即节点 ID，无需子表清理）。
+func upsertNodeRow(tx *sql.Tx, n Node) error {
+	values, err := nodeRowValues(n)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, n.ID); err != nil {
+		return err
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?, ", len(values)), ", ")
+	_, err = tx.Exec(`INSERT INTO nodes(`+nodeColumns+`) VALUES (`+placeholders+`)`, values...)
+	return err
+}
+
+func deleteNodeRow(tx *sql.Tx, id string) error {
+	_, err := tx.Exec(`DELETE FROM nodes WHERE id = ?`, id)
+	return err
+}
+
+// loadNodes 按创建时间读回节点。**顺序即 API 下发顺序**（列表接口原样透传，
+// 前端不再排序），拆分前是 app_meta JSON 数组的追加顺序，即创建顺序；
+// 这里用 created_at 复现同一顺序，并以 id 打破同秒并列，保证重启前后顺序稳定。
+func loadNodes() ([]Node, error) {
+	rows, err := db.Query(`SELECT ` + nodeColumns + ` FROM nodes ORDER BY created_at, id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := []Node{}
+	for rows.Next() {
+		var n Node
+		var virtTypes string
+		var maintenanceMode, tlsSkipVerify, allowPrivateAddr int
+		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.PublicHost, &n.Token, &n.InstallKey,
+			&n.InstallKeyCreatedAt, &n.InstallKeyIP, &n.Status, &n.LastSeen, &n.Version, &n.OSName,
+			&n.CPUCount, &n.RAMTotalMB, &n.RAMUsedMB, &n.DiskTotalGB, &n.DiskUsedGB, &n.ContainerCount,
+			&n.RegionID, &n.NodeGroupID, &n.ClusterID, &virtTypes, &n.CreatedAt,
+			&maintenanceMode, &n.MaintenanceSince, &tlsSkipVerify, &allowPrivateAddr); err != nil {
+			return nil, err
+		}
+		n.VirtTypes = decodeStringSlice(virtTypes)
+		n.MaintenanceMode = maintenanceMode != 0
+		n.TLSSkipVerify = tlsSkipVerify != 0
+		n.AllowPrivateAddr = allowPrivateAddr != 0
+		// 读取时把 enc:v1: 密文还原为明文（内存态保持明文）。存量明文值原样通过；
+		// 解密失败不阻断启动，但该节点 Token 置空使其失效，等待重新注册——宁可断连
+		// 也不能拿密文当凭据误用。install_key 解密失败同样置空（换发即可恢复）。
+		if plain, err := DecryptNodeToken(n.Token); err != nil {
+			n.Token = ""
+		} else {
+			n.Token = plain
+		}
+		if plainKey, err := DecryptNodeToken(n.InstallKey); err != nil {
+			n.InstallKey = ""
+			n.InstallKeyCreatedAt = ""
+		} else {
+			n.InstallKey = plainKey
+		}
+		result = append(result, n)
+	}
+	return result, rows.Err()
+}
+
+// migrateLegacyNodesRow 处理升级路径：老库里节点存在 app_meta 的单行 JSON（键
+// "nodes"），新版本改成了 nodes 表。表为空而旧键存在时把旧键搬进表，避免升级后
+// 节点全部丢失。
+//
+// 搬迁与「删除旧键」在**同一个事务**里完成，不依赖 app_meta 的清理时机：否则一旦
+// 在下次保存前进程重启，就会反复走迁移路径。旧键解析失败则返回错误、拒绝启动——
+// 宁可停服务让人来看，也不能把库里的节点数据静默丢掉。
+// 返回是否发生了搬迁。
+func migrateLegacyNodesRow(meta map[string]string) (bool, error) {
+	raw := strings.TrimSpace(meta["nodes"])
+	if raw == "" {
+		return false, nil
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM nodes`).Scan(&count); err != nil {
+		return false, err
+	}
+	if count > 0 {
+		// 表里已有数据（搬迁已完成）：旧键可能因上次「提交后、清理前」退出而残留，
+		// 就地删掉，幂等且无需再搬。
+		if _, err := db.Exec(`DELETE FROM app_meta WHERE key = 'nodes'`); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+	var legacy []Node
+	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
+		return false, fmt.Errorf("解析历史 app_meta[nodes] 失败: %w", err)
+	}
+	usable := make([]Node, 0, len(legacy))
+	for _, n := range legacy {
+		if n.ID != "" {
+			usable = append(usable, n)
 		}
 	}
-	return nil
+	tx, err := db.Begin()
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	for i := range usable {
+		// 旧值的 token 可能是明文（加密保护上线前遗留）也可能是密文；
+		// upsertNodeRow 统一重新加密落库，EncryptNodeToken 对两者都幂等处理。
+		if err := upsertNodeRow(tx, usable[i]); err != nil {
+			return false, err
+		}
+	}
+	if _, err := tx.Exec(`DELETE FROM app_meta WHERE key = 'nodes'`); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	return len(usable) > 0, nil
 }
 
 func loadContainers() ([]Container, error) {
@@ -1914,19 +2093,24 @@ func loadContainers() ([]Container, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	// 子表按容器 ID 一次取回后再分组：旧写法对每个容器各查三次（10w 容器 ≈ 30 万次
+	// 往返），SQLite 在进程内尚可接受，Postgres 上启动要数百秒。
+	pmByID, err := loadPortMappingsByContainer()
+	if err != nil {
+		return nil, err
+	}
+	ipv4ByID, err := loadPublicIPv4sByContainer()
+	if err != nil {
+		return nil, err
+	}
+	ipv6ByID, err := loadIPv6AddressesByContainer()
+	if err != nil {
+		return nil, err
+	}
 	for i := range result {
-		result[i].PortMappings, err = loadPortMappings(result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		result[i].PublicIPv4s, err = loadContainerPublicIPv4s(result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		result[i].IPv6Addresses, err = loadContainerIPv6Addresses(result[i].ID)
-		if err != nil {
-			return nil, err
-		}
+		result[i].PortMappings = mapGetOrEmpty(pmByID, result[i].ID)
+		result[i].PublicIPv4s = mapGetOrEmpty(ipv4ByID, result[i].ID)
+		result[i].IPv6Addresses = mapGetOrEmpty(ipv6ByID, result[i].ID)
 		result[i].NormalizeNetworkAssignments()
 	}
 	if skipped > 0 {
@@ -1937,39 +2121,50 @@ func loadContainers() ([]Container, error) {
 	return result, nil
 }
 
-func loadPortMappings(containerID int) ([]PortMapping, error) {
-	rows, err := db.Query(`SELECT container_port, host_port, host_ip, protocol, description FROM port_mappings WHERE container_id = ? ORDER BY position`, containerID)
+// mapGetOrEmpty 返回 m[k]，键不存在时给出非 nil 空切片：JSON 形状必须是 [] 而不是
+// null，否则容器/子用户列表的响应体会与逐行加载时不一致。
+func mapGetOrEmpty[K comparable, V any](m map[K][]V, k K) []V {
+	if v, ok := m[k]; ok && v != nil {
+		return v
+	}
+	return []V{}
+}
+
+func loadPortMappingsByContainer() (map[int][]PortMapping, error) {
+	rows, err := db.Query(`SELECT container_id, container_port, host_port, host_ip, protocol, description FROM port_mappings ORDER BY container_id, position`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []PortMapping{}
+	out := map[int][]PortMapping{}
 	for rows.Next() {
+		var id int
 		var pm PortMapping
 		var hostIP sql.NullString
-		if err := rows.Scan(&pm.ContainerPort, &pm.HostPort, &hostIP, &pm.Protocol, &pm.Description); err != nil {
+		if err := rows.Scan(&id, &pm.ContainerPort, &pm.HostPort, &hostIP, &pm.Protocol, &pm.Description); err != nil {
 			return nil, err
 		}
 		pm.HostIP = hostIP.String
-		result = append(result, pm)
+		out[id] = append(out[id], pm)
 	}
-	return result, rows.Err()
+	return out, rows.Err()
 }
 
-func loadContainerPublicIPv4s(containerID int) ([]PublicIPv4Assignment, error) {
-	rows, err := db.Query(`SELECT address, interface, prefix_len, gateway, rdns FROM container_public_ipv4s WHERE container_id = ? ORDER BY position`, containerID)
+func loadPublicIPv4sByContainer() (map[int][]PublicIPv4Assignment, error) {
+	rows, err := db.Query(`SELECT container_id, address, interface, prefix_len, gateway, rdns FROM container_public_ipv4s ORDER BY container_id, position`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []PublicIPv4Assignment{}
+	out := map[int][]PublicIPv4Assignment{}
 	for rows.Next() {
+		var id int
 		var item PublicIPv4Assignment
 		var iface sql.NullString
 		var prefixLen sql.NullInt64
 		var gateway sql.NullString
 		var rdns sql.NullString
-		if err := rows.Scan(&item.Address, &iface, &prefixLen, &gateway, &rdns); err != nil {
+		if err := rows.Scan(&id, &item.Address, &iface, &prefixLen, &gateway, &rdns); err != nil {
 			return nil, err
 		}
 		item.Interface = iface.String
@@ -1978,24 +2173,25 @@ func loadContainerPublicIPv4s(containerID int) ([]PublicIPv4Assignment, error) {
 		}
 		item.Gateway = gateway.String
 		item.RDNS = rdns.String
-		result = append(result, item)
+		out[id] = append(out[id], item)
 	}
-	return result, rows.Err()
+	return out, rows.Err()
 }
 
-func loadContainerIPv6Addresses(containerID int) ([]IPv6Assignment, error) {
-	rows, err := db.Query(`SELECT address, prefix_len, interface, rdns FROM container_ipv6_addresses WHERE container_id = ? ORDER BY position`, containerID)
+func loadIPv6AddressesByContainer() (map[int][]IPv6Assignment, error) {
+	rows, err := db.Query(`SELECT container_id, address, prefix_len, interface, rdns FROM container_ipv6_addresses ORDER BY container_id, position`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []IPv6Assignment{}
+	out := map[int][]IPv6Assignment{}
 	for rows.Next() {
+		var id int
 		var item IPv6Assignment
 		var prefixLen sql.NullInt64
 		var iface sql.NullString
 		var rdns sql.NullString
-		if err := rows.Scan(&item.Address, &prefixLen, &iface, &rdns); err != nil {
+		if err := rows.Scan(&id, &item.Address, &prefixLen, &iface, &rdns); err != nil {
 			return nil, err
 		}
 		if prefixLen.Valid {
@@ -2003,9 +2199,9 @@ func loadContainerIPv6Addresses(containerID int) ([]IPv6Assignment, error) {
 		}
 		item.Interface = iface.String
 		item.RDNS = rdns.String
-		result = append(result, item)
+		out[id] = append(out[id], item)
 	}
-	return result, rows.Err()
+	return out, rows.Err()
 }
 
 func loadSubUsers() ([]SubUser, error) {
@@ -2054,34 +2250,38 @@ func loadSubUsers() ([]SubUser, error) {
 	}
 	// 说明：访问码/访问码口令已下沉到「机器级」（container_access_links 表），
 	// 子用户行上的同名历史字段不再参与鉴权，加载后也不再回填。
+	namesByID, err := loadStringListByKey("sub_user_container_names", "container_name", "sub_user_id")
+	if err != nil {
+		return nil, err
+	}
+	uuidsByID, err := loadStringListByKey("sub_user_container_uuids", "container_uuid", "sub_user_id")
+	if err != nil {
+		return nil, err
+	}
 	for i := range result {
-		result[i].ContainerNames, err = loadStringList("sub_user_container_names", "container_name", "sub_user_id", result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		result[i].ContainerUUIDs, err = loadStringList("sub_user_container_uuids", "container_uuid", "sub_user_id", result[i].ID)
-		if err != nil {
-			return nil, err
-		}
+		result[i].ContainerNames = mapGetOrEmpty(namesByID, result[i].ID)
+		result[i].ContainerUUIDs = mapGetOrEmpty(uuidsByID, result[i].ID)
 	}
 	return result, nil
 }
 
-func loadStringList(table, valueColumn, keyColumn, key string) ([]string, error) {
-	rows, err := db.Query(fmt.Sprintf(`SELECT %s FROM %s WHERE %s = ? ORDER BY position`, valueColumn, table, keyColumn), key)
+// loadStringListByKey 一次取回整张 (key → 有序值列表) 表。表名/列名是代码内常量，
+// 不存在注入面；position 保证同 key 内的原始顺序。
+func loadStringListByKey(table, valueColumn, keyColumn string) (map[string][]string, error) {
+	rows, err := db.Query(fmt.Sprintf(`SELECT %s, %s FROM %s ORDER BY %s, position`, keyColumn, valueColumn, table, keyColumn))
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	values := []string{}
+	out := map[string][]string{}
 	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
+		var key, value string
+		if err := rows.Scan(&key, &value); err != nil {
 			return nil, err
 		}
-		values = append(values, value)
+		out[key] = append(out[key], value)
 	}
-	return values, rows.Err()
+	return out, rows.Err()
 }
 
 func loadAPIKeys() ([]ApiKeyConfig, error) {
@@ -2110,7 +2310,7 @@ func loadAPIKeys() ([]ApiKeyConfig, error) {
 }
 
 func loadAuditLogs() ([]AuditLog, error) {
-	rows, err := db.Query(`SELECT time, action, target, detail, user, ip, user_agent, success_set, success, error FROM audit_logs ORDER BY id`)
+	rows, err := db.Query(`SELECT time, action, target, detail, "user", ip, user_agent, success_set, success, error FROM audit_logs ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -2133,7 +2333,7 @@ func loadAuditLogs() ([]AuditLog, error) {
 
 func loadTasks() ([]SavedTask, error) {
 	rows, err := db.Query(`SELECT
-		id, type, container_id, container_name, status, error, created_at, template_id, user, ip, user_agent,
+		id, type, container_id, container_name, status, error, created_at, template_id, "user", ip, user_agent,
 		cfg_name, cfg_virtualization, cfg_template_id, cfg_vcpu, cfg_cpu_percent, cfg_ram_mb, cfg_disk_gb,
 		cfg_network_bw_mbps, cfg_network_down_mbps, cfg_network_up_mbps,
 		cfg_monthly_traffic_gb, cfg_traffic_mode, cfg_traffic_in_gb,
@@ -2207,53 +2407,59 @@ func loadTasks() ([]SavedTask, error) {
 	if err := rows.Close(); err != nil {
 		return nil, err
 	}
+	// 与容器子表同口径：任务子表一次取回后按 task_id 分组。任务历史随实例操作长期
+	// 累积，10 万量级下逐行取会是 20 万次往返（Postgres 上以分钟计）。
+	extraPortsByTask, err := loadTaskExtraPortsByTask()
+	if err != nil {
+		return nil, err
+	}
+	natPortsByTask, err := loadTaskNATPortMappingsByTask()
+	if err != nil {
+		return nil, err
+	}
 	for i := range result {
-		configs[i].ExtraPorts, err = loadTaskExtraPorts(result[i].ID)
-		if err != nil {
-			return nil, err
-		}
-		configs[i].NATPortMappings, err = loadTaskNATPortMappings(result[i].ID)
-		if err != nil {
-			return nil, err
-		}
+		configs[i].ExtraPorts = mapGetOrEmpty(extraPortsByTask, result[i].ID)
+		configs[i].NATPortMappings = mapGetOrEmpty(natPortsByTask, result[i].ID)
 		result[i].Config = encodeSavedTaskConfig(configs[i])
 	}
 	return result, nil
 }
 
-func loadTaskExtraPorts(taskID string) ([]int, error) {
-	rows, err := db.Query(`SELECT port FROM task_extra_ports WHERE task_id = ? ORDER BY position`, taskID)
+func loadTaskExtraPortsByTask() (map[string][]int, error) {
+	rows, err := db.Query(`SELECT task_id, port FROM task_extra_ports ORDER BY task_id, position`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []int{}
+	out := map[string][]int{}
 	for rows.Next() {
+		var taskID string
 		var port int
-		if err := rows.Scan(&port); err != nil {
+		if err := rows.Scan(&taskID, &port); err != nil {
 			return nil, err
 		}
-		result = append(result, port)
+		out[taskID] = append(out[taskID], port)
 	}
-	return result, rows.Err()
+	return out, rows.Err()
 }
 
-func loadTaskNATPortMappings(taskID string) ([]PortMapping, error) {
-	rows, err := db.Query(`SELECT host_port, container_port, protocol, description
-		FROM task_nat_port_mappings WHERE task_id = ? ORDER BY position`, taskID)
+func loadTaskNATPortMappingsByTask() (map[string][]PortMapping, error) {
+	rows, err := db.Query(`SELECT task_id, host_port, container_port, protocol, description
+		FROM task_nat_port_mappings ORDER BY task_id, position`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []PortMapping{}
+	out := map[string][]PortMapping{}
 	for rows.Next() {
+		var taskID string
 		var mapping PortMapping
-		if err := rows.Scan(&mapping.HostPort, &mapping.ContainerPort, &mapping.Protocol, &mapping.Description); err != nil {
+		if err := rows.Scan(&taskID, &mapping.HostPort, &mapping.ContainerPort, &mapping.Protocol, &mapping.Description); err != nil {
 			return nil, err
 		}
-		result = append(result, mapping)
+		out[taskID] = append(out[taskID], mapping)
 	}
-	return result, rows.Err()
+	return out, rows.Err()
 }
 
 func loadLoginLogs() ([]SavedLoginLog, error) {

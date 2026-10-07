@@ -137,7 +137,7 @@ func HandleSMTPSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.SMTPSettings.Enabled = req.Enabled
 			cfg.SMTPSettings.Host = req.Host
 			cfg.SMTPSettings.Port = req.Port

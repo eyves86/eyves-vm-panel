@@ -2455,8 +2455,10 @@ func (m *Manager) StartContainer(id int) error {
 		}
 	}
 	if ip != "" {
-		c = config.FindContainer(id)
-		if c != nil {
+		// 此处 c 可能已因容器在启动期间被删除/配置重载而查不到：不能把 c 覆盖成 nil，
+		// 否则下面的 c.IPv6 会 nil 解引用并让整个面板进程崩溃。
+		if current := config.FindContainer(id); current != nil {
+			c = current
 			c.IP = ip
 			m.refreshContainerIPv4Details(c)
 			config.SaveConfig()
@@ -2465,7 +2467,9 @@ func (m *Manager) StartContainer(id int) error {
 	if ip == "" {
 		if repairedIP, repairErr := m.EnsureContainerIPv4(id); repairErr == nil && repairedIP != "" {
 			ip = repairedIP
-			c = config.FindContainer(id)
+			if current := config.FindContainer(id); current != nil {
+				c = current
+			}
 		} else if repairErr != nil {
 			fmt.Printf("Warning: failed to prepare IPv4 for %s: %v\n", lxcName, repairErr)
 		}

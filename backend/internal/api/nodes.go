@@ -682,23 +682,42 @@ func handleNodeItem(w http.ResponseWriter, r *http.Request, nodeID string) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
 			return
 		}
-		config.RemoveNode(nodeID)
-		auditRequest(r, "node.delete", node.Name, "删除被控节点", true, "")
+		removed, conts := config.RemoveNode(nodeID)
+		if !removed {
+			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
+			return
+		}
+		// 级联移除该节点的容器记录，避免留下悬空 node_id 的幽灵实例（见 config.RemoveNode）。
+		auditRequest(r, "node.delete", node.Name,
+			fmt.Sprintf("删除被控节点（一并移除 %d 个实例记录）", conts), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Node deleted"})
 	default:
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
 	}
 }
 
-// nodeHeartbeatPersistEvery throttles whole-DB persistence of telemetry-only
-// heartbeats. The agent beats every 10s; persisting every beat means a full
-// rewrite of every table, which is unacceptable at 10k-node scale. Memory state
-// is still refreshed on every beat (the panel reads memory).
+// nodeHeartbeatPersistEvery throttles persistence of telemetry-only heartbeats.
+// The agent beats every 10s; persisting every beat would write one node row per
+// beat even when nothing but LastSeen changed. Memory state is still refreshed
+// on every beat (the panel reads memory).
+//
+// 批处理（P2）之后这个节流仍然保留：合并窗口已把事务数降到每秒几次，节流省的是
+// 「写进行数」（30k 节点从 3000 行/秒降到 ~500 行/秒），代价是库里的 LastSeen
+// 最多滞后 60s。面板显示读内存，不受影响。
 const nodeHeartbeatPersistEvery = 60 * time.Second
 
 var (
 	nodeHeartbeatSaveMu  sync.Mutex
 	nodeHeartbeatSavedAt = map[string]time.Time{}
+
+	// nodeReported 记录「每个节点上一次上报的容器 UUID 集合」。orphan 判定需要
+	// 「主控有、agent 这次没报」的容器集合：直接扫 cfg.Containers 找本节点的容器
+	// 是 O(全部容器)（30w 容器 × 3000 次心跳/秒 = 不可能），而 agent 的上报集合
+	// 正是「这台节点上应该有哪些容器」的权威答案，取差集即 O(本节点容器数)。
+	//
+	// 只在 AppConfigMu 写锁内访问（心跳的变更回调），因此不需要额外的锁。
+	nodeReported       map[string]map[string]bool
+	nodeReportedSeeded bool
 )
 
 // nodeHeartbeatSaveDue reports whether this node's beat is due for persistence
@@ -751,30 +770,24 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		return
 	}
 	now := time.Now().Format("2006-01-02 15:04:05")
-	// Heartbeat write-amplification control: the agent heartbeats every 10s and
-	// most beats only carry telemetry jitter (mem/disk usage, container traffic,
-	// live metrics). Rewriting the whole DB (DELETE+INSERT of every table) on each
-	// beat is catastrophic at 10k nodes. The controller memory state is refreshed on
-	// every beat (the panel reads memory); only the *telemetry-only* whole-DB write
-	// is throttled to >= nodeHeartbeatPersistEvery. Structural changes (node
-	// online/offline, container add/remove, status/suspend/quota/expiry changes) are
-	// persisted immediately. The first beat after a controller restart always
-	// persists, so DB telemetry lags at most 60s and is refreshed within 10s of restart.
 	due := nodeHeartbeatSaveDue(nodeID)
 	var statusChanges []containerStatusChange
+	// changedIDs 收集本次心跳实际改动过的容器 ID。延迟落库按「行标识」声明改动
+	// （值在提交时重新读取），因此这里只需要 ID，且单节点只上报几十个容器，
+	// 落库开销与「主控总容器数」无关。
+	var changedIDs []int
 	notFound := false
-	config.MutateGlobalSaveIf(func(cfg *config.EyvescloudConfig) bool {
-		var n *config.Node
-		for i := range cfg.Nodes {
-			if cfg.Nodes[i].ID == nodeID {
-				n = &cfg.Nodes[i]
-				break
-			}
-		}
-		if n == nil {
+	// 心跳只触碰本节点的 cfg.Node 与本节点的容器，故用精确脏集声明：未声明的行不
+	// 重算指纹，子用户/密钥/快照/任务零扫描。落库本身并入后台窗口合并成一个事务
+	// （P2，见 config/store_batch.go）：30k 节点 × 10s = 3000 次/秒的请求不再等于
+	// 3000 次提交，HTTP 响应也不再等 SQLite 提交。
+	config.MutateGlobalSaveDeferred(func(cfg *config.EyvescloudConfig) (bool, config.DirtyIDs) {
+		idx, ok := config.FindNodeIndexUnlocked(nodeID)
+		if !ok {
 			notFound = true
-			return false
+			return false, config.DirtyIDs{}
 		}
+		n := &cfg.Nodes[idx]
 		structural := false
 		if n.Status != "online" {
 			n.Status = "online"
@@ -806,11 +819,15 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 		n.ContainerCount = req.ContainerCount
 		n.LastSeen = now
 		if req.ContainerSummaries != nil {
-			if syncAgentContainersUnlocked(cfg, nodeID, *req.ContainerSummaries, &statusChanges) {
+			if syncAgentContainersUnlocked(cfg, nodeID, *req.ContainerSummaries, &statusChanges, &changedIDs) {
 				structural = true
 			}
 		}
-		return structural || due
+		if !structural && !due {
+			return false, config.DirtyIDs{}
+		}
+		// LastSeen 到期必写，故声明本节点。
+		return true, config.DirtyIDs{Nodes: []string{nodeID}, Containers: changedIDs}
 	})
 	if notFound {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Node not found"})
@@ -853,39 +870,69 @@ type heartbeatContainerSummary struct {
 	MetricTS  int64   `json:"metric_ts,omitempty"`
 }
 
-// allocateNodeContainerID 为节点容器分配主控侧全局唯一 ID
-// （避开本机容器与其它节点容器已占用的号段；NextContainerID 计数器同步推进）。
-func allocateNodeContainerID(cfg *config.EyvescloudConfig) int {
-	used := make(map[int]bool, len(cfg.Containers))
-	maxID := 0
-	for i := range cfg.Containers {
-		used[cfg.Containers[i].ID] = true
-		if cfg.Containers[i].ID > maxID {
-			maxID = cfg.Containers[i].ID
+// newContainerIDAllocator 为节点容器分配主控侧全局唯一 ID：首次调用扫一遍现有容器求
+// 最大 ID（防 NextContainerID 计数漂移；避开本机容器与其它节点容器已占用的号段），
+// 之后本地自增 —— 故一次 sync 里新建 m 个容器总共只扫一遍 O(全部容器)，而非 m 遍。
+//
+// 与旧实现等价：旧实现的 `used` 集合是死代码（`id` 必然 > maxID，而 `used` 只含
+// ≤ maxID 的 ID，故查表永不命中），已删除。
+func newContainerIDAllocator(cfg *config.EyvescloudConfig) func() int {
+	next := 0
+	initialized := false
+	return func() int {
+		if !initialized {
+			maxID := 0
+			for i := range cfg.Containers {
+				if cfg.Containers[i].ID > maxID {
+					maxID = cfg.Containers[i].ID
+				}
+			}
+			next = cfg.NextContainerID
+			if next <= maxID {
+				next = maxID + 1
+			}
+			initialized = true
 		}
+		id := next
+		next++
+		if cfg.NextContainerID <= id {
+			cfg.NextContainerID = id + 1
+		}
+		return id
 	}
-	id := cfg.NextContainerID
-	if id <= maxID {
-		id = maxID + 1
-	}
-	for used[id] {
-		id++
-	}
-	if cfg.NextContainerID <= id {
-		cfg.NextContainerID = id + 1
-	}
-	return id
 }
 
 // syncAgentContainersUnlocked merges agent-reported container summaries into the
 // controller container list. Match by UUID (IDs may collide across nodes; UUIDs are
 // globally unique). Caller must hold AppConfigMu write lock (guaranteed by
-// MutateGlobalSaveIf). Returns whether a structural change occurred that must be
-// persisted immediately: container add/remove, status/suspend/quota/expiry/
-// virtualization/template changes. Pure telemetry refreshes (traffic counters, IP,
-// SSH port) only update memory state and are persisted by the heartbeat throttle.
-func syncAgentContainersUnlocked(cfg *config.EyvescloudConfig, nodeID string, summaries []heartbeatContainerSummary, statusChanges *[]containerStatusChange) bool {
+// MutateGlobalSaveDeferred). Returns whether a structural change occurred:
+// container add, status/suspend/quota/expiry/virtualization/template changes.
+// Pure telemetry refreshes (traffic counters, IP, SSH port) only update memory.
+//
+// 复杂度：O(本节点上报容器数)，与主控总容器数无关。两条 O(全部容器) 扫描是这里
+// 曾经的墙（30w 容器 × 3000 次心跳/秒）：
+//   - 按 UUID 找容器 → 改为下标缓存（config.FindContainerIndexByUUIDUnlocked）；
+//   - 找「本节点已有但 agent 这次没报」的容器 → 改为取 agent 上次上报集合的差集
+//     （nodeReported）。上报集合就是「这台节点上应该有哪些容器」的权威答案。
+//
+// changedIDs（可空）收集本次实际碰过的容器主控 ID，供调用方声明落库脏集。落库的值
+// 在提交时按 ID 从内存重新读取，故这里收集的是 ID 而不是快照，也不会写入过期值。
+func syncAgentContainersUnlocked(cfg *config.EyvescloudConfig, nodeID string, summaries []heartbeatContainerSummary, statusChanges *[]containerStatusChange, changedIDs *[]int) bool {
 	structural := false
+	var marked map[int]bool // 主控侧容器 ID 已收集
+	mark := func(id int) {
+		if changedIDs == nil || id == 0 {
+			return
+		}
+		if marked == nil {
+			marked = make(map[int]bool, len(summaries))
+		}
+		if marked[id] {
+			return
+		}
+		marked[id] = true
+		*changedIDs = append(*changedIDs, id)
+	}
 
 	// Metric history write (data source for cross-node container detail/monitor pages).
 	for _, s := range summaries {
@@ -895,24 +942,24 @@ func syncAgentContainersUnlocked(cfg *config.EyvescloudConfig, nodeID string, su
 		appendAgentMetricPoint(s)
 	}
 
-	// 1) mark this node's existing containers as pending-cleanup
-	orphaned := make(map[string]bool) // UUID -> true
-	for i := range cfg.Containers {
-		if cfg.Containers[i].NodeID == nodeID {
-			orphaned[cfg.Containers[i].UUID] = true
+	ensureNodeReportedUnlocked(cfg)
+
+	reported := make(map[string]bool, len(summaries))
+	for _, s := range summaries {
+		if s.UUID != "" {
+			reported[s.UUID] = true
 		}
 	}
+
+	// 主控侧 ID 分配器：整段 sync 复用，避免「每新建一个容器就 O(全部容器) 扫一遍」。
+	nextContainerID := newContainerIDAllocator(cfg)
 
 	// 2) handle each container reported by the agent
 	for _, s := range summaries {
 		if s.UUID == "" {
 			continue
 		}
-		found := false
-		for i := range cfg.Containers {
-			if cfg.Containers[i].UUID != s.UUID {
-				continue
-			}
+		if i, ok := config.FindContainerIndexByUUIDUnlocked(s.UUID); ok {
 			c := &cfg.Containers[i]
 			// Update heartbeat-synced fields (controller-exclusive fields like
 			// OwnerSubUserID/SSHPassword are preserved).
@@ -971,48 +1018,90 @@ func syncAgentContainersUnlocked(cfg *config.EyvescloudConfig, nodeID string, su
 			}
 			c.TrafficUsedRX = s.TrafficUsedRX
 			c.TrafficUsedTX = s.TrafficUsedTX
-			orphaned[s.UUID] = false
-			found = true
-			break
+			mark(c.ID)
+			continue
 		}
-		if !found {
-			// Not present on the controller: add from the agent summary. The
-			// controller-side ID must be globally unique (SQLite primary key):
-			// node-local IDs may collide with local containers (observed: node
-			// id=3 vs local id=3 -> whole save tx PK conflict -> all writes fail
-			// silently). Allocate a controller-unique ID; keep the node-local ID
-			// in NodeLocalID for proxy calls.
-			newC := config.Container{
-				ID: allocateNodeContainerID(cfg), NodeLocalID: s.ID,
-				UUID: s.UUID, Name: s.Name,
-				Status: s.Status, Virtualization: s.Virtualization, Template: s.Template,
-				Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
-				DiskGB: s.DiskGB, NodeID: nodeID,
-				IP: s.IP, SSHPort: s.SSHPort,
-				ExpiresAt: s.ExpiresAt, TrafficUsedRX: s.TrafficUsedRX,
-				TrafficUsedTX: s.TrafficUsedTX,
-			}
-			cfg.Containers = append(cfg.Containers, newC)
-			structural = true
+		// Not present on the controller: add from the agent summary. The
+		// controller-side ID must be globally unique (SQLite primary key):
+		// node-local IDs may collide with local containers (observed: node
+		// id=3 vs local id=3 -> whole save tx PK conflict -> all writes fail
+		// silently). Allocate a controller-unique ID; keep the node-local ID
+		// in NodeLocalID for proxy calls.
+		newC := config.Container{
+			ID: nextContainerID(), NodeLocalID: s.ID,
+			UUID: s.UUID, Name: s.Name,
+			Status: s.Status, Virtualization: s.Virtualization, Template: s.Template,
+			Suspended: s.Suspended, VCPU: s.VCPU, RAMMB: s.RAMMB,
+			DiskGB: s.DiskGB, NodeID: nodeID,
+			IP: s.IP, SSHPort: s.SSHPort,
+			ExpiresAt: s.ExpiresAt, TrafficUsedRX: s.TrafficUsedRX,
+			TrafficUsedTX: s.TrafficUsedTX,
 		}
+		config.AppendContainerUnlocked(newC)
+		mark(newC.ID)
+		structural = true
 	}
 
-	// 3) containers the controller has but the agent did not report: mark orphaned
-	for i := range cfg.Containers {
-		if orphaned[cfg.Containers[i].UUID] {
-			if cfg.Containers[i].Status != "orphaned" {
-				*statusChanges = append(*statusChanges, containerStatusChange{
-					id:   cfg.Containers[i].ID,
-					name: cfg.Containers[i].Name,
-					old:  cfg.Containers[i].Status,
-					new:  "orphaned",
-				})
-				cfg.Containers[i].Status = "orphaned"
-				structural = true
-			}
+	// 3) containers this node reported last time but no longer reports: mark orphaned.
+	lastReported := nodeReported[nodeID]
+	for uuid := range lastReported {
+		if reported[uuid] {
+			continue
 		}
+		i, ok := config.FindContainerIndexByUUIDUnlocked(uuid)
+		if !ok {
+			continue // 主控侧对应的行已不存在，无需清理
+		}
+		c := &cfg.Containers[i]
+		// 已迁移到别的节点（或被改回本机容器）的不算本节点的 orphan：
+		// 差集来自「本节点上次上报」，归属要按当前值再核对一次。
+		if c.NodeID != nodeID {
+			continue
+		}
+		if c.Status != "orphaned" {
+			*statusChanges = append(*statusChanges, containerStatusChange{
+				id:   c.ID,
+				name: c.Name,
+				old:  c.Status,
+				new:  "orphaned",
+			})
+			c.Status = "orphaned"
+			structural = true
+		}
+		mark(c.ID)
 	}
+
+	// 用本次上报集合替换：下一次心跳的 orphan 候选就是这个差集。
+	next := make(map[string]bool, len(reported))
+	for uuid := range reported {
+		next[uuid] = true
+	}
+	nodeReported[nodeID] = next
+
 	return structural
+}
+
+// ensureNodeReportedUnlocked 首次心跳时用主控侧已有的节点容器播种「上次上报集合」，
+// 使重启后第一次心跳仍能检出「agent 已删除但主控还留着」的容器。
+// 调用方必须持有 AppConfigMu 写锁。
+func ensureNodeReportedUnlocked(cfg *config.EyvescloudConfig) {
+	if nodeReportedSeeded {
+		return
+	}
+	nodeReported = make(map[string]map[string]bool)
+	for i := range cfg.Containers {
+		c := cfg.Containers[i]
+		if c.NodeID == "" || c.UUID == "" {
+			continue
+		}
+		set := nodeReported[c.NodeID]
+		if set == nil {
+			set = make(map[string]bool)
+			nodeReported[c.NodeID] = set
+		}
+		set[c.UUID] = true
+	}
+	nodeReportedSeeded = true
 }
 
 // appendAgentMetricPoint 把 agent 心跳上报的指标点写入主控 metric history，

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -54,15 +55,30 @@ type TaskQueue struct {
 	createCond     *sync.Cond
 	opCond         *sync.Cond
 	maxConcurrency int
+	maxPending     int
+	rejectedTotal  uint64
 	activeTasks    int
 	activeTargets  map[string]bool
 	stop           chan struct{}
 }
 
 type TaskQueueSettings struct {
-	Concurrency int `json:"concurrency"`
-	Active      int `json:"active"`
-	Pending     int `json:"pending"`
+	Concurrency int    `json:"concurrency"`
+	Active      int    `json:"active"`
+	Pending     int    `json:"pending"`
+	MaxPending  int    `json:"max_pending"`
+	Rejected    uint64 `json:"rejected_total"`
+}
+
+// ErrQueueFull 队列已达背压阈值：新任务被快速拒绝（可读错误，不做假 UI）。
+var ErrQueueFull = errors.New("容器操作队列已满，请稍后重试")
+
+// EnqueueOutcome 描述一次入队的结果：
+//   - TaskID：新建或被命中的既有任务 ID；
+//   - Deduped：命中幂等去重（同一目标 + 同一类型已有 pending/running 任务），未新建任务。
+type EnqueueOutcome struct {
+	TaskID  string `json:"task_id"`
+	Deduped bool   `json:"deduped"`
 }
 
 var globalQueue *TaskQueue
@@ -77,6 +93,7 @@ func newTaskQueue(concurrency int) *TaskQueue {
 	q := &TaskQueue{
 		tasks:          make(map[string]*Task),
 		maxConcurrency: config.NormalizeTaskConcurrency(concurrency),
+		maxPending:     config.DefaultTaskQueueMaxPending,
 		activeTargets:  make(map[string]bool),
 		stop:           make(chan struct{}),
 	}
@@ -85,8 +102,10 @@ func newTaskQueue(concurrency int) *TaskQueue {
 	return q
 }
 
-func ConfigureTaskQueue(concurrency int) {
+// ConfigureTaskQueue 在启动时应用持久化的队列参数（并发上限 + 背压阈值）。
+func ConfigureTaskQueue(concurrency int, maxPending int) {
 	globalQueue.SetConcurrency(concurrency)
+	globalQueue.SetMaxPending(maxPending)
 }
 
 func (q *TaskQueue) SetConcurrency(concurrency int) {
@@ -97,6 +116,13 @@ func (q *TaskQueue) SetConcurrency(concurrency int) {
 	q.mu.Unlock()
 }
 
+// SetMaxPending 调整背压阈值（<=0 取默认）。供设置页与测试使用。
+func (q *TaskQueue) SetMaxPending(maxPending int) {
+	q.mu.Lock()
+	q.maxPending = config.NormalizeTaskQueueMaxPending(maxPending)
+	q.mu.Unlock()
+}
+
 func (q *TaskQueue) Settings() TaskQueueSettings {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -104,6 +130,8 @@ func (q *TaskQueue) Settings() TaskQueueSettings {
 		Concurrency: q.maxConcurrency,
 		Active:      q.activeTasks,
 		Pending:     len(q.createQueue) + len(q.opQueue),
+		MaxPending:  q.maxPending,
+		Rejected:    q.rejectedTotal,
 	}
 }
 
@@ -112,7 +140,65 @@ func (q *TaskQueue) signalDispatchers() {
 	q.opCond.Broadcast()
 }
 
-func (q *TaskQueue) enqueueTask(task *Task) {
+// findActiveDuplicateLocked 在锁内查找「同一目标 + 同一类型」且仍在排队/执行的任务。
+// 幂等键 = 容器并发键（名字优先，其次 ID）+ 任务类型：重复提交（前端双击、网络重试、
+// 脚本重放）不该产生第二个 job —— 否则同一容器会被连续重启/删除两次。
+// 仅对操作类任务生效（创建任务走名字唯一性守卫，不在此列）。
+func (q *TaskQueue) findActiveDuplicateLocked(task *Task) *Task {
+	if task.Type == TaskCreate {
+		return nil
+	}
+	key := taskConcurrencyKey(task)
+	for _, existing := range q.tasks {
+		if existing == task || existing.Type != task.Type {
+			continue
+		}
+		if existing.Status != "pending" && existing.Status != "running" {
+			continue
+		}
+		if taskConcurrencyKey(existing) == key {
+			return existing
+		}
+	}
+	return nil
+}
+
+// selectDupOrSpace 幂等去重 + 可选背压检查（须持有 q.mu）。
+//
+//   - 幂等：命中「同一目标 + 同一类型」的 pending/running 任务则返回既有任务，不新建；
+//   - 背压：enforceCap 时，待执行总数达阈值则返回 ErrQueueFull（快速失败、可读错误）。
+//
+// 背压只在调用方能向上报错的路径开启（enforceCap=true）；无法上报的遗留内部调用
+// 仍走 dedup-only —— 否则保守的队列上限会变成「静默丢弃」，违背「失败要有反馈」。
+func (q *TaskQueue) selectDupOrSpace(task *Task, enforceCap bool) (*Task, bool, error) {
+	if dup := q.findActiveDuplicateLocked(task); dup != nil {
+		return dup, true, nil
+	}
+	if enforceCap && len(q.createQueue)+len(q.opQueue) >= q.maxPending {
+		q.rejectedTotal++
+		return nil, false, ErrQueueFull
+	}
+	q.tasks[task.ID] = task
+	if task.Type == TaskCreate {
+		q.createQueue = append(q.createQueue, task)
+		q.createCond.Signal()
+	} else {
+		q.opQueue = append(q.opQueue, task)
+		q.opCond.Signal()
+	}
+	return task, false, nil
+}
+
+// enqueueTask 去重入队（不设上限；无法上报错误的遗留路径使用）。须持有 q.mu。
+func (q *TaskQueue) enqueueTask(task *Task) (*Task, bool) {
+	t, deduped, _ := q.selectDupOrSpace(task, false)
+	return t, deduped
+}
+
+// restoreEnqueue 把从磁盘恢复的任务直接放回队列。恢复路径是权威状态：不做幂等去重
+// （两条同目标同类型的持久化任务都必须各自执行，否则会被吞成永不结束的 pending），
+// 也不受背压上限约束（这些任务本就已存在，不是新提交）。须持有 q.mu。
+func (q *TaskQueue) restoreEnqueue(task *Task) {
 	q.tasks[task.ID] = task
 	if task.Type == TaskCreate {
 		q.createQueue = append(q.createQueue, task)
@@ -123,14 +209,17 @@ func (q *TaskQueue) enqueueTask(task *Task) {
 	}
 }
 
-func (q *TaskQueue) Enqueue(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig) []string {
-	return q.EnqueueWithAudit(containerID, containerName, taskType, templateID, cfg, "admin", "", "")
+// outcomeIDs 把入队结果投影为任务 ID 列表（供遗留 []string 签名使用）。
+func outcomeIDs(outcomes []EnqueueOutcome) []string {
+	ids := make([]string, 0, len(outcomes))
+	for _, o := range outcomes {
+		ids = append(ids, o.TaskID)
+	}
+	return ids
 }
 
-func (q *TaskQueue) EnqueueWithAudit(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig, user string, ip string, userAgent string) []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
+// newOpTaskLocked 分配 ID 并构造操作任务（须持有 q.mu）。
+func (q *TaskQueue) newOpTaskLocked(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig, user string, ip string, userAgent string) *Task {
 	id := q.nextID
 	q.nextID++
 	task := &Task{
@@ -151,9 +240,35 @@ func (q *TaskQueue) EnqueueWithAudit(containerID int, containerName string, task
 		task.Config = *cfg
 		task.Config.NormalizeResourceAliases()
 	}
-	q.enqueueTask(task)
+	return task
+}
+
+func (q *TaskQueue) Enqueue(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig) []string {
+	return q.EnqueueWithAudit(containerID, containerName, taskType, templateID, cfg, "admin", "", "")
+}
+
+// EnqueueWithAudit 入队单个操作任务（遗留 []string 签名；幂等去重生效、不启用背压）。
+func (q *TaskQueue) EnqueueWithAudit(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig, user string, ip string, userAgent string) []string {
+	outcomes, _ := q.enqueueOp(containerID, containerName, taskType, templateID, cfg, user, ip, userAgent, false)
+	return outcomeIDs(outcomes)
+}
+
+// EnqueueWithAuditChecked 入队单个操作任务：幂等去重 + 背压。
+// 队列达阈值时返回 ErrQueueFull（调用方须回可读错误，不得静默丢弃）。
+func (q *TaskQueue) EnqueueWithAuditChecked(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig, user string, ip string, userAgent string) ([]EnqueueOutcome, error) {
+	return q.enqueueOp(containerID, containerName, taskType, templateID, cfg, user, ip, userAgent, true)
+}
+
+func (q *TaskQueue) enqueueOp(containerID int, containerName string, taskType TaskType, templateID string, cfg *lxc.ContainerConfig, user string, ip string, userAgent string, enforceCap bool) ([]EnqueueOutcome, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	task := q.newOpTaskLocked(containerID, containerName, taskType, templateID, cfg, user, ip, userAgent)
+	enq, deduped, err := q.selectDupOrSpace(task, enforceCap)
+	if err != nil {
+		return nil, err
+	}
 	q.persistTasks()
-	return []string{task.ID}
+	return []EnqueueOutcome{{TaskID: enq.ID, Deduped: deduped}}, nil
 }
 
 func (q *TaskQueue) EnqueueBatch(taskType TaskType, ids []int, templateID string) []string {
@@ -164,30 +279,52 @@ func (q *TaskQueue) EnqueueBatchWithUser(taskType TaskType, ids []int, templateI
 	return q.EnqueueBatchWithAudit(taskType, ids, templateID, user, "", "")
 }
 
+// EnqueueBatchWithAudit 批量入队操作任务（遗留签名；去重生效、不启用背压）。
 func (q *TaskQueue) EnqueueBatchWithAudit(taskType TaskType, ids []int, templateID string, user string, ip string, userAgent string) []string {
+	outcomes, _ := q.enqueueBatch(taskType, ids, templateID, user, ip, userAgent, false)
+	return outcomeIDs(outcomes)
+}
+
+// EnqueueBatchWithAuditChecked 批量入队：去重 + 背压；关键词触发上限时返回已入队结果 + ErrQueueFull。
+func (q *TaskQueue) EnqueueBatchWithAuditChecked(taskType TaskType, ids []int, templateID string, user string, ip string, userAgent string) ([]EnqueueOutcome, error) {
+	return q.enqueueBatch(taskType, ids, templateID, user, ip, userAgent, true)
+}
+
+func (q *TaskQueue) enqueueBatch(taskType TaskType, ids []int, templateID string, user string, ip string, userAgent string, enforceCap bool) ([]EnqueueOutcome, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	var result []string
+	outcomes := make([]EnqueueOutcome, 0, len(ids))
 	for _, id := range ids {
 		c := config.FindContainer(id)
 		name := ""
 		if c != nil {
 			name = c.Name
 		}
-		result = append(result, q.enqueueSingleWithAudit(id, name, taskType, templateID, user, ip, userAgent))
+		task := q.newOpTaskLocked(id, name, taskType, templateID, nil, user, ip, userAgent)
+		enq, deduped, err := q.selectDupOrSpace(task, enforceCap)
+		if err != nil {
+			// 背压：停止后续入队，但已入队的任务保持有效（调用方回可读错误）。
+			return outcomes, err
+		}
+		outcomes = append(outcomes, EnqueueOutcome{TaskID: enq.ID, Deduped: deduped})
 	}
 	q.persistTasks()
-	return result
+	return outcomes, nil
 }
 
 func (q *TaskQueue) EnqueueBatchCreate(configs []lxc.ContainerConfig) []string {
 	return q.EnqueueBatchCreateWithAudit(configs, "admin", "", "")
 }
 
+// EnqueueBatchCreateWithAudit 批量入队创建任务（遗留签名；创建不参与去重、不启用背压）。
 func (q *TaskQueue) EnqueueBatchCreateWithAudit(configs []lxc.ContainerConfig, user string, ip string, userAgent string) []string {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.enqueueBatchCreateList(configs, user, ip, userAgent)
+	outcomes, _ := q.enqueueCreates(configs, user, ip, userAgent, false)
+	return outcomeIDs(outcomes)
+}
+
+// EnqueueBatchCreateWithAuditChecked 批量入队创建任务：背压（创建不参与幂等去重）。
+func (q *TaskQueue) EnqueueBatchCreateWithAuditChecked(configs []lxc.ContainerConfig, user string, ip string, userAgent string) ([]EnqueueOutcome, error) {
+	return q.enqueueCreates(configs, user, ip, userAgent, true)
 }
 
 func (q *TaskQueue) ActiveCreateNames() map[string]bool {
@@ -210,8 +347,10 @@ func (q *TaskQueue) ActiveCreateNames() map[string]bool {
 	return names
 }
 
-func (q *TaskQueue) enqueueBatchCreateList(configs []lxc.ContainerConfig, user string, ip string, userAgent string) []string {
-	var result []string
+func (q *TaskQueue) enqueueCreates(configs []lxc.ContainerConfig, user string, ip string, userAgent string, enforceCap bool) ([]EnqueueOutcome, error) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	outcomes := make([]EnqueueOutcome, 0, len(configs))
 	for _, cfg := range configs {
 		cfgCopy := cfg
 		cfgCopy.NormalizeResourceAliases()
@@ -231,11 +370,14 @@ func (q *TaskQueue) enqueueBatchCreateList(configs []lxc.ContainerConfig, user s
 			IP:            ip,
 			UserAgent:     userAgent,
 		}
-		q.enqueueTask(task)
-		result = append(result, task.ID)
+		enq, deduped, err := q.selectDupOrSpace(task, enforceCap)
+		if err != nil {
+			return outcomes, err
+		}
+		outcomes = append(outcomes, EnqueueOutcome{TaskID: enq.ID, Deduped: deduped})
 	}
 	q.persistTasks()
-	return result
+	return outcomes, nil
 }
 
 func (q *TaskQueue) enqueueSingle(containerID int, containerName string, taskType TaskType, templateID string) string {
@@ -246,25 +388,11 @@ func (q *TaskQueue) enqueueSingleWithUser(containerID int, containerName string,
 	return q.enqueueSingleWithAudit(containerID, containerName, taskType, templateID, user, "", "")
 }
 
+// enqueueSingleWithAudit 去重入队（须持有 q.mu；不启用背压）。返回命中/新建任务的 ID。
 func (q *TaskQueue) enqueueSingleWithAudit(containerID int, containerName string, taskType TaskType, templateID string, user string, ip string, userAgent string) string {
-	id := q.nextID
-	q.nextID++
-	task := &Task{
-		ID:            fmt.Sprintf("task-%d", id),
-		Type:          taskType,
-		ContainerID:   containerID,
-		ContainerName: containerName,
-		Status:        "pending",
-		Stage:         "queued",
-		StageDetail:   "排队等待",
-		CreatedAt:     time.Now().Format("2006-01-02 15:04:05"),
-		TemplateID:    templateID,
-		User:          user,
-		IP:            ip,
-		UserAgent:     userAgent,
-	}
-	q.enqueueTask(task)
-	return task.ID
+	task := q.newOpTaskLocked(containerID, containerName, taskType, templateID, nil, user, ip, userAgent)
+	enq, _ := q.enqueueTask(task)
+	return enq.ID
 }
 
 func (q *TaskQueue) EnqueueSecurityStop(containerID int, containerName string) (string, bool) {
@@ -1118,7 +1246,7 @@ func HandleBatchAction(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var ids []string
+	var outcomes []EnqueueOutcome
 	if taskConfig != nil {
 		for _, id := range req.Containers {
 			c := config.FindContainer(id)
@@ -1126,13 +1254,53 @@ func HandleBatchAction(w http.ResponseWriter, r *http.Request) {
 			if c != nil {
 				name = c.Name
 			}
-			queued := globalQueue.EnqueueWithAudit(id, name, taskType, req.TemplateID, taskConfig, requestActor(r), clientIP(r), r.UserAgent())
-			ids = append(ids, queued...)
+			res, err := globalQueue.EnqueueWithAuditChecked(id, name, taskType, req.TemplateID, taskConfig, requestActor(r), clientIP(r), r.UserAgent())
+			if err != nil {
+				writeQueueFull(w, err, outcomes)
+				return
+			}
+			outcomes = append(outcomes, res...)
 		}
 	} else {
-		ids = globalQueue.EnqueueBatchWithAudit(taskType, req.Containers, req.TemplateID, requestActor(r), clientIP(r), r.UserAgent())
+		res, err := globalQueue.EnqueueBatchWithAuditChecked(taskType, req.Containers, req.TemplateID, requestActor(r), clientIP(r), r.UserAgent())
+		outcomes = append(outcomes, res...)
+		if err != nil {
+			writeQueueFull(w, err, outcomes)
+			return
+		}
 	}
-	jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Data: ids})
+	ids := outcomeIDs(outcomes)
+	// 幂等去重要有可见反馈：重复提交被合并成一个任务时必须告知，否则用户会以为点了两次。
+	message := ""
+	if deduped := countDeduped(outcomes); deduped > 0 {
+		message = fmt.Sprintf("已受理 %d 个任务（%d 个重复提交已合并为同一任务）", len(ids), deduped)
+	}
+	jsonResponse(w, http.StatusAccepted, APIResponse{Success: true, Message: message, Data: ids})
+}
+
+// writeQueueFull 回背压错误（429）：队列过载时快速失败并给出可读信息，同时带上
+// 本次已受理的任务 ID，避免调用方在部分入队时丢失已排队的任务。
+func writeQueueFull(w http.ResponseWriter, err error, accepted []EnqueueOutcome) {
+	message := err.Error()
+	if n := len(accepted); n > 0 {
+		message = fmt.Sprintf("%s（已受理 %d 个，请稍后重试其余）", message, n)
+	}
+	jsonResponse(w, http.StatusTooManyRequests, APIResponse{
+		Success: false,
+		Code:    "QUEUE_FULL",
+		Message: message,
+		Data:    outcomeIDs(accepted),
+	})
+}
+
+func countDeduped(outcomes []EnqueueOutcome) int {
+	n := 0
+	for _, o := range outcomes {
+		if o.Deduped {
+			n++
+		}
+	}
+	return n
 }
 
 // HandleTaskDelete deletes a specific task by ID
@@ -1240,7 +1408,7 @@ func RestoreTasks() {
 		if st.Status == "pending" || st.Status == "running" {
 			// Reset running tasks back to pending so they get retried
 			globalQueue.tasks[st.ID].Status = "pending"
-			globalQueue.enqueueTask(globalQueue.tasks[st.ID])
+			globalQueue.restoreEnqueue(globalQueue.tasks[st.ID])
 		}
 		if num := parseIDNum(st.ID); num >= globalQueue.nextID {
 			globalQueue.nextID = num + 1

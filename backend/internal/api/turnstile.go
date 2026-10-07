@@ -195,7 +195,7 @@ func handleTurnstileSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.TurnstileSiteKey = siteKey
 		cfg.TurnstileSecretKey = secretKey
 		cfg.TurnstileAdminLogin = req.AdminEnabled

@@ -53,6 +53,10 @@ func BackupConfigDatabase() (string, error) {
 	if db == nil {
 		return "", fmt.Errorf("配置库尚未打开")
 	}
+	// PG 后端没有本地库文件，VACUUM INTO 不适用；明确报错而不是静默产出假快照。
+	if configDBIsPostgres {
+		return "", fmt.Errorf("配置库为 Postgres 后端，VACUUM INTO 备份不适用（请用 pg_dump）")
+	}
 	// VACUUM INTO 要求目标文件不存在。
 	if err := os.Remove(dest); err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("清理同名快照失败: %w", err)
@@ -170,6 +174,10 @@ func CheckpointConfigWAL() error {
 	defer dbMu.Unlock()
 	if db == nil {
 		return fmt.Errorf("配置库尚未打开")
+	}
+	// PG 后端无 WAL 文件，检查点无意义 → 静默跳过（调用方只记 warning）。
+	if configDBIsPostgres {
+		return nil
 	}
 	// TRUNCATE 模式：合并后把 -wal 截断为 0 字节。
 	_, err := db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")

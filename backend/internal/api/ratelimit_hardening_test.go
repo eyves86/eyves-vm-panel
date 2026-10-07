@@ -110,6 +110,11 @@ func TestV2AuthRequiresSameOriginForCookieWrites(t *testing.T) {
 	token := withV2TestConfig(t)
 	mux := newV2TestMux()
 
+	// 同源 Cookie 的 start 写入会真正入队并由包级 dispatcher 执行（真去起容器）：
+	// 这既是单测不该有的副作用，也会让「执行中读 config 全局」与其它用例的 config 替换
+	// 在 -race 下形成数据竞态。这里换成不派发的队列隔离。
+	isolateTaskQueue(t)
+
 	call := func(origin, referer string, useCookie bool) int {
 		req := httptest.NewRequest(http.MethodPost, "/api/v2/instances/7/power",
 			strings.NewReader(`{"action":"start"}`))

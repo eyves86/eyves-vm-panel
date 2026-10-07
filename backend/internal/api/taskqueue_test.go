@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -212,5 +213,173 @@ func TestTaskStagePercentNeverRegresses(t *testing.T) {
 	q.updateTaskStage(task, "preparing", "检查模板与创建参数")
 	if task.Percent != high {
 		t.Fatalf("percent regressed from %d to %d", high, task.Percent)
+	}
+}
+
+// TestQueueIdempotentDedupSameTargetAndType 幂等键回归：同一容器 + 同一类型的重复提交
+// （前端双击、网络重试、脚本重放）必须合流为同一任务，不得产生第二个 job。
+func TestQueueIdempotentDedupSameTargetAndType(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+
+	first, err := q.EnqueueWithAuditChecked(7, "alpha", TaskRestart, "", nil, "admin", "", "")
+	if err != nil {
+		t.Fatalf("首次入队失败: %v", err)
+	}
+	if len(first) != 1 || first[0].Deduped {
+		t.Fatalf("首次入队结果 = %+v，应为单个未去重结果", first)
+	}
+
+	second, err := q.EnqueueWithAuditChecked(7, "alpha", TaskRestart, "", nil, "admin", "", "")
+	if err != nil {
+		t.Fatalf("重复入队失败: %v", err)
+	}
+	if len(second) != 1 || !second[0].Deduped {
+		t.Fatalf("重复入队结果 = %+v，应命中幂等去重", second)
+	}
+	if second[0].TaskID != first[0].TaskID {
+		t.Fatalf("去重命中 ID = %q，应为 %q", second[0].TaskID, first[0].TaskID)
+	}
+	if got := q.Settings().Pending; got != 1 {
+		t.Fatalf("pending = %d，应为 1（重复提交不该新增任务）", got)
+	}
+}
+
+// TestQueueDedupDistinguishesTaskType 不同类型不合并：同一容器的 start 与 stop 是两个
+// 独立意图，幂等键必须包含任务类型。
+func TestQueueDedupDistinguishesTaskType(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+
+	start, err := q.EnqueueWithAuditChecked(3, "beta", TaskStart, "", nil, "admin", "", "")
+	if err != nil {
+		t.Fatalf("start 入队失败: %v", err)
+	}
+	stop, err := q.EnqueueWithAuditChecked(3, "beta", TaskStop, "", nil, "admin", "", "")
+	if err != nil {
+		t.Fatalf("stop 入队失败: %v", err)
+	}
+	if stop[0].Deduped {
+		t.Fatal("不同任务类型不应被去重合并")
+	}
+	if stop[0].TaskID == start[0].TaskID {
+		t.Fatal("不同任务类型应分配到新的任务 ID")
+	}
+	if got := q.Settings().Pending; got != 2 {
+		t.Fatalf("pending = %d，应为 2", got)
+	}
+}
+
+// TestQueueDedupReleasedAfterTerminal 去重键在任务结束后释放：历史任务不应拦截新提交。
+func TestQueueDedupReleasedAfterTerminal(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+
+	first, err := q.EnqueueWithAuditChecked(5, "gamma", TaskStart, "", nil, "admin", "", "")
+	if err != nil {
+		t.Fatalf("首次入队失败: %v", err)
+	}
+	q.mu.Lock()
+	q.tasks[first[0].TaskID].Status = "done"
+	q.mu.Unlock()
+
+	second, err := q.EnqueueWithAuditChecked(5, "gamma", TaskStart, "", nil, "admin", "", "")
+	if err != nil {
+		t.Fatalf("再次入队失败: %v", err)
+	}
+	if second[0].Deduped {
+		t.Fatal("已结束的任务不应拦截新提交")
+	}
+	if second[0].TaskID == first[0].TaskID {
+		t.Fatal("新提交应分配到新的任务 ID")
+	}
+}
+
+// TestQueueBackpressureRejectsWhenFull 背压回归：达到上限后新任务必须快速失败，
+// 返回可读的 ErrQueueFull，并计入 rejected 统计（不得静默丢弃）。
+func TestQueueBackpressureRejectsWhenFull(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+	q.SetMaxPending(2)
+
+	if _, err := q.EnqueueWithAuditChecked(1, "n1", TaskStart, "", nil, "admin", "", ""); err != nil {
+		t.Fatalf("第 1 个入队失败: %v", err)
+	}
+	if _, err := q.EnqueueWithAuditChecked(2, "n2", TaskStart, "", nil, "admin", "", ""); err != nil {
+		t.Fatalf("第 2 个入队失败: %v", err)
+	}
+	if _, err := q.EnqueueWithAuditChecked(3, "n3", TaskStart, "", nil, "admin", "", ""); !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("第 3 个入队 err = %v，应为 ErrQueueFull", err)
+	}
+
+	s := q.Settings()
+	if s.Pending != 2 {
+		t.Fatalf("pending = %d，应被上限限制为 2", s.Pending)
+	}
+	if s.MaxPending != 2 {
+		t.Fatalf("max_pending = %d，应为 2", s.MaxPending)
+	}
+	if s.Rejected != 1 {
+		t.Fatalf("rejected_total = %d，应为 1", s.Rejected)
+	}
+}
+
+// TestQueueLegacyEnqueueIgnoresCap 遗留路径不启用背压：这些调用方无法上报错误，
+// 若被上限拒绝就会变成静默丢弃 —— 必须继续入队。
+func TestQueueLegacyEnqueueIgnoresCap(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+	q.SetMaxPending(1)
+
+	if ids := q.EnqueueWithAudit(1, "n1", TaskStart, "", nil, "admin", "", ""); len(ids) != 1 {
+		t.Fatalf("遗留入队 1 返回 %v，应为 1 个 ID", ids)
+	}
+	if ids := q.EnqueueWithAudit(2, "n2", TaskStart, "", nil, "admin", "", ""); len(ids) != 1 || ids[0] == "" {
+		t.Fatalf("遗留入队 2 返回 %v，应仍入队 1 个 ID", ids)
+	}
+
+	s := q.Settings()
+	if s.Pending != 2 {
+		t.Fatalf("pending = %d，遗留路径应忽略上限仍入队 2 个", s.Pending)
+	}
+	if s.Rejected != 0 {
+		t.Fatalf("rejected_total = %d，遗留路径不应计入拒绝", s.Rejected)
+	}
+}
+
+// TestQueueBatchBackpressureReturnsPartial 批量入队遇上限时返回已受理结果 + 错误，
+// 让调用方能同时告知「哪些已受理、哪些需重试」。
+func TestQueueBatchBackpressureReturnsPartial(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+	q.SetMaxPending(2)
+
+	outcomes, err := q.EnqueueBatchWithAuditChecked(TaskStart, []int{10, 11, 12}, "", "admin", "", "")
+	if !errors.Is(err, ErrQueueFull) {
+		t.Fatalf("批量入队 err = %v，应为 ErrQueueFull", err)
+	}
+	if len(outcomes) != 2 {
+		t.Fatalf("已受理结果 = %d 个，应为 2", len(outcomes))
+	}
+	if got := q.Settings().Pending; got != 2 {
+		t.Fatalf("pending = %d，应为 2", got)
+	}
+}
+
+// TestQueueRestoreBypassesDedup 恢复路径是权威状态：两条同目标同类型的持久化任务
+// 必须各自入队，否则会被去重吞成永不结束的 pending。
+func TestQueueRestoreBypassesDedup(t *testing.T) {
+	setupTaskQueueConfig(t)
+	q := newTaskQueue(config.DefaultTaskConcurrency)
+
+	a := &Task{ID: "task-restore-a", Type: TaskStart, ContainerID: 4, ContainerName: "delta", Status: "pending"}
+	b := &Task{ID: "task-restore-b", Type: TaskStart, ContainerID: 4, ContainerName: "delta", Status: "pending"}
+	q.mu.Lock()
+	q.restoreEnqueue(a)
+	q.restoreEnqueue(b)
+	q.mu.Unlock()
+
+	if got := q.Settings().Pending; got != 2 {
+		t.Fatalf("pending = %d，恢复路径应保留 2 个任务", got)
 	}
 }

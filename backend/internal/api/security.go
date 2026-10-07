@@ -1700,7 +1700,7 @@ func HandleSecuritySettings(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 			return
 		}
-		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			if req.AutoShutdown != nil {
 				cfg.SecurityAutoShutdown = *req.AutoShutdown
 			}

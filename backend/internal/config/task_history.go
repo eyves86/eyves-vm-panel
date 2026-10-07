@@ -39,8 +39,10 @@ func taskHistoryNow() string {
 	return time.Now().UTC().Format(time.RFC3339)
 }
 
+// taskHistoryColumns 里的 "user" 加引号：user 是 Postgres 保留字，裸写会语法错误；
+// SQLite 同样接受带引号的标识符，故两端通用。
 const taskHistoryColumns = `id, type, container_id, container_name, status, error, stage, stage_detail,
-	percent, user, ip, user_agent, created_at, started_at, ended_at, duration_ms`
+	percent, "user", ip, user_agent, created_at, started_at, ended_at, duration_ms`
 
 // scanTaskHistoryRow 按 taskHistoryColumns 的顺序读取一行。
 func scanTaskHistoryRow(scan func(dest ...interface{}) error) (TaskHistoryEntry, error) {
@@ -66,8 +68,16 @@ func UpsertTaskHistory(e TaskHistoryEntry) error {
 	if db == nil {
 		return nil
 	}
-	_, err := db.Exec(`INSERT OR REPLACE INTO task_history (`+taskHistoryColumns+`)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	// ON CONFLICT ... excluded 而非 INSERT OR REPLACE：前者 SQLite(≥3.24) 与 Postgres 通用，
+	// 后者是 SQLite 专有语法。
+	_, err := db.Exec(`INSERT INTO task_history (`+taskHistoryColumns+`)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			type = excluded.type, container_id = excluded.container_id, container_name = excluded.container_name,
+			status = excluded.status, error = excluded.error, stage = excluded.stage, stage_detail = excluded.stage_detail,
+			percent = excluded.percent, "user" = excluded."user", ip = excluded.ip, user_agent = excluded.user_agent,
+			created_at = excluded.created_at, started_at = excluded.started_at, ended_at = excluded.ended_at,
+			duration_ms = excluded.duration_ms`,
 		e.ID, e.Type, e.ContainerID, e.ContainerName, e.Status, e.Error, e.Stage, e.StageDetail,
 		e.Percent, e.User, e.IP, e.UserAgent, e.CreatedAt, e.StartedAt, e.EndedAt, e.DurationMs)
 	return err
@@ -126,7 +136,7 @@ func ListTaskHistory(statuses []string, taskType string, user string, limit, off
 		args = append(args, t)
 	}
 	if u := strings.TrimSpace(user); u != "" {
-		where = append(where, "user = ?")
+		where = append(where, `"user" = ?`)
 		args = append(args, u)
 	}
 	clause := ""

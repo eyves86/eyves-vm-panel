@@ -110,6 +110,8 @@ export default function Settings() {
   const [savingWebSSHOrigins, setSavingWebSSHOrigins] = useState(false)
   const [taskQueue, setTaskQueue] = useState<TaskQueueSettings | null>(null)
   const [taskConcurrency, setTaskConcurrency] = useState(2)
+  const [taskMaxPending, setTaskMaxPending] = useState(512)
+  const [taskQueueSeeded, setTaskQueueSeeded] = useState(false)
   const [savingTaskQueue, setSavingTaskQueue] = useState(false)
   const [accessPolicy, setAccessPolicy] = useState<PanelAccessPolicy | null>(null)
   const [accessEnabled, setAccessEnabled] = useState(false)
@@ -243,11 +245,20 @@ export default function Settings() {
       const data = res.data.data
       if (!data) return
       setTaskQueue(data)
-      setTaskConcurrency(data.concurrency)
     } catch (err) {
       console.error(err)
     }
   }, [])
+
+  // 表单初值只在首次拿到服务端数据时灌入一次。此卡片每 5s 轮询刷新「运行中/等待中」
+  // 实时统计；若每次都把服务端值回灌输入框，管理员正在编辑的数字会被静默覆盖，
+  // 保存的就不是他填的值。
+  useEffect(() => {
+    if (taskQueueSeeded || !taskQueue) return
+    setTaskConcurrency(taskQueue.concurrency)
+    setTaskMaxPending(taskQueue.max_pending)
+    setTaskQueueSeeded(true)
+  }, [taskQueue, taskQueueSeeded])
 
   const fetchAccessPolicy = useCallback(async () => {
     try {
@@ -556,15 +567,17 @@ export default function Settings() {
 
   const handleSaveTaskQueue = async () => {
     const concurrency = Math.max(1, Math.min(16, Math.round(taskConcurrency || 1)))
+    const maxPending = Math.max(1, Math.round(taskMaxPending || 1))
     setSavingTaskQueue(true)
     try {
-      const res = await updateTaskQueueSettings(concurrency)
+      const res = await updateTaskQueueSettings(concurrency, maxPending)
       const data = res.data.data
       if (data) {
         setTaskQueue(data)
         setTaskConcurrency(data.concurrency)
+        setTaskMaxPending(data.max_pending)
       }
-      dialog.alert('完成', '任务队列并发设置已保存并立即生效')
+      dialog.alert('完成', '任务队列设置已保存并立即生效')
     } catch (err: unknown) {
       const e = err as { response?: { data?: { message?: string } } }
       dialog.alert('失败', e.response?.data?.message || '任务队列设置保存失败')
@@ -953,8 +966,10 @@ export default function Settings() {
             <TaskQueueCard
               settings={taskQueue}
               concurrency={taskConcurrency}
+              maxPending={taskMaxPending}
               saving={savingTaskQueue}
               onConcurrencyChange={setTaskConcurrency}
+              onMaxPendingChange={setTaskMaxPending}
               onRefresh={fetchTaskQueue}
               onSave={handleSaveTaskQueue}
             />
@@ -1405,8 +1420,10 @@ export default function Settings() {
 interface TaskQueueCardProps {
   settings: TaskQueueSettings | null
   concurrency: number
+  maxPending: number
   saving: boolean
   onConcurrencyChange: (value: number) => void
+  onMaxPendingChange: (value: number) => void
   onRefresh: () => void
   onSave: () => void
 }
@@ -1516,6 +1533,8 @@ function PanelAccessPolicyCard(props: PanelAccessPolicyCardProps) {
 
 function TaskQueueCard(props: TaskQueueCardProps) {
   const setBounded = (value: number) => props.onConcurrencyChange(Math.max(1, Math.min(16, value)))
+  const setBoundedPending = (value: number) => props.onMaxPendingChange(Math.max(1, Math.round(value || 1)))
+  const rejected = props.settings?.rejected_total ?? 0
   return (
     <div className="rounded-xl border border-gray-200 bg-white p-4">
       <div className="mb-4 flex items-center justify-between gap-3">
@@ -1536,6 +1555,11 @@ function TaskQueueCard(props: TaskQueueCardProps) {
           <div className="mt-0.5 text-lg font-semibold text-gray-900">{props.settings?.pending ?? 0}</div>
         </div>
       </div>
+      {rejected > 0 && (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          已拒绝提交 {rejected} 次：队列曾达到积压上限，新提交被快速失败。
+        </div>
+      )}
       <div className="mt-4">
         <label className="mb-1.5 block text-xs text-gray-500">总并发上限</label>
         <div className="flex h-9 items-stretch">
@@ -1554,6 +1578,19 @@ function TaskQueueCard(props: TaskQueueCardProps) {
             <Plus className="h-4 w-4" />
           </button>
         </div>
+      </div>
+      <div className="mt-4">
+        <label className="mb-1.5 block text-xs text-gray-500">队列积压上限</label>
+        <input
+          type="number"
+          min={1}
+          value={props.maxPending}
+          onChange={(event) => setBoundedPending(Number(event.target.value) || 1)}
+          className="h-9 w-full rounded-md border border-gray-300 px-2 text-sm font-medium text-black outline-none focus:ring-2 focus:ring-inset focus:ring-brand-500"
+        />
+        <p className="mt-1 text-[11px] text-gray-500">
+          待执行任务达到该数量后，新提交将被拒绝（返回 429 快速失败），避免积压不可观测地增长。
+        </p>
       </div>
       <div className="mt-4 flex justify-end">
         <button onClick={props.onSave} disabled={props.saving} className="inline-flex items-center justify-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50">

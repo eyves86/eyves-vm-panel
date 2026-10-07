@@ -51,7 +51,7 @@ func handlePanelDomainUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.PanelDomain = normalized
 	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})

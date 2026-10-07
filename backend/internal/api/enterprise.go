@@ -210,7 +210,7 @@ func HandleAuditSettings(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "retention_days must be 0-3650"})
 			return
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.AuditRetentionDays = req.RetentionDays })
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) { cfg.AuditRetentionDays = req.RetentionDays })
 		auditRequest(r, "audit.settings", "audit", fmt.Sprintf("retention_days=%d", req.RetentionDays), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]int{"retention_days": req.RetentionDays}})
 	default:
@@ -246,7 +246,8 @@ func purgeRetainedLogs() {
 	}
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
+		before := len(cfg.AuditLogs) + len(cfg.LoginLogs)
 		audit := cfg.AuditLogs[:0]
 		for _, l := range cfg.AuditLogs {
 			if logTimeAfterCutoff(l.Time, cutoff) {
@@ -262,6 +263,11 @@ func purgeRetainedLogs() {
 			}
 		}
 		cfg.LoginLogs = login
+		// 内存里删掉的行不会走增量追加路径，必须提示落库层重写有界日志表，
+		// 否则裁剪只发生在内存、重启即恢复（#95）。
+		if len(cfg.AuditLogs)+len(cfg.LoginLogs) != before {
+			config.MarkLogsDirty()
+		}
 	})
 }
 
@@ -343,7 +349,7 @@ func createConfigurationBackup() (config.BackupRecord, error) {
 		Kind:      "config",
 		CreatedAt: snap.CreatedAt,
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Backups = append([]config.BackupRecord{rec}, cfg.Backups...)
 		cfg.BackupSettings.LastBackupAt = snap.CreatedAt
 		cfg.BackupSettings.LastBackupFile = filename
@@ -373,7 +379,7 @@ func pruneBackupFiles(dir string) {
 		return
 	}
 	toDelete := records[keep:]
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Backups = records[:keep]
 		for _, rec := range toDelete {
 			if rec.Filename != "" && filepath.Base(rec.Filename) == rec.Filename {
@@ -435,7 +441,7 @@ func HandleBackupSettings(w http.ResponseWriter, r *http.Request) {
 		if req.Keep < 1 {
 			req.Keep = 14
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.BackupSettings.Enabled = req.Enabled
 			cfg.BackupSettings.IntervalHours = req.IntervalHours
 			cfg.BackupSettings.Keep = req.Keep
@@ -909,7 +915,7 @@ func HandleRateLimitSettings(w http.ResponseWriter, r *http.Request) {
 		if req.PerMinute < 1 {
 			req.PerMinute = 120
 		}
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.APIRateLimit = req })
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) { cfg.APIRateLimit = req })
 		auditRequest(r, "rate_limit.settings", "api",
 			fmt.Sprintf("enabled=%v per_minute=%d", req.Enabled, req.PerMinute), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]bool{"saved": true}})
@@ -975,7 +981,7 @@ func HandleTenants(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tenantExists := false
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			for _, t := range cfg.Tenants {
 				if t.ID == id {
 					tenantExists = true
@@ -1028,7 +1034,7 @@ func HandleTenantItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		updated := false
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.Tenants {
 				if cfg.Tenants[i].ID != id {
 					continue
@@ -1065,7 +1071,7 @@ func HandleTenantItem(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		removed := false
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			filtered := cfg.Tenants[:0]
 			for _, t := range cfg.Tenants {
 				if t.ID != id {

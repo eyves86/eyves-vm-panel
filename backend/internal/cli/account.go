@@ -133,7 +133,7 @@ func accountRename(args []string) error {
 		return nil
 	}
 	oldUser := cfg.AdminUser // 先记旧值：MutateGlobal 改的是同一个 AppConfig 指针
-	if err := config.MutateGlobal(func(c *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(c *config.EyvescloudConfig) {
 		c.AdminUser = newUser
 		c.AdminTokenVersion++
 	}); err != nil {

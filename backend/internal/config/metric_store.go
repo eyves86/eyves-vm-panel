@@ -41,12 +41,12 @@ func SaveMetricSamples(containerKey string, samples []MetricSample) error {
 	if len(samples) == 0 {
 		return nil
 	}
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
-		return errors.New("database not initialized")
+	telemetryMu.Lock()
+	defer telemetryMu.Unlock()
+	if telemetryDB == nil {
+		return errors.New("telemetry database not initialized")
 	}
-	tx, err := db.Begin()
+	tx, err := telemetryDB.Begin()
 	if err != nil {
 		return err
 	}
@@ -69,12 +69,12 @@ func SaveMetricSamples(containerKey string, samples []MetricSample) error {
 
 // LoadMetricSamples returns metric samples for a container key at or after sinceMs.
 func LoadMetricSamples(containerKey string, sinceMs int64) ([]MetricSample, error) {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	telemetryMu.RLock()
+	defer telemetryMu.RUnlock()
+	if telemetryDB == nil {
 		return nil, nil
 	}
-	rows, err := db.Query(`SELECT ts, cpu, memory, network_rx, network_tx, disk_read, disk_write
+	rows, err := telemetryDB.Query(`SELECT ts, cpu, memory, network_rx, network_tx, disk_read, disk_write
 		FROM container_metrics WHERE container_key = ? AND ts >= ? ORDER BY ts ASC`, containerKey, sinceMs)
 	if err != nil {
 		return nil, err
@@ -93,20 +93,20 @@ func LoadMetricSamples(containerKey string, sinceMs int64) ([]MetricSample, erro
 
 // PruneMetricSamples deletes samples older than olderThanMs.
 func PruneMetricSamples(olderThanMs int64) error {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	telemetryMu.Lock()
+	defer telemetryMu.Unlock()
+	if telemetryDB == nil {
 		return nil
 	}
-	_, err := db.Exec(`DELETE FROM container_metrics WHERE ts < ?`, olderThanMs)
+	_, err := telemetryDB.Exec(`DELETE FROM container_metrics WHERE ts < ?`, olderThanMs)
 	return err
 }
 
 // PruneMetricSamplesForContainers deletes samples whose container no longer exists.
 func PruneMetricSamplesForContainers(validKeys map[string]bool) error {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	telemetryMu.Lock()
+	defer telemetryMu.Unlock()
+	if telemetryDB == nil {
 		return nil
 	}
 	if len(validKeys) == 0 {
@@ -122,7 +122,7 @@ func PruneMetricSamplesForContainers(validKeys map[string]bool) error {
 		args = append(args, key)
 	}
 	query := `DELETE FROM container_metrics WHERE container_key NOT IN (` + placeholders + `)`
-	_, err := db.Exec(query, args...)
+	_, err := telemetryDB.Exec(query, args...)
 	return err
 }
 
@@ -132,13 +132,13 @@ func PruneMetricSamplesForContainers(validKeys map[string]bool) error {
 // 0/negative keepAllHours is not relevant here; raw samples older than
 // aggregateUptoMs (inclusive) are aggregated and removed.
 func RollupMetricSamples(aggregateUptoMs int64) error {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	telemetryMu.Lock()
+	defer telemetryMu.Unlock()
+	if telemetryDB == nil {
 		return nil
 	}
 
-	tx, err := db.Begin()
+	tx, err := telemetryDB.Begin()
 	if err != nil {
 		return err
 	}
@@ -171,11 +171,11 @@ func RollupMetricSamples(aggregateUptoMs int64) error {
 			return err
 		}
 		type bucket struct {
-			count            int
-			sumCPU, maxCPU   float64
-			sumMem, maxMem   float64
-			sumRx, sumTx     float64
-			sumDr, sumDw     float64
+			count          int
+			sumCPU, maxCPU float64
+			sumMem, maxMem float64
+			sumRx, sumTx   float64
+			sumDr, sumDw   float64
 		}
 		buckets := map[int64]*bucket{}
 		var minTS int64
@@ -239,12 +239,12 @@ func RollupMetricSamples(aggregateUptoMs int64) error {
 
 // LoadMetricHourly returns hourly rollups for a container key at or after sinceMs.
 func LoadMetricHourly(containerKey string, sinceMs int64) ([]MetricHourlySample, error) {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	telemetryMu.RLock()
+	defer telemetryMu.RUnlock()
+	if telemetryDB == nil {
 		return nil, nil
 	}
-	rows, err := db.Query(`SELECT hour, count, avg_cpu, max_cpu, avg_memory, max_memory,
+	rows, err := telemetryDB.Query(`SELECT hour, count, avg_cpu, max_cpu, avg_memory, max_memory,
 		avg_network_rx, avg_network_tx, avg_disk_read, avg_disk_write
 		FROM container_metrics_hourly WHERE container_key = ? AND hour >= ? ORDER BY hour ASC`,
 		containerKey, sinceMs)
@@ -266,12 +266,12 @@ func LoadMetricHourly(containerKey string, sinceMs int64) ([]MetricHourlySample,
 
 // PruneMetricHourly deletes hourly rollups older than olderThanMs.
 func PruneMetricHourly(olderThanMs int64) error {
-	dbMu.Lock()
-	defer dbMu.Unlock()
-	if db == nil {
+	telemetryMu.Lock()
+	defer telemetryMu.Unlock()
+	if telemetryDB == nil {
 		return nil
 	}
-	_, err := db.Exec(`DELETE FROM container_metrics_hourly WHERE hour < ?`, olderThanMs)
+	_, err := telemetryDB.Exec(`DELETE FROM container_metrics_hourly WHERE hour < ?`, olderThanMs)
 	return err
 }
 

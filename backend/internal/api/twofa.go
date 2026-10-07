@@ -41,7 +41,7 @@ func Handle2FASetup(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminTOTPSecret = secret
 		cfg.AdminTOTPEnabled = false
 	}); err != nil {
@@ -91,7 +91,7 @@ func Handle2FAEnable(w http.ResponseWriter, r *http.Request) {
 	}
 	plain := generateBackupCodes(req.BackupCnt)
 	hashes := hashBackupCodes(plain)
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminTOTPEnabled = true
 		cfg.AdminBackupCodes = hashes
 	}); err != nil {
@@ -130,7 +130,7 @@ func Handle2FADisable(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusUnauthorized, APIResponse{Success: false, Message: "验证码错误"})
 		return
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminTOTPEnabled = false
 		cfg.AdminTOTPSecret = ""
 		cfg.AdminBackupCodes = nil
@@ -176,7 +176,7 @@ func Handle2FARegenerateBackupCodes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	plain := generateBackupCodes(req.BackupCnt)
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.AdminBackupCodes = hashBackupCodes(plain)
 	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})

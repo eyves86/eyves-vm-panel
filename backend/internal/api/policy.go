@@ -50,7 +50,7 @@ func HandlePolicies(w http.ResponseWriter, r *http.Request) {
 			req.ID = fmt.Sprintf("pol_%d", time.Now().UnixNano())
 		}
 		req.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.PolicyRules = append(cfg.PolicyRules, req)
 		})
 		if err := config.SavePolicyRules(); err != nil {
@@ -107,7 +107,7 @@ func HandlePolicyItem(w http.ResponseWriter, r *http.Request) {
 		}
 		req.ID = id
 		var updated *config.PolicyRule
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.PolicyRules {
 				if cfg.PolicyRules[i].ID != id {
 					continue
@@ -138,7 +138,7 @@ func HandlePolicyItem(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		name := id
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.PolicyRules {
 				if cfg.PolicyRules[i].ID != id {
 					continue

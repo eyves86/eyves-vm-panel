@@ -1637,6 +1637,7 @@ type EyvescloudConfig struct {
 	AbuseDetectionEnabled bool                  `json:"abuse_detection_enabled"`
 	Notifications         NotificationConfig    `json:"notifications"`
 	TaskConcurrency       int                   `json:"task_concurrency"`
+	TaskQueueMaxPending   int                   `json:"task_queue_max_pending"` // 背压阈值：待执行任务总数上限，超限时新提交快速失败（429）
 	Language              string                `json:"language"`
 	SSL                   SSLConfig             `json:"ssl"`
 	SSLCertificates       map[string]SSLConfig  `json:"ssl_certificates"`
@@ -1840,6 +1841,13 @@ const FirstBootCredsFile = "initial-admin-credentials.txt"
 const (
 	DefaultTaskConcurrency = 2
 	MaxTaskConcurrency     = 16
+
+	// DefaultTaskQueueMaxPending 是容器操作队列的背压阈值（待执行任务总数上限）。
+	// 队列此前无上限：提交风暴（脚本/恶意客户端/前端重复点击）会让待执行任务无限堆积，
+	// 每个任务还持有 ContainerConfig 与审计字段。超过阈值时快速失败并给出可读错误
+	// （产品约束：不做假 UI、失败要有反馈），而不是把进程内存拖垮。
+	DefaultTaskQueueMaxPending = 512
+	MaxTaskQueueMaxPending     = 100000
 )
 
 const (
@@ -1873,6 +1881,14 @@ func getDataDir() string {
 		home = "/root"
 	}
 	return filepath.Join(home, ".eyvescloud")
+}
+
+// AgentGatewayAddr 返回「被控节点入站」专用监听地址（P2：入口削峰/隔离）。
+// 默认返回空串 = 不启用独立网关，面板监听器继续承载全部路由（行为与历史一致）。
+// 设置 EYVESCLOUD_AGENT_GATEWAY_ADDR（如 0.0.0.0:9443）后，节点心跳从面板监听
+// 器剥离到该地址，管理/面板流量与海量节点上报互不争抢连接与读超时。
+func AgentGatewayAddr() string {
+	return strings.TrimSpace(os.Getenv("EYVESCLOUD_AGENT_GATEWAY_ADDR"))
 }
 
 func generateRandomString(length int) string {
@@ -1976,17 +1992,22 @@ func InitConfig() (*EyvescloudConfig, error) {
 		return nil, err
 	}
 	if ok {
+		// 初始化期间后台 goroutine（如 api 的任务队列）已在读取 AppConfig，且按
+		// 约定持 AppConfigMu；装配/规范化必须同样持写锁，否则与后台读构成数据竞争。
+		// SaveConfig 内部会重新获取 AppConfigMu（不可重入），故必须先解锁再落库。
+		AppConfigMu.Lock()
 		AppConfig = cfg
 		changed := normalizeConfigDefaults(dataDir)
 		if migrateLoadedConfig() {
 			changed = true
 		}
+		AppConfigMu.Unlock()
 		if changed {
 			if err := SaveConfig(); err != nil {
 				return nil, err
 			}
 		}
-		return AppConfig, nil
+		return cfg, nil
 	}
 
 	legacy, ok, err := loadLegacyJSONConfig(cfgPath)
@@ -1994,14 +2015,16 @@ func InitConfig() (*EyvescloudConfig, error) {
 		return nil, err
 	}
 	if ok {
+		AppConfigMu.Lock()
 		AppConfig = legacy
 		normalizeConfigDefaults(dataDir)
 		migrateLoadedConfig()
+		AppConfigMu.Unlock()
 		// Always save legacy JSON data into SQLite.
 		if err := SaveConfig(); err != nil {
 			return nil, err
 		}
-		return AppConfig, nil
+		return legacy, nil
 	}
 
 	adminUser := "admin"
@@ -2018,7 +2041,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 		return nil, fmt.Errorf("failed to hash password: %v", err)
 	}
 
-	AppConfig = &EyvescloudConfig{
+	fresh := &EyvescloudConfig{
 		AdminUser:            adminUser,
 		AdminPassHash:        string(hash),
 		JWTSecret:            jwtSecret,
@@ -2047,6 +2070,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 			TrustedProxies: []string{},
 		},
 		TaskConcurrency:     DefaultTaskConcurrency,
+		TaskQueueMaxPending: DefaultTaskQueueMaxPending,
 		StoragePools:        []StoragePool{defaultPrimaryStoragePool()},
 		MetricRetentionDays: MetricRetentionDefault,
 		AuditRetentionDays:  AuditRetentionDefault,
@@ -2075,6 +2099,11 @@ func InitConfig() (*EyvescloudConfig, error) {
 		AgentPairingKeyExpiry:     pairingKeyExpiry,
 		UpdateSource:              NormalizeUpdateSource(UpdateSource{}),
 	}
+
+	// 同已加载分支：装配全局配置需持写锁，落库前必须解锁（SaveConfig 会重新取锁）。
+	AppConfigMu.Lock()
+	AppConfig = fresh
+	AppConfigMu.Unlock()
 
 	if err := SaveConfig(); err != nil {
 		return nil, err
@@ -2124,7 +2153,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 		fmt.Println()
 	}
 
-	return AppConfig, nil
+	return fresh, nil
 }
 
 // isInteractiveStdout 报告 stdout 是否为交互式终端（字符设备）。
@@ -2195,6 +2224,10 @@ func normalizeConfigDefaults(dataDir string) bool {
 	}
 	if normalized := NormalizeTaskConcurrency(AppConfig.TaskConcurrency); AppConfig.TaskConcurrency != normalized {
 		AppConfig.TaskConcurrency = normalized
+		changed = true
+	}
+	if normalized := NormalizeTaskQueueMaxPending(AppConfig.TaskQueueMaxPending); AppConfig.TaskQueueMaxPending != normalized {
+		AppConfig.TaskQueueMaxPending = normalized
 		changed = true
 	}
 	if AppConfig.DataDir == "" {
@@ -2430,6 +2463,17 @@ func NormalizeTaskConcurrency(value int) int {
 	}
 	if value > MaxTaskConcurrency {
 		return MaxTaskConcurrency
+	}
+	return value
+}
+
+// NormalizeTaskQueueMaxPending 归一化队列背压阈值；<=0 取默认，超上限截断。
+func NormalizeTaskQueueMaxPending(value int) int {
+	if value <= 0 {
+		return DefaultTaskQueueMaxPending
+	}
+	if value > MaxTaskQueueMaxPending {
+		return MaxTaskQueueMaxPending
 	}
 	return value
 }
@@ -2840,6 +2884,11 @@ func CloseConfigDB() {
 		_ = db.Close()
 		db = nil
 	}
+	// 遥测库与配置库生命周期一致；锁序必须保持 dbMu → telemetryMu，
+	// 与 openConfigDB → openTelemetryDB 的顺序一致，避免反向持锁死锁。
+	CloseTelemetryDB()
+	// 连接关闭后行指纹不再代表库内容，清空以便下次 openConfigDB 重新播种。
+	resetPersistedRows()
 }
 
 func ListCustomKVMImages() []CustomKVMImage {
@@ -3006,6 +3055,36 @@ func MutateGlobalLogged(fn func(*EyvescloudConfig)) {
 	}
 }
 
+// MutateGlobalMetaOnly 是 MutateGlobal 的「只改设置」精确模式：fn 在写锁内只修改
+// app_meta 承载的字段，落库只 diff app_meta 键，跳过 O(容器数 + 子用户数 + 目录) 的
+// 指纹扫描（那部分在 30w 容器量级可达秒级，会让整个面板在读锁上排队卡住）。
+// 返回落库错误，语义与 MutateGlobal 完全一致。
+//
+// 契约（务必遵守，否则改动会**静默漏写**）：
+//   - fn 只能改 app_meta 承载的字段（设置 / 标量 / JSON 值集合，见 store_meta.go 的
+//     metaEntries）；
+//   - fn 不得增删改 Containers / Nodes / SubUsers / ApiKeys / Snapshots / Tasks，
+//     也不得改容器的 AccessCode*（它们走独立的行/链接表，本次保存被声明为未改动）。
+//
+// 因此它只用于替换那些经审计确认「只改设置」的 MutateGlobal 站点（#96）。需要同时改
+// 容器/目录类集合时，继续用 MutateGlobal（全量兜底）或按需声明 DirtySet。
+//
+// EnabledImages 是例外：它由始终执行的 diffEnabledImages 处理，不受本契约限制；
+// 有界日志表（audit_logs / login_logs）改内存后自行 MarkLogsDirty 即会重写。
+func MutateGlobalMetaOnly(fn func(*EyvescloudConfig)) error {
+	AppConfigMu.Lock()
+	defer AppConfigMu.Unlock()
+	fn(AppConfig)
+	return saveConfigToDBHinted(newExactDirtySet(DirtySet{}))
+}
+
+// MutateGlobalMetaOnlyLogged 同 MutateGlobalMetaOnly，但落库失败按调用位置留痕。
+func MutateGlobalMetaOnlyLogged(fn func(*EyvescloudConfig)) {
+	if err := MutateGlobalMetaOnly(fn); err != nil {
+		logSaveFailure(err, 2)
+	}
+}
+
 // MutateGlobalSaveIf 在写锁内执行 fn，由 fn 决定本次是否需要落库。
 // 用于心跳等“高频、多数无实质变化”的写入路径：把变更与落库判定放在同一把
 // 锁内，避免重复加锁，并在无实质变化时跳过整库重写（写放大）。落库失败时按
@@ -3019,6 +3098,103 @@ func MutateGlobalSaveIf(fn func(*EyvescloudConfig) bool) bool {
 	if err := saveConfigToDB(); err != nil {
 		logSaveFailure(err, 2)
 	}
+	return true
+}
+
+// MutateGlobalSaveExact 是声明式落库的**精确模式**：fn 在决定是否落库的同时返回一个
+// DirtySet，穷举本次可能变动的节点与容器。保存只处理声明的行，节点/容器指纹表原地
+// 复用，因此落库开销是 O(声明行) 而非 O(全部行)。
+//
+// 契约（两条，都必须满足）：
+//  1. **未列出即视为未变**。fn 必须穷举本次对 cfg.Nodes / cfg.Containers 的所有增删改；
+//     漏报的改动不会落库（不会报错）。
+//  2. **fn 不能改其它集合**。子用户 / API Key / 快照 / 任务在本次保存里被声明为「未改动」，
+//     完全跳过指纹扫描（#97）；若 fn 触碰了它们，改动会静默漏写。需要同时改这些集合
+//     时请用 MutateGlobalSaveIf（全量兜底）。
+//
+// 因为契约很强，它只应用于能穷举改动的高频路径（如心跳只碰本节点上报的节点与容器）。
+//
+// 提交失败时会自动回滚内存指纹表的原地改动，并令下一次保存强制全量补齐。
+func MutateGlobalSaveExact(fn func(*EyvescloudConfig) (bool, DirtySet)) bool {
+	AppConfigMu.Lock()
+	defer AppConfigMu.Unlock()
+	save, set := fn(AppConfig)
+	if !save {
+		return false
+	}
+	if err := saveConfigToDBHinted(newExactDirtySet(set)); err != nil {
+		logSaveFailure(err, 2)
+	}
+	return true
+}
+
+// MutateGlobalSaveCatalogOnly 是声明式落库的「只改目录」精确模式：fn 在写锁内只修改
+// 目录类集合（子用户 / API Key / 快照 / 任务）。落库时节点 / 容器 / 访问码一律沿用
+// 已落库指纹（零指纹、零 SQL），只对目录类集合做行级 diff。
+//
+// 契约：**fn 绝不能增删改 Nodes / Containers，也不得改容器的 AccessCode***，否则这些
+// 改动会静默漏写（不会报错）。需要同时改容器/节点时请用 MutateGlobal（全量兜底）。
+//
+// 实测（#110 基线，8vCPU / 10w 容器 + 3w 节点 + 10w 子用户）：全量兜底保存 **594ms**，
+// 本入口 **153ms（约 4×）**——省掉的是 10w 容器的指纹重算，但目录本身仍要全量扫描，
+// 所以它**不会随目录规模变成 O(1)**。因此「每次请求都写」的路径（api_key.last_used）
+// 不能只靠本入口，还需要节流（见 api/apikey.go）。
+//
+// 这 153ms 的写锁占用会阻塞同期所有读与心跳落库，故管理接口的目录写用它替代全量兜底
+// 仍有价值（594→153ms）。
+//
+// 返回落库错误，语义与 MutateGlobal 完全一致。
+func MutateGlobalSaveCatalogOnly(fn func(*EyvescloudConfig)) error {
+	AppConfigMu.Lock()
+	defer AppConfigMu.Unlock()
+	fn(AppConfig)
+	return saveConfigToDBHinted(newExactCatalogOnlyHint())
+}
+
+// MutateGlobalSaveCatalogExact 是「只改目录」的**精确模式**：fn 在写锁内修改目录类
+// 集合（子用户 / API Key / 快照 / 任务），并返回本次穷举的改动声明（DirtySet 的目录
+// 字段）。落库只处理声明行 —— 节点 / 容器 / 访问码与**未声明的目录行**一律沿用已落库
+// 指纹（零指纹、零 SQL），因此保存成本是 O(声明行) 而非 O(全部目录行)。
+//
+// 用于「每次请求都写一行目录」的热路径（如 api_key.last_used）：目录扫描式保存
+// （MutateGlobalSaveCatalogOnly）在 10w 子用户下约 164ms，本入口为亚毫秒级。
+//
+// 契约：fn 必须穷举本次改动的目录行（**未列出即视为未变，漏声明会静默漏写**），且
+// 绝不能增删改 Nodes / Containers，也不得改容器的 AccessCode*。返回的目录行必须是
+// **改动后的最终值**（在 fn 内先改、再取快照）。
+//
+// 返回落库错误，语义与 MutateGlobal 完全一致。
+func MutateGlobalSaveCatalogExact(fn func(*EyvescloudConfig) DirtySet) error {
+	AppConfigMu.Lock()
+	defer AppConfigMu.Unlock()
+	set := fn(AppConfig)
+	return saveConfigToDBHinted(newExactCatalogSet(set))
+}
+
+// MutateGlobalSaveDeferred 是心跳专用的写入入口：在写锁内执行 fn，改动**立即**对
+// 读路径可见（面板读内存），但落库被并入后台批次按窗口合并成一个事务
+// （见 store_batch.go）。fn 返回本次改动过的行标识（DirtyIDs）。
+//
+// 与 MutateGlobalSaveExact 的取舍：它把「提交」从请求路径上摘掉，代价是崩溃时最多
+// 丢一个窗口的遥测（agent 下个心跳会重发）。心跳是全仓唯一「高频 + 改行极少 + 数据
+// 可重放」的路径，因此只有它适合用这个入口；其它写入路径请继续用同步落库。
+//
+// 同样有「fn 不能改目录类集合」的契约（未声明即视为未变，见 MutateGlobalSaveExact）。
+func MutateGlobalSaveDeferred(fn func(*EyvescloudConfig) (bool, DirtyIDs)) bool {
+	AppConfigMu.Lock()
+	if AppConfig == nil {
+		AppConfigMu.Unlock()
+		return false
+	}
+	save, ids := fn(AppConfig)
+	if !save {
+		AppConfigMu.Unlock()
+		return false
+	}
+	// 在锁内入队：否则解锁到入队之间该行又被改动时，批里记的标识虽然仍是同一个
+	// （提交时按标识重新读值），但会出现「改动的行不在任何批里」的窗口。
+	deferredSaves.add(ids)
+	AppConfigMu.Unlock()
 	return true
 }
 
@@ -3062,7 +3238,7 @@ func ListAllScheduledActions() []ScheduledAction {
 
 // SaveScheduledAction 保存（upsert）定时任务。
 func SaveScheduledAction(a ScheduledAction) error {
-	return MutateGlobal(func(cfg *EyvescloudConfig) {
+	return MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		found := false
 		for i := range cfg.ScheduledActions {
 			if cfg.ScheduledActions[i].ID == a.ID {
@@ -3079,7 +3255,7 @@ func SaveScheduledAction(a ScheduledAction) error {
 
 // DeleteScheduledAction 删除某容器的某条定时任务。
 func DeleteScheduledAction(containerID int, actionID string) error {
-	return MutateGlobal(func(cfg *EyvescloudConfig) {
+	return MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		out := cfg.ScheduledActions[:0]
 		for _, a := range cfg.ScheduledActions {
 			if a.ContainerID == containerID && a.ID == actionID {
@@ -3267,14 +3443,14 @@ func GetInstanceBackupSettings() InstanceBackupSettings {
 
 // UpdateInstanceBackupSettings replaces the automatic instance-backup settings.
 func UpdateInstanceBackupSettings(settings InstanceBackupSettings) {
-	MutateGlobal(func(cfg *EyvescloudConfig) {
+	MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		cfg.InstanceBackupSettings = settings
 	})
 }
 
 // UpdateInstanceBackupLastRun records the last scheduled instance-backup run time.
 func UpdateInstanceBackupLastRun(at string) {
-	MutateGlobal(func(cfg *EyvescloudConfig) {
+	MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		cfg.InstanceBackupSettings.LastRunAt = at
 	})
 }
@@ -3291,14 +3467,14 @@ func GetRemoteBackupSettings() RemoteBackupSettings {
 
 // UpdateRemoteBackupSettings replaces the off-site backup target settings.
 func UpdateRemoteBackupSettings(settings RemoteBackupSettings) {
-	MutateGlobal(func(cfg *EyvescloudConfig) {
+	MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		cfg.RemoteBackupSettings = settings
 	})
 }
 
 // RecordRemoteBackupResult records the outcome of the last off-site sync attempt.
 func RecordRemoteBackupResult(ok bool, errMsg string) {
-	MutateGlobal(func(cfg *EyvescloudConfig) {
+	MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		if ok {
 			cfg.RemoteBackupSettings.LastResult = "success"
 			cfg.RemoteBackupSettings.LastError = ""
@@ -3312,7 +3488,7 @@ func RecordRemoteBackupResult(ok bool, errMsg string) {
 
 // SetInstanceBackupRemoteStatus updates the off-site upload status of one backup record.
 func SetInstanceBackupRemoteStatus(id string, uploaded bool, errMsg string) {
-	MutateGlobal(func(cfg *EyvescloudConfig) {
+	MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.InstanceBackups {
 			if cfg.InstanceBackups[i].ID == id {
 				cfg.InstanceBackups[i].RemoteUploaded = uploaded
@@ -3365,10 +3541,8 @@ func ReconcileConfig() error {
 func FindNode(id string) (Node, bool) {
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
-	for _, n := range AppConfig.Nodes {
-		if n.ID == id {
-			return n, true
-		}
+	if i, ok := FindNodeIndexUnlocked(id); ok {
+		return AppConfig.Nodes[i], true
 	}
 	return Node{}, false
 }
@@ -3411,9 +3585,17 @@ func UpdateNode(id string, fn func(*Node)) (Node, bool) {
 	return updated, ok
 }
 
-// RemoveNode removes a managed node by ID.
-func RemoveNode(id string) bool {
+// RemoveNode removes a managed node by ID together with the container records that
+// belong to it (matched by NodeID). 返回 (是否移除节点, 被一并移除的容器数)。
+//
+// 为什么级联：节点被移除后，其容器记录会带着悬空的 node_id 残留成「幽灵实例」
+// ——列表里照常显示，但既不会被该节点心跳刷新（节点没了），也无法被 orphan 检测
+// 修复（orphan 依赖节点继续上报才有对账机会）。因此在同一次改动里把它的容器一并
+// 移除，是唯一自洽的状态；子表（端口映射 / 公网地址 / 访问码）由行级落库随容器
+// 删除一并清理。
+func RemoveNode(id string) (bool, int) {
 	removed := false
+	removedContainers := 0
 	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
 		filtered := make([]Node, 0, len(cfg.Nodes))
 		for _, n := range cfg.Nodes {
@@ -3424,8 +3606,19 @@ func RemoveNode(id string) bool {
 			filtered = append(filtered, n)
 		}
 		cfg.Nodes = filtered
+		if removed {
+			out := cfg.Containers[:0]
+			for i := range cfg.Containers {
+				if cfg.Containers[i].NodeID == id {
+					continue
+				}
+				out = append(out, cfg.Containers[i])
+			}
+			removedContainers = len(cfg.Containers) - len(out)
+			cfg.Containers = out
+		}
 	})
-	return removed
+	return removed, removedContainers
 }
 
 // -------- NodeGroup helpers --------
@@ -3448,7 +3641,7 @@ func AddNodeGroup(ng NodeGroup) (NodeGroup, error) {
 	if ng.CreatedAt == "" {
 		ng.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
 	}
-	err := MutateGlobal(func(cfg *EyvescloudConfig) {
+	err := MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		if cfg.NodeGroups == nil {
 			cfg.NodeGroups = make([]NodeGroup, 0)
 		}
@@ -3460,7 +3653,7 @@ func AddNodeGroup(ng NodeGroup) (NodeGroup, error) {
 func UpdateNodeGroup(id string, fn func(*NodeGroup)) (NodeGroup, bool) {
 	var found bool
 	var result NodeGroup
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.NodeGroups {
 			if cfg.NodeGroups[i].ID == id {
 				fn(&cfg.NodeGroups[i])
@@ -3515,7 +3708,7 @@ func AddCluster(cl Cluster) (Cluster, error) {
 	if cl.CreatedAt == "" {
 		cl.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
 	}
-	err := MutateGlobal(func(cfg *EyvescloudConfig) {
+	err := MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		if cfg.Clusters == nil {
 			cfg.Clusters = make([]Cluster, 0)
 		}
@@ -3527,7 +3720,7 @@ func AddCluster(cl Cluster) (Cluster, error) {
 func UpdateCluster(id string, fn func(*Cluster)) (Cluster, bool) {
 	var found bool
 	var result Cluster
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.Clusters {
 			if cfg.Clusters[i].ID == id {
 				fn(&cfg.Clusters[i])
@@ -3948,6 +4141,7 @@ func EnsureContainerAccessCredentials(c *Container) bool {
 // RecycleRetentionDays 默认回收站保留天数（超过后自动彻底删除）。
 // 可用 app_meta 键 recycle_retention_days 覆盖；0/负值按默认处理。
 const RecycleRetentionDays = 7
+
 // RecycleContainer 把实例移入回收站（软删除）：打标记并停机（运行中时）。
 // 返回 (实例名, 是否在运行)。数据面不动，恢复=清标记。
 func RecycleContainer(id int, reason string) (string, bool, error) {
@@ -4390,13 +4584,12 @@ func AddAuditLog(action, target, detail, user string) {
 	AppConfigMu.Unlock()
 	if err := appendAuditLogRow(log, auditLogKeep); err != nil {
 		logSaveFailure(err, 2)
+		// 追加落库失败：内存已有此行而库没有，置脏让下一次保存把有界表重写回一致。
+		MarkLogsDirty()
 	}
 }
 
 func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success bool, errMsg string) {
-	if AppConfig == nil {
-		return
-	}
 	s := success
 	log := AuditLog{
 		Time:      time.Now().Format("2006-01-02 15:04:05"),
@@ -4409,7 +4602,13 @@ func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success
 		Success:   &s,
 		Error:     errMsg,
 	}
+	// nil 判断必须在锁内：AppConfig 是可在运行期被替换的全局指针（测试注入 / 重载），
+	// 锁外读会与替换操作构成数据竞争（见 go test -race）。
 	AppConfigMu.Lock()
+	if AppConfig == nil {
+		AppConfigMu.Unlock()
+		return
+	}
 	if n := len(AppConfig.AuditLogs); n > 0 {
 		log.PrevHash = AppConfig.AuditLogs[n-1].Hash
 	}
@@ -4421,6 +4620,7 @@ func AddAuditLogFull(action, target, detail, user, ip, userAgent string, success
 	AppConfigMu.Unlock()
 	if err := appendAuditLogRow(log, auditLogKeep); err != nil {
 		logSaveFailure(err, 2)
+		MarkLogsDirty()
 	}
 }
 
@@ -4472,6 +4672,7 @@ func AddLoginLog(username, ip, userAgent string, success bool) {
 	AppConfigMu.Unlock()
 	if err := appendLoginLogRow(log, loginLogKeep); err != nil {
 		logSaveFailure(err, 2)
+		MarkLogsDirty()
 	}
 }
 

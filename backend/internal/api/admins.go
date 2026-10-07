@@ -164,7 +164,7 @@ func createAdmin(w http.ResponseWriter, r *http.Request) {
 		Role:      role,
 		CreatedAt: time.Now().Format("2006-01-02 15:04:05"),
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Admins = append(cfg.Admins, acct)
 	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
@@ -226,7 +226,7 @@ func updateAdmin(w http.ResponseWriter, r *http.Request, ctx AuthContext, id str
 		newDisabled = *req.Disabled
 	}
 
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Admins {
 			if cfg.Admins[i].ID != id {
 				continue
@@ -263,7 +263,7 @@ func deleteAdmin(w http.ResponseWriter, r *http.Request, ctx AuthContext, id str
 		return
 	}
 	removed := false
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		filtered := cfg.Admins[:0]
 		for _, a := range cfg.Admins {
 			if a.ID == id {

@@ -395,7 +395,7 @@ func HandleMetricRetentionSettings(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "retention_days must be 0-3650"})
 			return
 		}
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) { cfg.MetricRetentionDays = req.RetentionDays })
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) { cfg.MetricRetentionDays = req.RetentionDays })
 		auditRequest(r, "metric.retention", "metrics", fmt.Sprintf("retention_days=%d", req.RetentionDays), true, "")
 		if req.RetentionDays > 0 {
 			cutoff := time.Now().Add(-time.Duration(req.RetentionDays) * 24 * time.Hour).UnixMilli()

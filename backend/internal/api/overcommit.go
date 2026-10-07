@@ -75,7 +75,7 @@ func HandleOvercommitSettings(w http.ResponseWriter, r *http.Request) {
 		} else {
 			ksm = config.GetKSMTuning()
 		}
-		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		saveErr := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.MemoryOvercommitEnabled = req.MemoryOvercommitEnabled
 			cfg.MemoryOvercommitRatio = req.MemoryOvercommitRatio
 			cfg.NATSubnetOversubscription = req.NATSubnetOversubscription

@@ -183,7 +183,7 @@ func createSSHKey(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
 	}
 
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		cfg.SSHKeys = append(cfg.SSHKeys, newKey)
 	})
 	auditRequest(r, "ssh_key.create", newKey.Name, fmt.Sprintf("fingerprint=%s", fingerprint), true, "")
@@ -237,7 +237,7 @@ func updateSSHKey(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Name too long"})
 		return
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SSHKeys {
 			if cfg.SSHKeys[i].ID == id {
 				cfg.SSHKeys[i].Name = name

@@ -270,7 +270,7 @@ func createSecGroup(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		cfg.SecGroups = append(cfg.SecGroups, group)
 	})
 	auditRequest(r, "secgroup.create", group.Name, "id="+group.ID, true, "")
@@ -291,7 +291,7 @@ func updateSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Security group not found"})
 		return
 	}
-	saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	saveErr := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SecGroups {
 			if cfg.SecGroups[i].ID == id {
 				if req.Name != nil {
@@ -337,7 +337,7 @@ func deleteSecGroup(w http.ResponseWriter, r *http.Request, id string) {
 		})
 		return
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		newGroups := make([]secgroup.Group, 0, len(cfg.SecGroups))
 		for _, g := range cfg.SecGroups {
 			if g.ID != id {
@@ -403,7 +403,7 @@ func createSecGroupRule(w http.ResponseWriter, r *http.Request, groupID string) 
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: err.Error()})
 		return
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		cfg.SecGroupRules = append(cfg.SecGroupRules, rule)
 	})
 	auditRequest(r, "secgroup.rule_create", groupID, "rule_id="+rule.ID, true, "")
@@ -433,7 +433,7 @@ func replaceAllSecGroupRules(w http.ResponseWriter, r *http.Request, groupID str
 			return
 		}
 	}
-	config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 		remaining := make([]secgroup.Rule, 0, len(cfg.SecGroupRules))
 		for _, r := range cfg.SecGroupRules {
 			if r.GroupID != groupID {
@@ -469,7 +469,7 @@ func handleSecGroupRuleItem(w http.ResponseWriter, r *http.Request, groupID, rul
 			jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Invalid request body"})
 			return
 		}
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SecGroupRules {
 				if cfg.SecGroupRules[i].ID == ruleID && cfg.SecGroupRules[i].GroupID == groupID {
 					if req.Direction != nil {
@@ -505,7 +505,7 @@ func handleSecGroupRuleItem(w http.ResponseWriter, r *http.Request, groupID, rul
 		})
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true})
 	case http.MethodDelete:
-		config.MutateGlobalLogged(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalMetaOnlyLogged(func(cfg *config.EyvescloudConfig) {
 			remaining := make([]secgroup.Rule, 0, len(cfg.SecGroupRules))
 			for _, r := range cfg.SecGroupRules {
 				if !(r.ID == ruleID && r.GroupID == groupID) {

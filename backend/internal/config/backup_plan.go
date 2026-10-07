@@ -86,7 +86,7 @@ func AddBackupPlan(p BackupPlan) (BackupPlan, bool) {
 		p.CreatedAt = backupPlanNow()
 	}
 	added := false
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.BackupPlans {
 			if cfg.BackupPlans[i].ID == p.ID {
 				return
@@ -108,7 +108,7 @@ func UpdateBackupPlan(p BackupPlan) bool {
 		return false
 	}
 	updated := false
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.BackupPlans {
 			if cfg.BackupPlans[i].ID == p.ID {
 				cfg.BackupPlans[i] = p
@@ -127,7 +127,7 @@ func RemoveBackupPlan(id string) bool {
 		return false
 	}
 	removed := false
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.BackupPlans {
 			if cfg.BackupPlans[i].ID == id {
 				cfg.BackupPlans = append(cfg.BackupPlans[:i], cfg.BackupPlans[i+1:]...)
@@ -146,7 +146,7 @@ func RecordBackupPlanRun(id string, run BackupPlanRun, nextRunAt string) {
 	if id == "" {
 		return
 	}
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.BackupPlans {
 			if cfg.BackupPlans[i].ID != id {
 				continue
@@ -173,7 +173,7 @@ func SetBackupPlanNextRun(id, nextRunAt string) {
 	if id == "" {
 		return
 	}
-	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
 		for i := range cfg.BackupPlans {
 			if cfg.BackupPlans[i].ID == id {
 				cfg.BackupPlans[i].NextRunAt = nextRunAt

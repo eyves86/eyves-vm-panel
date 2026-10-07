@@ -12,7 +12,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"eyvescloud/internal/api"
@@ -440,14 +439,6 @@ func readMemInfo() (totalKB, availableKB int64, ok bool) {
 		}
 	}
 	return totalKB, availableKB, totalKB > 0
-}
-
-func diskUsage(path string) (total, free int64, ok bool) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		return 0, 0, false
-	}
-	return int64(stat.Blocks) * int64(stat.Bsize), int64(stat.Bavail) * int64(stat.Bsize), true
 }
 
 func osName() string {

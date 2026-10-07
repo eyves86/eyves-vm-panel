@@ -117,7 +117,7 @@ func dispatch(req Request) Response {
 			return Response{OK: true, Output: "新账号与当前账号相同，无需更改。\n"}
 		}
 		old := cfg.AdminUser
-		if err := config.MutateGlobal(func(c *config.EyvescloudConfig) {
+		if err := config.MutateGlobalMetaOnly(func(c *config.EyvescloudConfig) {
 			c.AdminUser = newUser
 			c.AdminTokenVersion++
 		}); err != nil {

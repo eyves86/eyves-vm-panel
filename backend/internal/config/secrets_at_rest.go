@@ -67,6 +67,111 @@ func DecryptSecretSlice(values []string) []string {
 	return out
 }
 
+// ---- 混有普通字段与凭据字段的 JSON 值的落库加解密 ----
+//
+// 有些配置在 app_meta 里以「一个 JSON 值」落库，但其中只有个别字段是凭据
+// （Webhooks[].secret、SMTPSettings.password、NotificationConfig.smtp_password），
+// 其余字段是普通设置。若整值按明文落库，凭据就明文躺在 SQLite 里——DB 或配置
+// 备份泄露即等于交出 SMTP 账号 / 可伪造的 webhook 回调。
+//
+// 处理方式：指纹仍取**明文**结构（密文含随机 nonce，按密文取指纹会「每次都变了」
+// 导致每次保存都重写），仅在 build（落库）时把列出的字段替换为密文，load 时还原。
+// storedSane 逐字段校验历史明文并触发一次透明重加密。
+
+// marshalEncryptingFields 序列化 v，并把 JSON 文档里名为 fields 的字符串字段
+// 就地替换为 at-rest 密文（空串原样返回）。仅用于落库边界。
+func marshalEncryptingFields(v any, fields []string) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	if len(fields) == 0 {
+		return string(b), nil
+	}
+	var doc any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		return "", err
+	}
+	transformJSONStringFields(doc, fields, EncryptSecretAtRest)
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// unmarshalDecryptingFields 是 marshalEncryptingFields 的逆操作：解析 raw 后把
+// fields 列出的字段解密，再反序列化进 dst。存量明文（无前缀）原样通过。
+func unmarshalDecryptingFields(raw string, dst any, fields []string) error {
+	if len(fields) == 0 {
+		return json.Unmarshal([]byte(raw), dst)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return err
+	}
+	transformJSONStringFields(doc, fields, DecryptSecretAtRest)
+	b, err := json.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, dst)
+}
+
+// transformJSONStringFields 递归遍历 JSON 文档（对象/数组），把其中名为 fields
+// 的非空字符串字段就地替换为 fn(值)。
+func transformJSONStringFields(v any, fields []string, fn func(string) string) {
+	switch t := v.(type) {
+	case map[string]any:
+		for _, f := range fields {
+			if s, ok := t[f].(string); ok && s != "" {
+				t[f] = fn(s)
+			}
+		}
+		for _, child := range t {
+			transformJSONStringFields(child, fields, fn)
+		}
+	case []any:
+		for _, child := range t {
+			transformJSONStringFields(child, fields, fn)
+		}
+	}
+}
+
+// jsonFieldsEncryptedSane：raw 中 fields 列出的字段若存在非空明文（无 enc:v1:
+// 前缀）则返回 false（需要重写一次完成透明重加密）。解析失败按 true —— 损坏数据
+// 由加载侧按空处理，不因此反复重写。
+func jsonFieldsEncryptedSane(raw string, fields []string) bool {
+	var doc any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return true
+	}
+	return jsonFieldsEncryptedOK(doc, fields)
+}
+
+func jsonFieldsEncryptedOK(v any, fields []string) bool {
+	switch t := v.(type) {
+	case map[string]any:
+		for _, f := range fields {
+			if s, ok := t[f].(string); ok && s != "" && !strings.HasPrefix(s, nodeTokenEncPrefix) {
+				return false
+			}
+		}
+		for _, child := range t {
+			if !jsonFieldsEncryptedOK(child, fields) {
+				return false
+			}
+		}
+	case []any:
+		for _, child := range t {
+			if !jsonFieldsEncryptedOK(child, fields) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // EncryptSecretsForExport 就地加密"导出到磁盘/外部"的凭据副本。
 //
 // 适用场景：配置备份 JSON、迁移包等会把整份配置序列化到磁盘或通过网络传输。
@@ -101,6 +206,10 @@ func EncryptSecretsForExport(cfg *EyvescloudConfig) {
 	cfg.JWTSecret = EncryptSecretAtRest(cfg.JWTSecret)
 	for i := range cfg.Webhooks {
 		cfg.Webhooks[i].Secret = EncryptSecretAtRest(cfg.Webhooks[i].Secret)
+	}
+	// 通知配置里的 SMTP 口令与 SMTPSettings.password 同级敏感。
+	if cfg.Notifications.SMTPPassword != "" {
+		cfg.Notifications.SMTPPassword = EncryptSecretAtRest(cfg.Notifications.SMTPPassword)
 	}
 	for i := range cfg.SubUsers {
 		cfg.SubUsers[i].Password = EncryptSecretAtRest(cfg.SubUsers[i].Password)
@@ -179,6 +288,7 @@ func DecryptSecretsAfterImport(cfg *EyvescloudConfig) []string {
 	for i := range cfg.Webhooks {
 		cfg.Webhooks[i].Secret = decryptField("webhook:"+cfg.Webhooks[i].ID+".secret", cfg.Webhooks[i].Secret)
 	}
+	cfg.Notifications.SMTPPassword = decryptField("notifications.smtp_password", cfg.Notifications.SMTPPassword)
 	for i := range cfg.SubUsers {
 		cfg.SubUsers[i].Password = decryptField("sub_user:"+cfg.SubUsers[i].Username+".password", cfg.SubUsers[i].Password)
 		cfg.SubUsers[i].AccessCode = decryptField("sub_user:"+cfg.SubUsers[i].Username+".access_code", cfg.SubUsers[i].AccessCode)

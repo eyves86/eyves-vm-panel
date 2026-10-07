@@ -52,7 +52,7 @@ func handleLoginFooterUpdate(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "版权文字不能超过 120 个字符"})
 		return
 	}
-	if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.LoginFooterText = text
 		cfg.LoginFooterHidden = req.Hidden
 	}); err != nil {

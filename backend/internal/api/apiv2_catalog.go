@@ -348,7 +348,7 @@ func v2ISODelete(w http.ResponseWriter, r *http.Request) {
 	}
 	isoID := strings.TrimSpace(r.PathValue("id"))
 	var removed *config.ISOFile
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.ISOFiles[:0]
 		for i := range cfg.ISOFiles {
 			if cfg.ISOFiles[i].ID == isoID {
@@ -494,7 +494,7 @@ func v2SSHKeysCreate(w http.ResponseWriter, r *http.Request) {
 		key.Type = "admin"
 		key.OwnerID = ""
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.SSHKeys = append(cfg.SSHKeys, key)
 	})
 	auditRequest(r, "api.v2.ssh_key.create", key.Name, key.Fingerprint, true, "")
@@ -510,7 +510,7 @@ func v2SSHKeysDelete(w http.ResponseWriter, r *http.Request) {
 	keyID := strings.TrimSpace(r.PathValue("id"))
 	ctx := v2AuthContext(r)
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.SSHKeys[:0]
 		for i := range cfg.SSHKeys {
 			if cfg.SSHKeys[i].ID != keyID {
@@ -589,7 +589,7 @@ func v2SecGroupsCreate(w http.ResponseWriter, r *http.Request) {
 		TenantID:      strings.TrimSpace(req.TenantID),
 		DefaultAction: action,
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.SecGroups = append(cfg.SecGroups, group)
 	})
 	auditRequest(r, "api.v2.security_group.create", group.Name, "", true, "")
@@ -640,7 +640,7 @@ func v2SecGroupUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SecGroups {
 			if cfg.SecGroups[i].ID != groupID {
 				continue
@@ -670,7 +670,7 @@ func v2SecGroupDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	groupID := strings.TrimSpace(r.PathValue("id"))
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.SecGroups[:0]
 		for i := range cfg.SecGroups {
 			if cfg.SecGroups[i].ID == groupID {
@@ -785,7 +785,7 @@ func v2SecGroupRuleCreate(w http.ResponseWriter, r *http.Request) {
 		Action:    action,
 		Priority:  req.Priority,
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.SecGroupRules = append(cfg.SecGroupRules, rule)
 	})
 	auditRequest(r, "api.v2.security_group.rule.create", groupID, rule.ID, true, "")
@@ -799,7 +799,7 @@ func v2SecGroupRuleDelete(w http.ResponseWriter, r *http.Request) {
 	groupID := strings.TrimSpace(r.PathValue("id"))
 	ruleID := strings.TrimSpace(r.PathValue("rid"))
 	removed := false
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.SecGroupRules[:0]
 		for i := range cfg.SecGroupRules {
 			if cfg.SecGroupRules[i].ID == ruleID && cfg.SecGroupRules[i].GroupID == groupID {

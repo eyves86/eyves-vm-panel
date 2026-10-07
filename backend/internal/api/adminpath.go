@@ -49,7 +49,7 @@ func HandleAdminPathSettings(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.AdminPath = normalized
 		}); err != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})

@@ -7,8 +7,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
+
+// fsStat 是 statfs 结果的最小可移植投影：只需要块大小与块数量来算容量。
+// 具体平台的取数在 statfs_linux.go / statfs_other.go 里，避免把 Linux 专有的
+// syscall.Statfs_t 泄漏到公共结构体上。
+type fsStat struct {
+	Bsize  int64
+	Blocks uint64
+	Bavail uint64
+}
 
 // NFS 池配置 K/V（来自 StoragePool.Config）。
 //
@@ -45,12 +53,12 @@ type NFSBackend struct {
 	export   string
 	options  []string
 	runner   CommandRunner
-	statfsSys func(path string) (syscall.Statfs_t, error)
+	statfsSys func(path string) (fsStat, error)
 }
 
 // NewNFSBackend 构造 NFS 后端实例。
 //   - config 必须包含 server + export；mount_options 可空；
-//   - mountSys / statfsSys 注入点便于测试，nil 走 syscall.Mount / syscall.Statfs；
+//   - statfsSys 是注入点便于测试，nil 走平台 statfs（见 statfs_linux.go）；
 //   - runner 为 nil 退化为 OSCommandRunner。
 func NewNFSBackend(poolID, poolPath string, config map[string]string, runner CommandRunner) (*NFSBackend, error) {
 	server := strings.TrimSpace(configValue(config, NFSConfigKeyServer))
@@ -187,7 +195,7 @@ func (b *NFSBackend) VolumeInfo(vol Volume) (VolumeInfoResult, error) {
 		return info, nil
 	}
 	info.Status = "available"
-	info.ActualSizeMB = int64(st.Bsize) * int64(st.Blocks) / (1024 * 1024)
+	info.ActualSizeMB = st.Bsize * int64(st.Blocks) / (1024 * 1024)
 	return info, nil
 }
 
@@ -197,8 +205,8 @@ func (b *NFSBackend) PoolStats() (usedBytes, availBytes int64, ok bool) {
 	if err != nil {
 		return 0, 0, false
 	}
-	total := int64(st.Bsize) * int64(st.Blocks)
-	free := int64(st.Bsize) * int64(st.Bavail)
+	total := st.Bsize * int64(st.Blocks)
+	free := st.Bsize * int64(st.Bavail)
 	return total - free, free, true
 }
 
@@ -231,16 +239,12 @@ func (b *NFSBackend) volumePath(volID string) string {
 	return filepath.Join(b.poolPath, volID)
 }
 
-// statfs 包裹 syscall.Statfs（注入点便于测试）。
-func (b *NFSBackend) statfs(path string) (syscall.Statfs_t, error) {
+// statfs 包裹平台 statfs（注入点便于测试）。
+func (b *NFSBackend) statfs(path string) (fsStat, error) {
 	if b.statfsSys != nil {
 		return b.statfsSys(path)
 	}
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return st, err
-	}
-	return st, nil
+	return sysStatfs(path)
 }
 
 // osMkdirAll / osRemoveAll / osCopyTree 复刻 dir.go 内的本地实现，避免跨后端共享

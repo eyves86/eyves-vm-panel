@@ -891,9 +891,13 @@ func v2InstanceDelete(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		taskIDs := globalQueue.EnqueueBatchWithAudit(TaskDelete, []int{c.ID}, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		taskIDs, err := globalQueue.EnqueueBatchWithAuditChecked(TaskDelete, []int{c.ID}, "", v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		if err != nil {
+			v2QueueFull(w, r, err, taskIDs)
+			return
+		}
 		auditRequest(r, "api.v2.instance.delete", c.Name, "彻底删除", true, "")
-		v2Accepted(w, r, map[string]interface{}{"task_ids": taskIDs, "id": c.ID, "name": c.Name, "purged": true})
+		v2Accepted(w, r, map[string]interface{}{"task_ids": outcomeIDs(taskIDs), "id": c.ID, "name": c.Name, "purged": true})
 		return
 	}
 	// 默认：软删除进回收站（数据面不动）。
@@ -956,32 +960,32 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 挂起/到期/超流量拦截（与面板一致：电源类操作全部禁止）。
-		if taskAction == "start" || taskAction == "restart" || taskAction == "unsuspend" {
-			switch {
-			case c.Suspended && taskAction != "unsuspend":
-				v2Precondition(w, r, "实例已挂起（欠费停机），不允许开机")
-				return
-			case lxc.IsExpired(*c) && taskAction != "unsuspend":
-				v2Precondition(w, r, "实例已到期，不允许开机")
-				return
-			case lxc.IsTrafficExceeded(*c) && taskAction != "unsuspend":
-				v2Precondition(w, r, "实例流量已超限，不允许开机")
+	if taskAction == "start" || taskAction == "restart" || taskAction == "unsuspend" {
+		switch {
+		case c.Suspended && taskAction != "unsuspend":
+			v2Precondition(w, r, "实例已挂起（欠费停机），不允许开机")
+			return
+		case lxc.IsExpired(*c) && taskAction != "unsuspend":
+			v2Precondition(w, r, "实例已到期，不允许开机")
+			return
+		case lxc.IsTrafficExceeded(*c) && taskAction != "unsuspend":
+			v2Precondition(w, r, "实例流量已超限，不允许开机")
+			return
+		}
+	}
+	// 节点实例：agent 有 suspend/unsuspend 动作，直接代理。
+	if c.NodeID != "" && (taskAction == "suspend" || taskAction == "unsuspend") {
+		handled, nodeName, err := v2ProxyInstanceToNode(r, c, taskAction, nil)
+		if handled {
+			if err != nil {
+				v2Upstream(w, r, err.Error())
 				return
 			}
+			auditRequest(r, "api.v2.instance.power", c.Name, "action="+action+" node="+nodeName, true, "")
+			v2Accepted(w, r, map[string]interface{}{"id": c.ID, "action": action, "node_id": c.NodeID})
+			return
 		}
-		// 节点实例：agent 有 suspend/unsuspend 动作，直接代理。
-		if c.NodeID != "" && (taskAction == "suspend" || taskAction == "unsuspend") {
-			handled, nodeName, err := v2ProxyInstanceToNode(r, c, taskAction, nil)
-			if handled {
-				if err != nil {
-					v2Upstream(w, r, err.Error())
-					return
-				}
-				auditRequest(r, "api.v2.instance.power", c.Name, "action="+action+" node="+nodeName, true, "")
-				v2Accepted(w, r, map[string]interface{}{"id": c.ID, "action": action, "node_id": c.NodeID})
-				return
-			}
-		}
+	}
 	// 跨节点实例：代理到被控执行。
 	if c.NodeID != "" {
 		node, ok := config.FindNode(c.NodeID)
@@ -1020,9 +1024,17 @@ func v2InstancePower(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 本机：入任务队列（异步执行，返回 task_ids 供轮询）。
-	taskIDs := globalQueue.EnqueueWithAudit(c.ID, c.Name, taskActionOfV2(taskAction), "", nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	taskOutcomes, qErr := globalQueue.EnqueueWithAuditChecked(c.ID, c.Name, taskActionOfV2(taskAction), "", nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	if qErr != nil {
+		v2QueueFull(w, r, qErr, taskOutcomes)
+		return
+	}
 	auditRequest(r, "api.v2.instance.power", c.Name, "action="+action, true, "")
-	v2Accepted(w, r, map[string]interface{}{"id": c.ID, "action": action, "task_ids": taskIDs})
+	v2Data := map[string]interface{}{"id": c.ID, "action": action, "task_ids": outcomeIDs(taskOutcomes)}
+	if countDeduped(taskOutcomes) > 0 {
+		v2Data["deduped"] = true
+	}
+	v2Accepted(w, r, v2Data)
 }
 
 // suspendLocalContainer 已并入 suspendContainer 复用路径（v2 power 挂起/恢复直接
@@ -1098,9 +1110,13 @@ func v2InstanceReinstall(w http.ResponseWriter, r *http.Request) {
 		v2Accepted(w, r, map[string]interface{}{"id": c.ID, "template_id": req.TemplateID, "node_id": node.ID})
 		return
 	}
-	taskIDs := globalQueue.EnqueueWithAudit(c.ID, c.Name, "reinstall", req.TemplateID, nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	taskOutcomes, qErr := globalQueue.EnqueueWithAuditChecked(c.ID, c.Name, "reinstall", req.TemplateID, nil, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+	if qErr != nil {
+		v2QueueFull(w, r, qErr, taskOutcomes)
+		return
+	}
 	auditRequest(r, "api.v2.instance.reinstall", c.Name, "template="+req.TemplateID, true, "")
-	v2Accepted(w, r, map[string]interface{}{"id": c.ID, "template_id": req.TemplateID, "task_ids": taskIDs})
+	v2Accepted(w, r, map[string]interface{}{"id": c.ID, "template_id": req.TemplateID, "task_ids": outcomeIDs(taskOutcomes)})
 }
 
 // v2InstanceResetPassword POST /instances/{id}/reset-password {password?, ssh_key_ids?}
@@ -1810,10 +1826,10 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 			task  TaskType
 			agent string
 		}{
-			"start":        {TaskStart, "start"},
-			"stop":         {TaskStop, "stop"},
-			"shutdown":     {TaskStop, "stop"},
-			"restart":      {TaskRestart, "restart"},
+			"start":    {TaskStart, "start"},
+			"stop":     {TaskStop, "stop"},
+			"shutdown": {TaskStop, "stop"},
+			"restart":  {TaskRestart, "restart"},
 			// hard-stop/hard-restart 映射到 force-stop（强制断电，不删除）；
 			// 绝不能映射 destroy（= lxc-destroy，会真删除实例）。
 			"hard-stop":    {TaskStop, "force-stop"},
@@ -1882,14 +1898,22 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		proxied = append(proxied, map[string]interface{}{"id": id, "name": c.Name, "node": nodeName})
 	}
-	var taskIDs []string
+	var taskOutcomes []EnqueueOutcome
 	if len(localIDs) > 0 {
-		taskIDs = globalQueue.EnqueueBatchWithAudit(taskType, localIDs, req.TemplateID, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		res, qErr := globalQueue.EnqueueBatchWithAuditChecked(taskType, localIDs, req.TemplateID, v2AuthContext(r).Username, clientIP(r), r.UserAgent())
+		taskOutcomes = res
+		if qErr != nil {
+			// 背压：节点侧已完成的部分仍需回报，避免调用方误以为整批失败。
+			auditRequest(r, "api.v2.instances.batch."+action, fmt.Sprintf("%v", allowed),
+				fmt.Sprintf("批量 %s 部分入队（队列已满；本机 %d / 已受理 %d / 节点 %d / 失败 %d）", action, len(localIDs), len(res), len(proxied), len(failures)), false, "")
+			v2QueueFull(w, r, qErr, res)
+			return
+		}
 	}
 	auditRequest(r, "api.v2.instances.batch."+action, fmt.Sprintf("%v", allowed),
 		fmt.Sprintf("批量 %s（本机 %d / 节点 %d / 失败 %d）", action, len(localIDs), len(proxied), len(failures)), true, "")
 	v2Accepted(w, r, map[string]interface{}{
-		"action": action, "task_ids": taskIDs, "local_count": len(localIDs),
+		"action": action, "task_ids": outcomeIDs(taskOutcomes), "local_count": len(localIDs),
 		"proxied": proxied, "failures": failures, "skipped": skipped,
 	})
 }

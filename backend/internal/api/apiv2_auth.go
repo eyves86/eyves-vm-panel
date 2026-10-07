@@ -85,7 +85,7 @@ func v2LoginAdmin(w http.ResponseWriter, r *http.Request, req v2LoginRequest) {
 				return
 			}
 			if consumed != nil && len(consumed) != len(backupHashes) {
-				_ = config.MutateGlobal(func(cfg *config.EyvescloudConfig) { cfg.AdminBackupCodes = consumed })
+				_ = config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) { cfg.AdminBackupCodes = consumed })
 			}
 		}
 		token, err := v2IssueToken(adminUser, true, "", "", nil, "", tokenVersion)

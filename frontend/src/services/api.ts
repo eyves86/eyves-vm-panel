@@ -824,13 +824,19 @@ export interface TaskQueueSettings {
   concurrency: number
   active: number
   pending: number
+  // max_pending：背压阈值（待执行任务上限）；rejected_total：因超限被拒绝的累计提交数。
+  max_pending: number
+  rejected_total: number
 }
 
 export const getTaskQueueSettings = () =>
   api.get<APIResponse<TaskQueueSettings>>('/task-queue/settings')
 
-export const updateTaskQueueSettings = (concurrency: number) =>
-  api.put<APIResponse<TaskQueueSettings>>('/task-queue/settings', { concurrency })
+export const updateTaskQueueSettings = (concurrency: number, maxPending?: number) =>
+  api.put<APIResponse<TaskQueueSettings>>(
+    '/task-queue/settings',
+    maxPending && maxPending > 0 ? { concurrency, max_pending: maxPending } : { concurrency },
+  )
 
 export interface OvercommitSettings {
   memory_overcommit_enabled: boolean

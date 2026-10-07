@@ -328,7 +328,7 @@ func HandleNotificationSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// 通过 MutateGlobal 在写锁下更新，避免与后台安全告警协程无锁读产生数据竞争。
-		if err := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 			cfg.Notifications = req
 		}); err != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})

@@ -1289,7 +1289,7 @@ func hostKVMAvailable() bool {
 }
 
 func ensureImageEnabled(id string) {
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		// If the enabled list is empty, all templates are currently enabled by default.
 		// We must populate the list with all template IDs first so explicit toggles stick.
 		if len(cfg.EnabledImages) == 0 {
@@ -1311,7 +1311,7 @@ func ensureImageEnabled(id string) {
 }
 
 func removeImageEnabled(id string) {
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		// If the enabled list is empty, populate it first with all templates,
 		// then remove the one being disabled.
 		if len(cfg.EnabledImages) == 0 {

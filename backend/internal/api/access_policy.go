@@ -49,7 +49,7 @@ func updatePanelAccessPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.PanelAccessPolicy = normalized
 	})
 	detail := "enabled=" + strings.ToLower(strings.TrimSpace(boolText(normalized.Enabled))) +

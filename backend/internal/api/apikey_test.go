@@ -6,9 +6,41 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"eyvescloud/internal/config"
 )
+
+// TestApiKeyLastUsedThrottle 锁定 #110 修复：api_key.last_used 在**每一次** API 请求
+// 上都会走，30 秒窗口内的重复请求不得再次落库（否则 10w 目录下每请求持写锁约 153ms）。
+func TestApiKeyLastUsedThrottle(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+
+	config.AppConfig = &config.EyvescloudConfig{ApiKeys: []config.ApiKeyConfig{{
+		ID:       "key-throttle",
+		Name:     "t",
+		LastUsed: "OLD_SENTINEL",
+	}}}
+
+	// 窗口内：鉴权快照的 LastUsed 是「刚刚」→ 跳过落库，库内值原样不动。
+	recent := time.Now().Format("2006-01-02 15:04:05")
+	updateApiKeyLastUsedForKey(&config.ApiKeyConfig{ID: "key-throttle", LastUsed: recent}, "10.0.0.1")
+	if got := config.AppConfig.ApiKeys[0]; got.LastUsed != "OLD_SENTINEL" || got.LastUsedIP != "" {
+		t.Fatalf("窗口内重复请求不应落库，got LastUsed=%q LastUsedIP=%q", got.LastUsed, got.LastUsedIP)
+	}
+
+	// 窗口外：快照陈旧 → 必须更新。
+	stale := time.Now().Add(-time.Hour).Format("2006-01-02 15:04:05")
+	updateApiKeyLastUsedForKey(&config.ApiKeyConfig{ID: "key-throttle", LastUsed: stale}, "10.0.0.2")
+	got := config.AppConfig.ApiKeys[0]
+	if got.LastUsed == "OLD_SENTINEL" || got.LastUsed == "" {
+		t.Fatalf("窗口外请求应更新 LastUsed，got %q", got.LastUsed)
+	}
+	if got.LastUsedIP != "10.0.0.2" {
+		t.Fatalf("窗口外请求应更新 LastUsedIP，got %q", got.LastUsedIP)
+	}
+}
 
 func TestHashAPIKeyUsesSaltedArgon2idHash(t *testing.T) {
 	raw := "eyvescloud_sk_0123456789abcdef0123456789abcdef"

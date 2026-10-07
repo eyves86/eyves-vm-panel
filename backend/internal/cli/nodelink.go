@@ -138,7 +138,7 @@ func nodeLinkGenerate(args []string) error {
 	}
 	key := hex.EncodeToString(buf)
 	expiry := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
-	if err := config.MutateGlobal(func(c *config.EyvescloudConfig) {
+	if err := config.MutateGlobalMetaOnly(func(c *config.EyvescloudConfig) {
 		c.AgentPairingKey = key
 		c.AgentPairingKeyExpiry = expiry
 	}); err != nil {

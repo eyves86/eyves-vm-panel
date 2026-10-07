@@ -1326,9 +1326,9 @@ type SubUserListItem struct {
 	ContainerUUID        string   `json:"container_uuid"`
 	Password             string   `json:"password,omitempty"`
 	CreatedAt            string   `json:"created_at"`
-	LastLogin          string `json:"last_login"`
-	LastLoginIP        string `json:"last_login_ip"`
-	LastLoginUA        string `json:"last_login_ua"`
+	LastLogin            string   `json:"last_login"`
+	LastLoginIP          string   `json:"last_login_ip"`
+	LastLoginUA          string   `json:"last_login_ua"`
 }
 
 // HandleSubUserList returns the list of all sub-users with container info
@@ -1469,7 +1469,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var updated config.SubUser
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -1525,7 +1525,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var updated config.SubUser
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -1556,7 +1556,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		}
 		role := subUserRole(req.Role)
 		var updated config.SubUser
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -1590,7 +1590,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		}
 		tenant := strings.TrimSpace(req.Tenant)
 		var updated config.SubUser
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -1669,7 +1669,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		var usernameChanged bool
 		var emailChanged bool
 		var passwordChanged bool
-		config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+		config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
 					continue
@@ -2001,7 +2001,7 @@ func HandleSubUserChangePassword(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to hash new password"})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SubUsers {
 			if cfg.SubUsers[i].ID != su.ID {
 				continue
@@ -2141,7 +2141,7 @@ func HandleSubUserSelfRotatePassword(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to generate password"})
 		return
 	}
-	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
+	config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SubUsers {
 			if cfg.SubUsers[i].ID != su.ID {
 				continue
