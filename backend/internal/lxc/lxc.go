@@ -1261,15 +1261,16 @@ func (m *Manager) applyResourceLimits(lxcName string, cfg ContainerConfig) error
 
 	seccompProfile, err := findSeccompProfile()
 	if err != nil {
-
+		fmt.Printf("Warning: seccomp profile unavailable for %s; container starts without seccomp: %v\n", lxcName, err)
 	}
 	apparmorProfile, err := appArmorProfileForTemplate(cfg.TemplateID)
 	if err != nil {
-
+		fmt.Printf("Warning: apparmor profile unavailable for %s; container starts without apparmor: %v\n", lxcName, err)
 	}
 	uidBase, gidBase, err := unprivilegedIDMap()
 	if err != nil {
-
+		// 静默吞错会让 idmap 退化为 0,0（容器 root≈宿主 root），必须可见。
+		fmt.Printf("Warning: unprivileged idmap unavailable for %s; idmap falls back to 0,0 (container root maps to host root): %v\n", lxcName, err)
 	}
 
 	newLines = append(newLines, "", "# eyvescloud managed: lxcfs virtualized /proc")
@@ -2564,7 +2565,8 @@ func (m *Manager) ApplyContainerLimits(c *config.Container) error {
 		AssignIPv6:       c.IPv6 != "" || len(c.IPv6Addresses) > 0,
 		ExpiresAt:        c.ExpiresAt,
 	}); err != nil {
-
+		// 吞错会让调用方（api/runtime.go、StartContainer）以为限额已生效。
+		fmt.Printf("Warning: failed to apply resource limits for %s: %v\n", lxcName, err)
 	}
 	if c.Status != "running" {
 		return nil
@@ -2593,7 +2595,7 @@ func (m *Manager) ApplyContainerLimits(c *config.Container) error {
 	// IO speed: write io.max, including max values to clear old per-direction limits.
 	ioLines, err := m.ioLimitLines(lxcName, c.IOReadMBps, c.IOWriteMBps)
 	if err != nil {
-
+		fmt.Printf("Warning: failed to compute IO limits for %s: %v\n", lxcName, err)
 	}
 	ioLine := strings.Join(ioLines, "\n")
 	for _, path := range []string{
@@ -2614,21 +2616,31 @@ func (m *Manager) applyBandwidthLimit(lxcName string, downMbps int, upMbps int) 
 		fmt.Printf("Warning: could not find veth for %s\n", lxcName)
 		return
 	}
+	// del 失败属正常（qdisc 本就不存在）；只有 add 类命令失败才代表限速没生效。
 	exec.Command("tc", "qdisc", "del", "dev", veth, "root").Run()
 	exec.Command("tc", "qdisc", "del", "dev", veth, "ingress").Run()
+	failed := false
+	tcRun := func(args ...string) {
+		if out, err := exec.Command("tc", args...).CombinedOutput(); err != nil {
+			failed = true
+			fmt.Printf("Warning: tc %s failed for %s: %v: %s\n", args[0], lxcName, err, strings.TrimSpace(string(out)))
+		}
+	}
 	if downMbps > 0 {
 		rate := fmt.Sprintf("%dmbit", downMbps)
 		burst := fmt.Sprintf("%dkbit", downMbps*100)
-		exec.Command("tc", "qdisc", "add", "dev", veth, "root", "handle", "1:", "htb", "default", "10").Run()
-		exec.Command("tc", "class", "add", "dev", veth, "parent", "1:", "classid", "1:10", "htb", "rate", rate, "burst", burst).Run()
+		tcRun("qdisc", "add", "dev", veth, "root", "handle", "1:", "htb", "default", "10")
+		tcRun("class", "add", "dev", veth, "parent", "1:", "classid", "1:10", "htb", "rate", rate, "burst", burst)
 	}
 	if upMbps > 0 {
 		rate := fmt.Sprintf("%dmbit", upMbps)
 		burst := fmt.Sprintf("%dkbit", upMbps*100)
-		exec.Command("tc", "qdisc", "add", "dev", veth, "handle", "ffff:", "ingress").Run()
-		exec.Command("tc", "filter", "add", "dev", veth, "parent", "ffff:", "protocol", "all", "u32", "match", "u32", "0", "0", "police", "rate", rate, "burst", burst, "drop", "flowid", ":1").Run()
+		tcRun("qdisc", "add", "dev", veth, "handle", "ffff:", "ingress")
+		tcRun("filter", "add", "dev", veth, "parent", "ffff:", "protocol", "all", "u32", "match", "u32", "0", "0", "police", "rate", rate, "burst", burst, "drop", "flowid", ":1")
 	}
-	fmt.Printf("Bandwidth limit: %s down=%d Mbps up=%d Mbps on %s\n", lxcName, downMbps, upMbps, veth)
+	if !failed {
+		fmt.Printf("Bandwidth limit: %s down=%d Mbps up=%d Mbps on %s\n", lxcName, downMbps, upMbps, veth)
+	}
 }
 
 func (m *Manager) cleanupBandwidthLimit(lxcName string) {
