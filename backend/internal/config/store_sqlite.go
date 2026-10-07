@@ -197,7 +197,11 @@ func openConfigDB() error {
 	return nil
 }
 
-func ensureSchema() error {
+// sqliteSchemaStmts 是 SQLite 的基础建表语句。列集合必须与 postgresSchemaStmts 一致
+// （TestSQLiteAndPostgresSchemaParity 守卫）；此后新增列统一走共享的
+// ensureSchemaMigrations（PG 侧做 INTEGER→BIGINT / REAL→DOUBLE PRECISION 类型翻译），
+// 两端各自动补齐。
+func sqliteSchemaStmts() []string {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS app_meta (
 			key TEXT PRIMARY KEY,
@@ -548,7 +552,11 @@ func ensureSchema() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs (task_id, id)`,
 	}
-	for _, stmt := range stmts {
+	return stmts
+}
+
+func ensureSchema() error {
+	for _, stmt := range sqliteSchemaStmts() {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to create sqlite schema: %v", err)
 		}
@@ -556,13 +564,19 @@ func ensureSchema() error {
 	return ensureSchemaMigrations()
 }
 
-func ensureSchemaMigrations() error {
-	added := map[string]bool{}
-	for _, column := range []struct {
-		table string
-		name  string
-		def   string
-	}{
+// schemaColumnMigration 描述一条「后加列」迁移：table.name 缺列时按 def 补列。
+type schemaColumnMigration struct {
+	table string
+	name  string
+	def   string
+}
+
+// schemaColumnMigrations 是两端共享的后加列清单：SQLite 与 Postgres 启动时都跑它。
+// 故「两端最终列集合一致」等价于 sqliteBase ∪ M == postgresBase ∪ M —— PG 的基础建表
+// 把历史列内联了，SQLite 的基础建表只保留最早的列，两者靠这份清单补齐到同一集合
+// （TestSQLiteAndPostgresSchemaParity 正是按并集断言的）。
+func schemaColumnMigrations() []schemaColumnMigration {
+	return []schemaColumnMigration{
 		{"api_keys", "scopes", "TEXT"},
 		{"api_keys", "expires_at", "TEXT"},
 		{"api_keys", "disabled", "INTEGER"},
@@ -647,7 +661,12 @@ func ensureSchemaMigrations() error {
 		{"containers", "node_id", "TEXT"},
 		// node_local_id：实例在所属被控上的本地 ID（代理调用用）。
 		{"containers", "node_local_id", "INTEGER NOT NULL DEFAULT 0"},
-	} {
+	}
+}
+
+func ensureSchemaMigrations() error {
+	added := map[string]bool{}
+	for _, column := range schemaColumnMigrations() {
 		wasAdded, err := ensureColumn(column.table, column.name, column.def)
 		if err != nil {
 			return err
@@ -720,7 +739,36 @@ func ensureSchemaMigrations() error {
 	return nil
 }
 
+// ensureColumn 在列缺失时补列，返回是否真的新增。db 同一时刻只属于一个后端，
+// 故按 configDBIsPostgres 分支选择列存在性判断的方言；PG 侧还需把建表列类型
+// （SQLite 的 INTEGER/REAL）翻译成与 ensurePostgresSchema 一致的类型，否则
+// ALTER 出来的列会是 int4/float4（traffic_used_rx 之类的字节计数会溢出 int4）。
 func ensureColumn(table, name, def string) (bool, error) {
+	exists, err := columnExists(table, name)
+	if err != nil {
+		return false, err
+	}
+	if exists {
+		return false, nil
+	}
+	if configDBIsPostgres {
+		def = pgColumnDef(def)
+	}
+	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + def)
+	return err == nil, err
+}
+
+func columnExists(table, name string) (bool, error) {
+	if configDBIsPostgres {
+		var one int
+		err := db.QueryRow(`SELECT 1 FROM information_schema.columns
+			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+			table, name).Scan(&one)
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return err == nil, err
+	}
 	rows, err := db.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		return false, err
@@ -735,14 +783,16 @@ func ensureColumn(table, name, def string) (bool, error) {
 			return false, err
 		}
 		if columnName == name {
-			return false, nil
+			return true, nil
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return false, err
-	}
-	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + def)
-	return err == nil, err
+	return false, rows.Err()
+}
+
+// pgColumnDef 把迁移列表里的 SQLite 类型翻译成 Postgres 建表所用的类型。
+func pgColumnDef(def string) string {
+	def = strings.ReplaceAll(def, "INTEGER", "BIGINT")
+	return strings.ReplaceAll(def, "REAL", "DOUBLE PRECISION")
 }
 
 func loadConfigFromDB() (*EyvescloudConfig, bool, error) {

@@ -133,10 +133,11 @@ func openPostgresConfigDB(dsn string) error {
 	return ensurePostgresSchema()
 }
 
-// ensurePostgresSchema 建全配置库表结构（含历史迁移新增列）。幂等（IF NOT EXISTS）。
-// 类型映射：INTEGER→BIGINT、REAL→DOUBLE PRECISION、自增主键→IDENTITY；保留字
-// "user" 加引号（SQLite 同样接受带引号写法，故运行时 SQL 也统一加引号）。
-func ensurePostgresSchema() error {
+// postgresSchemaStmts 是 Postgres 的基础建表语句，与 sqliteSchemaStmts 的列集合一一对应
+// （TestSQLiteAndPostgresSchemaParity 守卫）。类型映射：INTEGER→BIGINT、REAL→
+// DOUBLE PRECISION、自增主键→IDENTITY；保留字 "user" 加引号（SQLite 同样接受带引号
+// 写法，故运行时 SQL 也统一加引号）。此后新增列统一走共享的 ensureSchemaMigrations。
+func postgresSchemaStmts() []string {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS app_meta (
 			key TEXT PRIMARY KEY,
@@ -486,10 +487,17 @@ func ensurePostgresSchema() error {
 		)`,
 		`CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs (task_id, id)`,
 	}
-	for _, stmt := range stmts {
+	return stmts
+}
+
+// ensurePostgresSchema 建基础表后跑共享列迁移：既有 PG 库升级时靠它补齐新增列
+// （否则 CREATE TABLE IF NOT EXISTS 对已存在的表是空操作、新列永远补不上），
+// 新库则等价于「基础表 + 迁移列」的并集。幂等。
+func ensurePostgresSchema() error {
+	for _, stmt := range postgresSchemaStmts() {
 		if _, err := db.Exec(stmt); err != nil {
 			return fmt.Errorf("failed to create postgres schema: %w", err)
 		}
 	}
-	return nil
+	return ensureSchemaMigrations()
 }

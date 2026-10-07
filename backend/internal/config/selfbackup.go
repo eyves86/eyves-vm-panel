@@ -135,6 +135,15 @@ func StartConfigBackupScheduler(interval time.Duration, keep int) {
 		keep = DefaultBackupKeep
 	}
 	go func() {
+		// PG 后端没有本地库文件：VACUUM INTO 快照与 WAL 检查点都不适用。这里只明确
+		// 告知一次并停用调度器 —— 既不产出假快照，也不每 6 小时刷一条错误日志。
+		dbMu.Lock()
+		pg := configDBIsPostgres
+		dbMu.Unlock()
+		if pg {
+			log.Printf("配置库为 Postgres 后端：内置自备份与 WAL 检查点调度器已停用，请使用 pg_dump / PITR 备份")
+			return
+		}
 		// 首次快照稍等片刻，避开启动高峰（此时同时在建索引/探测容器）。
 		time.Sleep(90 * time.Second)
 		if path, err := RunConfigBackupOnce(keep); err != nil {
