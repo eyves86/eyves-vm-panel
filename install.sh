@@ -260,6 +260,25 @@ tr_msg() {
     [ "$EYVESCLOUD_LANG_DETECTED" = "en" ] || { printf '%s' "$msg"; return; }
     msg="$(printf '%s' "$msg" | sed \
         -e 's/中文安装\/卸载脚本/Installer\/Uninstaller/g' \
+        -e 's/正在使用 pacman 安装依赖.../Installing dependencies with pacman.../g' \
+        -e 's/开始：配置本地数据服务/Starting: Configure local data services/g' \
+        -e 's/完成：配置本地数据服务/Completed: Configure local data services/g' \
+        -e 's/配置库：使用已提供的 EYVESCLOUD_PG_DSN，跳过本地 PostgreSQL 自动装配/Config store: EYVESCLOUD_PG_DSN provided; skipping local PostgreSQL auto-provisioning/g' \
+        -e 's/配置库：沿用既有 store.env 中的 Postgres 配置，跳过本地自动装配/Config store: reusing the existing Postgres config in store.env; skipping local auto-provisioning/g' \
+        -e 's/配置库：已设置 EYVESCLOUD_DISABLE_LOCAL_PG=1，保持 SQLite/Config store: EYVESCLOUD_DISABLE_LOCAL_PG=1 set; keeping SQLite/g' \
+        -e 's/配置库：非全新安装，保持既有后端不变/Config store: not a fresh install; keeping the existing backend/g' \
+        -e 's/配置库：当前二进制不支持 Postgres（旧版本无此能力），跳过自动装配，保持 SQLite；升级到含 Postgres 支持的版本后重装即自动启用/Config store: this binary lacks Postgres support; skipping auto-provisioning and keeping SQLite. Reinstall with a Postgres-capable build to enable it./g' \
+        -e 's/Redis：当前二进制不支持 Redis 共享信号，跳过自动装配，按单机语义运行/Redis: this binary lacks shared-signal support; skipping auto-provisioning and running with single-node semantics./g' \
+        -e 's/正在自动装配本地 PostgreSQL（全新安装默认启用）.../Auto-provisioning local PostgreSQL (enabled by default on fresh installs).../g' \
+        -e 's/本地 PostgreSQL 已就绪，配置库将改用 Postgres/Local PostgreSQL is ready; the config store will use Postgres/g' \
+        -e 's/本地 PostgreSQL 自动装配失败，本次回落 SQLite；可稍后设置 EYVESCLOUD_PG_DSN 重新安装启用。/Local PostgreSQL auto-provisioning failed; falling back to SQLite this run. Set EYVESCLOUD_PG_DSN and re-run to enable it later./g' \
+        -e 's/Redis：使用已提供的 EYVESCLOUD_REDIS_ADDR，跳过本地自动装配/Redis: EYVESCLOUD_REDIS_ADDR provided; skipping local auto-provisioning/g' \
+        -e 's/Redis：沿用既有 redis.env，跳过本地自动装配/Redis: reusing the existing redis.env; skipping local auto-provisioning/g' \
+        -e 's/Redis：已设置 EYVESCLOUD_DISABLE_LOCAL_REDIS=1，按单机语义运行/Redis: EYVESCLOUD_DISABLE_LOCAL_REDIS=1 set; running with single-node semantics/g' \
+        -e 's/Redis：非全新安装，保持既有配置不变/Redis: not a fresh install; keeping the existing configuration/g' \
+        -e 's/正在自动装配本地 Redis（全新安装默认启用）.../Auto-provisioning local Redis (enabled by default on fresh installs).../g' \
+        -e 's/本地 Redis 已就绪：/Local Redis is ready: /g' \
+        -e 's/本地 Redis 自动装配失败，本次按单机语义运行（面板 fail-open）。/Local Redis auto-provisioning failed; running with single-node semantics this run (panel is fail-open)./g' \
         -e 's/警告/Warning/g' \
         -e 's/错误/Error/g' \
         -e 's/安装\/卸载未完成。请查看日志：/Install\/uninstall did not complete. Check log: /g' \
@@ -504,10 +523,10 @@ check_os_compatibility() {
         die "未检测到 systemd 或 OpenRC，无法安装服务。"
     fi
     case "$OS_ID" in
-        ubuntu|debian|alpine|centos|rhel|rocky|almalinux|fedora)
+        ubuntu|debian|alpine|centos|rhel|rocky|almalinux|fedora|arch|archlinux|manjaro|artix)
             ;;
         *)
-            if ! has_cmd apt-get && ! has_cmd apk && ! has_cmd dnf && ! has_cmd yum; then
+            if ! has_cmd apt-get && ! has_cmd apk && ! has_cmd dnf && ! has_cmd yum && ! has_cmd pacman; then
                 die "暂不支持当前 Linux 发行版：${OS_ID} ${OS_LIKE}。请提交 issue 并附上 /etc/os-release。"
             fi
             warn "发行版 ${OS_ID} 不在主要支持列表，将按检测到的软件包管理器尝试安装。"
@@ -551,6 +570,7 @@ usage() {
 Usage:
   ./install.sh              Install or upgrade EYVESCLOUD
   ./install.sh uninstall    Uninstall EYVESCLOUD (removes containers, VMs, image cache, and config data)
+  Supported distros: Ubuntu / Debian / Alpine / CentOS / Fedora / Rocky / AlmaLinux / RHEL / Arch Linux / Manjaro
 
 Environment variables:
   EYVESCLOUD_REPO=owner/repo          Default: ${REPO}
@@ -563,9 +583,13 @@ Environment variables:
   EYVESCLOUD_FORCE_DOWNGRADE=1         Allow downgrade install (default: refuse)
   EYVESCLOUD_REQUIRE_VERIFY=1          Abort install if the checksum manifest cannot be fetched (strict mode)
   EYVESCLOUD_SKIP_VERIFY=1             Skip release SHA-256 verification entirely (not recommended)
-  EYVESCLOUD_REDIS_ADDR=host:port     Optional. Multi-replica shared signals (distributed rate limiting + token revocation broadcast); unset = single-node
+  EYVESCLOUD_REDIS_ADDR=host:port     Optional. Multi-replica shared signals (distributed rate limiting + token revocation broadcast);
+                                      unset = auto-install a local Redis on fresh installs (single-node if that fails)
   EYVESCLOUD_REDIS_PASSWORD=secret    Optional. Redis AUTH password (for a requirepass-enabled Redis)
-  EYVESCLOUD_PG_DSN=postgres://...    Optional. Config store on Postgres (telemetry stays in local telemetry.db); unset = SQLite
+  EYVESCLOUD_PG_DSN=postgres://...    Optional. Config store on Postgres (telemetry stays in local telemetry.db);
+                                      unset = auto-install a local PostgreSQL on fresh installs (SQLite if that fails)
+  EYVESCLOUD_DISABLE_LOCAL_PG=1       Opt out of local PostgreSQL auto-provisioning; keep SQLite
+  EYVESCLOUD_DISABLE_LOCAL_REDIS=1    Opt out of local Redis auto-provisioning; keep single-node semantics
   EYVESCLOUD_CELL_DSNS=cell-1=/a.db,cell-2=host:port
                                       Optional. Per-cell shard map for nodes/containers; unset = single config DB
   EYVESCLOUD_NODE_TOKEN_KEY=<64 hex>  Optional. AES-256 key for node tokens; unset = auto-generated into data dir (.tokenkey)
@@ -589,6 +613,7 @@ EOF
 用法：
   ./install.sh              安装或升级 EYVESCLOUD
   ./install.sh uninstall    卸载 EYVESCLOUD（会删除容器、虚拟机、镜像缓存和配置数据）
+  支持发行版：Ubuntu / Debian / Alpine / CentOS / Fedora / Rocky / AlmaLinux / RHEL / Arch Linux / Manjaro
 
 环境变量：
   EYVESCLOUD_REPO=owner/repo          默认：${REPO}
@@ -602,9 +627,13 @@ EOF
   EYVESCLOUD_FORCE_REINSTALL=1       相同版本时强制重装
   EYVESCLOUD_REQUIRE_VERIFY=1        取不到校验清单时中止安装（严格模式；默认警告后继续）
   EYVESCLOUD_SKIP_VERIFY=1           完全跳过发行版 SHA-256 校验（不推荐）
-  EYVESCLOUD_REDIS_ADDR=host:port    可选。多副本共享信号（分布式限流 + 令牌吊销广播）；不设 = 单机模式
+  EYVESCLOUD_REDIS_ADDR=host:port    可选。多副本共享信号（分布式限流 + 令牌吊销广播）；
+                                     不设 = 全新装自动在本机安装 Redis（装不上则回落单机模式）
   EYVESCLOUD_REDIS_PASSWORD=secret   可选。Redis AUTH 密码（对应 Redis 端 requirepass）
-  EYVESCLOUD_PG_DSN=postgres://...   可选。配置库改用 Postgres（遥测仍在本地 telemetry.db）；不设 = SQLite
+  EYVESCLOUD_PG_DSN=postgres://...   可选。配置库改用 Postgres（遥测仍在本地 telemetry.db）；
+                                     不设 = 全新装自动在本机安装 PostgreSQL（装不上则回落 SQLite）
+  EYVESCLOUD_DISABLE_LOCAL_PG=1      关闭本地 PostgreSQL 自动装配；保持 SQLite
+  EYVESCLOUD_DISABLE_LOCAL_REDIS=1   关闭本地 Redis 自动装配；保持单机语义
   EYVESCLOUD_CELL_DSNS=cell-1=/a.db,cell-2=host:port
                                      可选。节点/容器的 per-cell 分库映射；不设 = 单一配置库
   EYVESCLOUD_NODE_TOKEN_KEY=<64位hex> 可选。节点 Token 的 AES-256 密钥；不设 = 自动生成到数据目录（.tokenkey）
@@ -1416,6 +1445,41 @@ install_yum() {
     done
 }
 
+install_pacman() {
+    log "正在使用 pacman 安装依赖..."
+    # Arch 无独立 lxc-templates 包（模板随 lxc 一起装）；libvirt/qemu 走 libvirt+qemu-full。
+    pacman -Sy --noconfirm --needed \
+        ca-certificates \
+        curl \
+        wget \
+        tar \
+        gzip \
+        xz \
+        python3 \
+        lxc \
+        bridge-utils \
+        iproute2 \
+        iptables \
+        dnsmasq
+
+    if kvm_supported_arch; then
+        pacman -Sy --noconfirm --needed \
+        qemu-full \
+        libvirt \
+        virt-install \
+        cloud-image-utils \
+        edk2-ovmf
+    else
+        warn_kvm_unsupported_arch
+        pacman -Sy --noconfirm --needed qemu-img genisoimage >/dev/null 2>&1 || true
+    fi
+
+    # lxcfs / genisoimage / mkisofs 等在 Arch 由不同包提供（部分在 AUR），逐个可选安装。
+    for pkg in lxcfs conntrack-tools quota-tools e2fsprogs xfsprogs libisoburn cdrkit smartmontools; do
+        pacman -Sy --noconfirm --needed "$pkg" >/dev/null 2>&1 || warn "可选依赖未安装：$pkg"
+    done
+}
+
 install_dependencies() {
     case "$OS_ID" in
         ubuntu|debian)
@@ -1433,6 +1497,9 @@ install_dependencies() {
                 die "当前系统 $OS_ID 未找到 dnf/yum，无法安装依赖。"
             fi
             ;;
+        arch|archlinux|manjaro|artix)
+            install_pacman
+            ;;
         *)
             if has_cmd apt-get; then
                 install_apt
@@ -1442,6 +1509,8 @@ install_dependencies() {
                 install_dnf
             elif has_cmd yum; then
                 install_yum
+            elif has_cmd pacman; then
+                install_pacman
             else
                 die "暂不支持当前 Linux 发行版：${OS_ID} ${OS_LIKE}。请提交 issue 并附上 /etc/os-release。"
             fi
@@ -3027,6 +3096,219 @@ pg_config_backend_active() {
     [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ]
 }
 
+# binary_supports_env <binary> <ENV_NAME>：发行版二进制是否编译进了对某后端 env 的支持。
+# 旧发行版二进制不读 EYVESCLOUD_PG_DSN / EYVESCLOUD_REDIS_ADDR —— 若照旧装配 PG/Redis，
+# 等于装了一堆用不上的服务，还在摘要里谎报后端（假成功）。Go 里 os.Getenv("X") 会在二进制
+# 留下字面量，用它判断能力，比启动探针简单且无副作用。
+binary_supports_env() {
+    [ -x "$1" ] && grep -q "$2" "$1" 2>/dev/null
+}
+
+# ---------------------------------------------------------------------------
+# 本地数据服务自动装配：全新装默认在本机装好 PostgreSQL + Redis 并接入面板，
+# 让默认部署直接跑在新架构（PG 配置库 + Redis 共享信号），而不是零依赖的 SQLite 单机。
+# 只对全新装生效；升级 / 已有配置 / 显式禁用一律不翻转后端。退出开关：
+#   EYVESCLOUD_DISABLE_LOCAL_PG=1     不自动装 PG（回落 SQLite）
+#   EYVESCLOUD_DISABLE_LOCAL_REDIS=1  不自动装 Redis（回落单机语义）
+# ---------------------------------------------------------------------------
+
+# pkg_install <pkg...>：按当前发行版可用的包管理器安装包。
+pkg_install() {
+    if has_cmd apt-get; then
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+    elif has_cmd apk; then
+        apk add --no-cache "$@"
+    elif has_cmd dnf; then
+        dnf install -y "$@"
+    elif has_cmd yum; then
+        yum install -y "$@"
+    elif has_cmd pacman; then
+        pacman -Sy --noconfirm --needed "$@"
+    else
+        return 1
+    fi
+}
+
+# svc_enable_start <unit>：设为开机自启并（重）启动；systemd 与 OpenRC 都覆盖。
+svc_enable_start() {
+    _u="$1"
+    if is_systemd; then
+        systemctl enable "$_u" >/dev/null 2>&1 || true
+        systemctl restart "$_u" >/dev/null 2>&1 || systemctl start "$_u" >/dev/null 2>&1 || true
+    elif is_openrc; then
+        rc-update add "$_u" default >/dev/null 2>&1 || true
+        rc-service "$_u" restart >/dev/null 2>&1 || rc-service "$_u" start >/dev/null 2>&1 || true
+    fi
+}
+
+# tcp_reachable <host> <port>：纯 bash /dev/tcp 探测，不引入额外依赖。
+tcp_reachable() {
+    has_cmd timeout && has_cmd bash || return 1
+    timeout 2 bash -c "exec 3<>/dev/tcp/$1/$2" 2>/dev/null
+}
+
+random_secret() {
+    if has_cmd openssl; then
+        openssl rand -hex 24
+    elif [ -r /dev/urandom ]; then
+        od -An -tx1 -N24 /dev/urandom | tr -d ' \n'
+    else
+        date +%s%N | (sha256sum 2>/dev/null || md5sum 2>/dev/null) | cut -c1-48
+    fi
+}
+
+# run_sql_as_postgres <sql>：以本机超管身份执行 SQL。依次尝试 sudo/su 走本地 socket
+# （Debian/Arch/EL 的 peer/trust），再退回 TCP（Alpine 默认 trust）。全失败返回非零。
+run_sql_as_postgres() {
+    _sql="$1"
+    if has_cmd sudo; then
+        printf '%s\n' "$_sql" | sudo -n -u postgres psql -v ON_ERROR_STOP=1 -q -t -A 2>/dev/null && return 0
+    fi
+    if has_cmd su; then
+        printf '%s\n' "$_sql" | su postgres -c 'psql -v ON_ERROR_STOP=1 -q -t -A' 2>/dev/null && return 0
+    fi
+    if has_cmd psql; then
+        printf '%s\n' "$_sql" | PGUSER=postgres psql -h 127.0.0.1 -p "$PG_LOCAL_PORT" -v ON_ERROR_STOP=1 -q -t -A 2>/dev/null && return 0
+    fi
+    return 1
+}
+
+PG_LOCAL_PORT="5432"
+PG_LOCAL_USER="eyvescloud"
+PG_LOCAL_DB="eyvescloud"
+
+# provision_local_postgres：本机安装并初始化 PostgreSQL、建库建角色；成功往 stdout
+# 打印面板可用 DSN，任一步失败打印空串（调用方据此回落 SQLite）。
+provision_local_postgres() {
+    case "$OS_ID" in
+        ubuntu|debian)
+            pkg_install postgresql postgresql-contrib >/dev/null 2>&1 || return 0
+            ;;
+        alpine)
+            pkg_install postgresql postgresql-contrib >/dev/null 2>&1 || return 0
+            [ -d /var/lib/postgresql/data/base ] || rc-service postgresql setup >/dev/null 2>&1 || true
+            ;;
+        arch|archlinux|manjaro|artix)
+            pkg_install postgresql >/dev/null 2>&1 || return 0
+            if [ ! -d /var/lib/postgres/data/base ]; then
+                mkdir -p /var/lib/postgres/data
+                chown -R postgres:postgres /var/lib/postgres 2>/dev/null || true
+                su postgres -c 'initdb -D /var/lib/postgres/data' >/dev/null 2>&1 || true
+            fi
+            ;;
+        centos|rhel|rocky|almalinux|fedora)
+            pkg_install postgresql-server postgresql >/dev/null 2>&1 || pkg_install postgresql-server >/dev/null 2>&1 || return 0
+            if [ ! -d /var/lib/pgsql/data/base ]; then
+                has_cmd postgresql-setup && postgresql-setup --initdb >/dev/null 2>&1 || true
+            fi
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    svc_enable_start postgresql
+
+    _i=0
+    while [ "$_i" -lt 30 ]; do
+        tcp_reachable 127.0.0.1 "$PG_LOCAL_PORT" && break
+        _i=$((_i + 1))
+        sleep 1
+    done
+    tcp_reachable 127.0.0.1 "$PG_LOCAL_PORT" || return 0
+
+    # 确保 TCP 走密码认证（EL 默认 ident 会让面板连不上）：pg_hba 首匹配生效，插到最前。
+    _hba="$(run_sql_as_postgres 'SHOW hba_file' | tr -d '[:space:]')"
+    if [ -n "$_hba" ] && [ -f "$_hba" ]; then
+        if ! grep -qE '^host[[:space:]]+all[[:space:]]+all[[:space:]]+127\.0\.0\.1/32' "$_hba"; then
+            _tmp="$(mktemp)"
+            { printf 'host all all 127.0.0.1/32 md5\nhost all all ::1/128 md5\n'; cat "$_hba"; } > "$_tmp" && cat "$_tmp" > "$_hba"
+            rm -f "$_tmp"
+            run_sql_as_postgres 'SELECT pg_reload_conf()' >/dev/null 2>&1 || svc_enable_start postgresql
+        fi
+    fi
+
+    _pass="$(random_secret)"
+    run_sql_as_postgres "DO \$\$ BEGIN IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='${PG_LOCAL_USER}') THEN CREATE ROLE ${PG_LOCAL_USER} LOGIN PASSWORD '${_pass}'; ELSE ALTER ROLE ${PG_LOCAL_USER} LOGIN PASSWORD '${_pass}'; END IF; END \$\$;" >/dev/null 2>&1 || return 0
+    if ! run_sql_as_postgres "SELECT 1 FROM pg_database WHERE datname='${PG_LOCAL_DB}'" 2>/dev/null | grep -q 1; then
+        run_sql_as_postgres "CREATE DATABASE ${PG_LOCAL_DB} OWNER ${PG_LOCAL_USER}" >/dev/null 2>&1 || return 0
+    fi
+
+    printf 'postgres://%s:%s@127.0.0.1:%s/%s?sslmode=disable' "$PG_LOCAL_USER" "$_pass" "$PG_LOCAL_PORT" "$PG_LOCAL_DB"
+}
+
+# provision_local_redis：本机安装并启动 Redis；成功打印 host:port，失败打印空串。
+provision_local_redis() {
+    case "$OS_ID" in
+        ubuntu|debian)
+            pkg_install redis-server >/dev/null 2>&1 || return 0
+            svc_enable_start redis-server
+            ;;
+        alpine|arch|archlinux|manjaro|artix|fedora|centos|rhel|rocky|almalinux)
+            pkg_install redis >/dev/null 2>&1 || pkg_install redis-server >/dev/null 2>&1 || return 0
+            svc_enable_start redis
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+
+    _i=0
+    while [ "$_i" -lt 10 ]; do
+        tcp_reachable 127.0.0.1 6379 && break
+        _i=$((_i + 1))
+        sleep 1
+    done
+    tcp_reachable 127.0.0.1 6379 || return 0
+    printf '127.0.0.1:6379'
+}
+
+# provision_local_stack：全新装默认把本地 PG/Redis 装好并接入面板。
+provision_local_stack() {
+    if [ -n "${EYVESCLOUD_PG_DSN:-}" ]; then
+        log "配置库：使用已提供的 EYVESCLOUD_PG_DSN，跳过本地 PostgreSQL 自动装配"
+    elif [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ]; then
+        log "配置库：沿用既有 store.env 中的 Postgres 配置，跳过本地自动装配"
+    elif [ "${EYVESCLOUD_DISABLE_LOCAL_PG:-}" = "1" ]; then
+        log "配置库：已设置 EYVESCLOUD_DISABLE_LOCAL_PG=1，保持 SQLite"
+    elif [ "${EYVESCLOUD_FRESH_INSTALL:-0}" != "1" ]; then
+        log "配置库：非全新安装，保持既有后端不变"
+    elif ! binary_supports_env /usr/local/bin/eyvescloud EYVESCLOUD_PG_DSN; then
+        log "配置库：当前二进制不支持 Postgres（旧版本无此能力），跳过自动装配，保持 SQLite；升级到含 Postgres 支持的版本后重装即自动启用"
+    else
+        log "正在自动装配本地 PostgreSQL（全新安装默认启用）..."
+        _dsn="$(provision_local_postgres)"
+        if [ -n "$_dsn" ]; then
+            export EYVESCLOUD_PG_DSN="$_dsn"
+            log "本地 PostgreSQL 已就绪，配置库将改用 Postgres"
+        else
+            warn "本地 PostgreSQL 自动装配失败，本次回落 SQLite；可稍后设置 EYVESCLOUD_PG_DSN 重新安装启用。"
+        fi
+    fi
+
+    if [ -n "${EYVESCLOUD_REDIS_ADDR:-}" ]; then
+        log "Redis：使用已提供的 EYVESCLOUD_REDIS_ADDR，跳过本地自动装配"
+    elif [ -n "$(persisted_env_value /etc/eyvescloud/redis.env EYVESCLOUD_REDIS_ADDR)" ]; then
+        log "Redis：沿用既有 redis.env，跳过本地自动装配"
+    elif [ "${EYVESCLOUD_DISABLE_LOCAL_REDIS:-}" = "1" ]; then
+        log "Redis：已设置 EYVESCLOUD_DISABLE_LOCAL_REDIS=1，按单机语义运行"
+    elif [ "${EYVESCLOUD_FRESH_INSTALL:-0}" != "1" ]; then
+        log "Redis：非全新安装，保持既有配置不变"
+    elif ! binary_supports_env /usr/local/bin/eyvescloud EYVESCLOUD_REDIS_ADDR; then
+        log "Redis：当前二进制不支持 Redis 共享信号，跳过自动装配，按单机语义运行"
+    else
+        log "正在自动装配本地 Redis（全新安装默认启用）..."
+        _addr="$(provision_local_redis)"
+        if [ -n "$_addr" ]; then
+            export EYVESCLOUD_REDIS_ADDR="$_addr"
+            log "本地 Redis 已就绪：$_addr"
+        else
+            warn "本地 Redis 自动装配失败，本次按单机语义运行（面板 fail-open）。"
+        fi
+    fi
+    return 0
+}
+
 set_panel_language() {
     lang="$EYVESCLOUD_LANG_DETECTED"
     db="/root/.eyvescloud/config.db"
@@ -3312,6 +3594,16 @@ print_summary() {
 # 部署里旁路生成一份空的 SQLite config.db（那会让随后的"写入面板语言"变成假成功）。
 load_persisted_env
 
+# 全新装判定：在安装器自身调用面板二进制之前采样，避免 --version 已旁路生成 config.db
+# 而误判。仅全新装才默认切到本地 Postgres/Redis；升级或已有配置一律不翻转后端。
+EYVESCLOUD_FRESH_INSTALL="1"
+if [ -f "${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}/config.db" ] \
+    || [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ] \
+    || [ -n "${EYVESCLOUD_PG_DSN:-}" ]; then
+    EYVESCLOUD_FRESH_INSTALL="0"
+fi
+export EYVESCLOUD_FRESH_INSTALL
+
 run_step "兼容性检查" check_os_compatibility
 run_step "存储环境检查" check_storage_compatibility
 choose_install_mode
@@ -3341,6 +3633,14 @@ check_upgrade_compatibility
 log "完成：检查升级兼容性"
 run_step "下载发行版包" download_release_if_needed
 run_step "安装 EYVESCLOUD 二进制" install_binary
+
+# 本地 PG/Redis 自动装配：必须在本 shell 执行（非 run_step），因为 provision_local_stack
+# 通过 export 把 DSN/地址传给随后的 install_service（run_step 的子 shell 无法回传变量）。
+if [ "$install_mode" != "agent" ]; then
+    log "开始：配置本地数据服务"
+    provision_local_stack
+    log "完成：配置本地数据服务"
+fi
 
 # 根据安装模式安装不同服务
 case "$install_mode" in
