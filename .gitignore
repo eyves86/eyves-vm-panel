@@ -1,6 +1,7 @@
 # Dependencies
-node_modules/
-frontend/node_modules/
+# 不带尾斜杠：symlink 形式的 node_modules（曾被误提交）也要被忽略
+node_modules
+frontend/node_modules
 
 # Frontend build output
 /frontend/dist/
