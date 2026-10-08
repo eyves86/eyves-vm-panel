@@ -890,6 +890,43 @@ func ContainersView() []Container {
 	return AppConfig.Containers
 }
 
+// ContainersROView 返回与全局共享底层数组的容器切片及释放函数。与 ContainersView
+// 的区别：读锁由调用方显式释放，可以贯穿整个只读管道（过滤/排序/当页拷贝）。
+// 持锁期间调用方只能读元素（元素会被写方就地修改，容器列表热路径即依赖这一点
+// 免除每请求全量值拷贝），需要修改时按值拷出；指针不得带出释放点之后使用。
+func ContainersROView() ([]Container, func()) {
+	AppConfigMu.RLock()
+	if AppConfig == nil {
+		AppConfigMu.RUnlock()
+		return nil, func() {}
+	}
+	return AppConfig.Containers, AppConfigMu.RUnlock
+}
+
+// LocalProbeContainers 返回本机容器（NodeID 为空）的值拷贝，按运行时分列。
+// 探测循环在无锁状态下执行外部命令（lxc-info/virsh 等），结果经持锁 API 写回
+// 内存态全局。节点容器不拷贝——企业形态下占绝对多数，调用方每请求只为它们
+// 付出一次只读扫描（零分配）。
+func LocalProbeContainers() (lxc, kvm []Container) {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if AppConfig == nil {
+		return nil, nil
+	}
+	for i := range AppConfig.Containers {
+		c := &AppConfig.Containers[i]
+		if c.NodeID != "" {
+			continue
+		}
+		if c.IsKVM() {
+			kvm = append(kvm, *c)
+		} else {
+			lxc = append(lxc, *c)
+		}
+	}
+	return lxc, kvm
+}
+
 // AdminPathForRequest 决定给某个前端请求注入的管理员入口路径：
 //   - 管理员路径为 "/"：始终注入 "/"（默认行为）
 //   - 请求落在管理员路径下：注入真实路径，管理端路由才会被挂载
@@ -1072,6 +1109,8 @@ func FindSubUserByNameOrEmail(identifier string) (*SubUser, bool) {
 }
 
 // FindSubUserByID 按内部 ID 查找子用户，返回副本（调用方不应持有实时指针）。
+// 走自愈下标（store_index.go）：列表接口按属主派生展示名时每页多次查询，
+// O(全部子用户) 线性扫在 10w 目录下不可接受。
 func FindSubUserByID(id string) (*SubUser, bool) {
 	id = strings.TrimSpace(id)
 	if id == "" {
@@ -1079,11 +1118,9 @@ func FindSubUserByID(id string) (*SubUser, bool) {
 	}
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
-	for i := range AppConfig.SubUsers {
-		if AppConfig.SubUsers[i].ID == id {
-			cp := AppConfig.SubUsers[i]
-			return &cp, true
-		}
+	if i, ok := FindSubUserIndexByIDUnlocked(id); ok {
+		cp := AppConfig.SubUsers[i]
+		return &cp, true
 	}
 	return nil, false
 }
@@ -1393,6 +1430,7 @@ type Node struct {
 	RegionID            string   `json:"region_id,omitempty"`     // 所属区域，见 Regions
 	NodeGroupID         string   `json:"node_group_id,omitempty"` // 所属节点分组，见 NodeGroups（迁移池/策略池）
 	ClusterID           string   `json:"cluster_id,omitempty"`    // 所属集群，见 Clusters（跨分组 HA/迁移域）
+	CellID              string   `json:"cell_id,omitempty"`       // 所属分片单元，见 Cells（空/失效 ⇒ 默认 cell，见 CellForNodeID）
 	VirtTypes           []string `json:"virt_types,omitempty"`    // 节点支持的虚拟化类型: "lxc"/"kvm"/["lxc","kvm"]
 	CreatedAt           string   `json:"created_at,omitempty"`
 	// MaintenanceMode 维护模式：调度器不再把新容器放到该节点（升级/维修前开启）。
@@ -1427,6 +1465,19 @@ type Cluster struct {
 	Description string   `json:"description,omitempty"`
 	RegionIDs   []string `json:"region_ids,omitempty"` // Cluster 覆盖的区域（可选）
 	CreatedAt   string   `json:"created_at,omitempty"`
+}
+
+// Cell 是一个分片单元（P3）：一批节点连同其上的容器由一个 cell 独占管理，
+// 控制面按 node_id→cell_id 路由请求、再聚合结果。
+//
+// 目录自身存 app_meta（与 Regions/NodeGroups/Clusters 同一机制，无独立表）。
+// 物理分库所需的连接串（DSN，含凭据）属于 P3-c 的范围，届时再加字段并走
+// jsonSecretKey 加密落库——现在加一个没人读、还可能明文存凭据的字段是净负债。
+type Cell struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
 }
 
 // Region 是一个逻辑区域，用于把节点/存储/容器按地域分组管理。
@@ -1660,6 +1711,7 @@ type EyvescloudConfig struct {
 	Regions       []Region         `json:"regions,omitempty"`
 	NodeGroups    []NodeGroup      `json:"node_groups,omitempty"`
 	Clusters      []Cluster        `json:"clusters,omitempty"`
+	Cells         []Cell           `json:"cells,omitempty"`
 	IPGroups      []IPGroup        `json:"ip_groups,omitempty"`
 	ISOFiles      []ISOFile        `json:"iso_files,omitempty"`
 	SecGroups     []secgroup.Group `json:"sec_groups,omitempty"`
@@ -1871,8 +1923,9 @@ func SetConfigPath(path string) {
 }
 
 func getDataDir() string {
-	// EYVESCLOUD_DATA_DIR 允许运维与测试显式重定向数据目录（与
-	// EYVESCLOUD_LXC_SUBNET 等环境变量风格一致）；未设置时保持原默认。
+	// EYVESCLOUD_DATA_DIR 只重定向遥测库等数据文件；配置库（config.json.db）路径
+	// 由 getConfigPath() → HOME 决定，不随本变量迁移。测试/沙箱要整目录隔离必须
+	// 重定向 HOME（实测：只设本变量会直接打开 $HOME/.eyvescloud 下的真实库）。
 	if dir := strings.TrimSpace(os.Getenv("EYVESCLOUD_DATA_DIR")); dir != "" {
 		return dir
 	}
@@ -2367,7 +2420,18 @@ func normalizeConfigDefaults(dataDir string) bool {
 			}
 		}
 	}
-	// Node 引用完整性：清空不存在的 NodeGroupID / ClusterID；推断空 VirtTypes。
+	if AppConfig.Cells == nil {
+		AppConfig.Cells = make([]Cell, 0)
+		changed = true
+	} else {
+		for i := range AppConfig.Cells {
+			if AppConfig.Cells[i].ID == "" {
+				AppConfig.Cells[i].ID = "cell-" + randomShortID()
+				changed = true
+			}
+		}
+	}
+	// Node 引用完整性：清空不存在的 NodeGroupID / ClusterID / CellID；推断空 VirtTypes。
 	nodeGroupIDs := map[string]bool{}
 	for _, ng := range AppConfig.NodeGroups {
 		nodeGroupIDs[ng.ID] = true
@@ -2376,6 +2440,16 @@ func normalizeConfigDefaults(dataDir string) bool {
 	for _, cl := range AppConfig.Clusters {
 		clusterIDs[cl.ID] = true
 	}
+	cellIDs := map[string]bool{DefaultCellID: true}
+	for _, cl := range AppConfig.Cells {
+		cellIDs[cl.ID] = true
+	}
+	// 已配置独立分库（EYVESCLOUD_CELL_DSNS）的 cell 一并视为存在：否则「配了库却
+	// 没登记 Cell」会让节点在控制库与 cell 库之间来回搬迁（内存里被清空 → 下次保存
+	// 写回控制库 → 再启动又被搬走），两侧各留一份副本。
+	for id := range cellStoreIDs() {
+		cellIDs[id] = true
+	}
 	for i := range AppConfig.Nodes {
 		if AppConfig.Nodes[i].NodeGroupID != "" && !nodeGroupIDs[AppConfig.Nodes[i].NodeGroupID] {
 			AppConfig.Nodes[i].NodeGroupID = ""
@@ -2383,6 +2457,10 @@ func normalizeConfigDefaults(dataDir string) bool {
 		}
 		if AppConfig.Nodes[i].ClusterID != "" && !clusterIDs[AppConfig.Nodes[i].ClusterID] {
 			AppConfig.Nodes[i].ClusterID = ""
+			changed = true
+		}
+		if AppConfig.Nodes[i].CellID != "" && !cellIDs[AppConfig.Nodes[i].CellID] {
+			AppConfig.Nodes[i].CellID = ""
 			changed = true
 		}
 		if len(AppConfig.Nodes[i].VirtTypes) == 0 {
@@ -2552,9 +2630,6 @@ func migrateLoadedConfig() bool {
 	if ensureContainerPortMappingLimits() {
 		changed = true
 	}
-	if ensureContainerSnapshotLimits() {
-		changed = true
-	}
 	if ensureContainerNetworkAssignments() {
 		changed = true
 	}
@@ -2635,17 +2710,6 @@ func ensureContainerPortMappingLimits() bool {
 			changed = true
 		} else if AppConfig.Containers[i].PortMappingLimit == 0 && len(AppConfig.Containers[i].PortMappings) > 0 {
 			AppConfig.Containers[i].PortMappingLimit = len(AppConfig.Containers[i].PortMappings)
-			changed = true
-		}
-	}
-	return changed
-}
-
-func ensureContainerSnapshotLimits() bool {
-	changed := false
-	for i := range AppConfig.Containers {
-		if AppConfig.Containers[i].SnapshotLimit <= 0 {
-			AppConfig.Containers[i].SnapshotLimit = DefaultSnapshotLimit
 			changed = true
 		}
 	}
@@ -2889,6 +2953,8 @@ func CloseConfigDB() {
 	CloseTelemetryDB()
 	// 连接关闭后行指纹不再代表库内容，清空以便下次 openConfigDB 重新播种。
 	resetPersistedRows()
+	// cell 分库连接与配置库生命周期一致（未配置时为空操作）。
+	closeCellStores()
 }
 
 func ListCustomKVMImages() []CustomKVMImage {
@@ -3294,21 +3360,6 @@ func GetContainers() []Container {
 	AppConfigMu.RLock()
 	defer AppConfigMu.RUnlock()
 	return append([]Container(nil), AppConfig.Containers...)
-}
-
-// SubUserUsernameByID 返回 subuser ID → username 的只读映射（持锁快照），
-// 供列表接口派生 owner_username 展示字段。
-func SubUserUsernameByID() map[string]string {
-	AppConfigMu.RLock()
-	defer AppConfigMu.RUnlock()
-	if AppConfig == nil {
-		return nil
-	}
-	m := make(map[string]string, len(AppConfig.SubUsers))
-	for i := range AppConfig.SubUsers {
-		m[AppConfig.SubUsers[i].ID] = AppConfig.SubUsers[i].Username
-	}
-	return m
 }
 
 // ---------------------------------------------------------------------------
@@ -3786,6 +3837,149 @@ func ListClusterNodes(clusterID string) []string {
 		}
 	}
 	return ids
+}
+
+// -------- Cell helpers（P3：分片单元） --------
+
+// DefaultCellID 是所有「未指定 / 归属已失效」的节点所在的 cell。分片路由必须对
+// 任意节点都是全函数——每个节点恰属一个 cell，否则按 cell 分桶落库会漏掉无归属的行。
+const DefaultCellID = "cell-0"
+
+// FindCell 返回分片单元的副本。
+func FindCell(id string) (Cell, bool) {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	for _, cell := range AppConfig.Cells {
+		if cell.ID == id {
+			return cell, true
+		}
+	}
+	return Cell{}, false
+}
+
+// CellForNodeLocked 在已持 AppConfigMu 的调用点内解析节点的分片归属。
+// 未归属、或归属的 cell 已被删除 ⇒ 默认 cell。
+func CellForNodeLocked(n Node) string {
+	if n.CellID == "" {
+		return DefaultCellID
+	}
+	for i := range AppConfig.Cells {
+		if AppConfig.Cells[i].ID == n.CellID {
+			return n.CellID
+		}
+	}
+	return DefaultCellID
+}
+
+// CellForNode 解析节点归属的 cell（分片路由入口）。
+func CellForNode(n Node) string {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	return CellForNodeLocked(n)
+}
+
+// CellForNodeID 按节点 ID 解析归属 cell。节点不存在时同样回落默认 cell——
+// 与 FindNode 不同，这里故意不返回「找不到」：分片键不允许有中间态。
+func CellForNodeID(nodeID string) string {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	if i, ok := FindNodeIndexUnlocked(nodeID); ok {
+		return CellForNodeLocked(AppConfig.Nodes[i])
+	}
+	return DefaultCellID
+}
+
+// CellForContainer 返回容器所在的 cell——由所属节点决定；本机容器（NodeID 为空）
+// 归默认 cell。
+func CellForContainer(c Container) string {
+	return CellForNodeID(c.NodeID)
+}
+
+// ListNodeCellNodes 返回归属指定 cell 的节点 ID（成员 = Node.CellID 指向该 cell）。
+func ListNodeCellNodes(cellID string) []string {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	ids := make([]string, 0)
+	for i := range AppConfig.Nodes {
+		if CellForNodeLocked(AppConfig.Nodes[i]) == cellID {
+			ids = append(ids, AppConfig.Nodes[i].ID)
+		}
+	}
+	return ids
+}
+
+// CountCellNodes 返回归属指定 cell 的节点数（删除前的守卫用）。
+func CountCellNodes(cellID string) int {
+	AppConfigMu.RLock()
+	defer AppConfigMu.RUnlock()
+	n := 0
+	for i := range AppConfig.Nodes {
+		if CellForNodeLocked(AppConfig.Nodes[i]) == cellID {
+			n++
+		}
+	}
+	return n
+}
+
+// AddCell 新增分片单元。ID 由调用方传入或自动生成；cell-0 是默认 cell 的保留 ID。
+func AddCell(cell Cell) (Cell, error) {
+	if cell.ID == "" {
+		cell.ID = "cell-" + randomShortID()
+	}
+	if cell.ID == DefaultCellID {
+		return Cell{}, fmt.Errorf("cell id %q is reserved for the default cell", DefaultCellID)
+	}
+	if cell.CreatedAt == "" {
+		cell.CreatedAt = time.Now().Format("2006-01-02 15:04:05")
+	}
+	err := MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
+		if cfg.Cells == nil {
+			cfg.Cells = make([]Cell, 0)
+		}
+		cfg.Cells = append(cfg.Cells, cell)
+	})
+	return cell, err
+}
+
+// UpdateCell 原地修改分片单元元数据（名称/描述）。归属关系不在改这里。
+func UpdateCell(id string, fn func(*Cell)) (Cell, bool) {
+	var found bool
+	var result Cell
+	_ = MutateGlobalMetaOnly(func(cfg *EyvescloudConfig) {
+		for i := range cfg.Cells {
+			if cfg.Cells[i].ID == id {
+				fn(&cfg.Cells[i])
+				found = true
+				result = cfg.Cells[i]
+				return
+			}
+		}
+	})
+	return result, found
+}
+
+// RemoveCell 删除分片单元并清空节点上的 CellID 引用。清引用会让这些节点（及其容器）
+// 在下一次落库时从 cell 库搬回控制库，调用方（API 层）应先确认成员已迁空。
+func RemoveCell(id string) bool {
+	removed := false
+	_ = MutateGlobal(func(cfg *EyvescloudConfig) {
+		filtered := make([]Cell, 0, len(cfg.Cells))
+		for _, c := range cfg.Cells {
+			if c.ID == id {
+				removed = true
+				continue
+			}
+			filtered = append(filtered, c)
+		}
+		cfg.Cells = filtered
+		// 同步清空 Node 上的 CellID 引用（跟 RemoveNodeGroup 清 NodeGroupID 同一口径）。
+		for i := range cfg.Nodes {
+			if cfg.Nodes[i].CellID == id {
+				cfg.Nodes[i].CellID = ""
+			}
+		}
+	})
+	return removed
 }
 
 // NodeSupportsVirt 报告节点是否支持指定虚拟化类型（lxc / kvm）。

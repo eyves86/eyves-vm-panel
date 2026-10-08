@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -10,6 +11,9 @@ import (
 // (client IP + username / access code) to mitigate brute-force attacks.
 // A sliding window keeps only failures within the window; successful
 // logins reset the counter for that identity.
+//
+// 配置 EYVESCLOUD_REDIS_ADDR 后，计数改走 Redis 固定窗口（跨副本共享阈值），
+// Redis 出错时回退本进程滑动窗口（fail-open，见 redisgate.go）。
 type loginRateLimiter struct {
 	mu      sync.Mutex
 	window  time.Duration
@@ -27,6 +31,22 @@ var loginLimiter = &loginRateLimiter{
 
 // allow reports whether a login attempt for key may proceed.
 func (l *loginRateLimiter) allow(key string) bool {
+	if c := sharedRedis(); c != nil {
+		val, ok, err := c.Get(redisLoginWindowKey(key))
+		if err == nil {
+			// Redis 在线：共享计数即唯一真相（键不存在 = 0 次失败），
+			// 不回退内存——否则每次未命中写空条目，map 随攻击者可控的
+			// key 无限增长（recordFail 已不触发 enforceCapLocked）。
+			if !ok {
+				return true
+			}
+			if cur, aerr := strconv.Atoi(val); aerr == nil {
+				return cur < l.maxFail
+			}
+			return true
+		}
+		// Redis 出错：回退进程内滑动窗口（fail-open）。
+	}
 	now := time.Now()
 	cutoff := now.Add(-l.window)
 	l.mu.Lock()
@@ -43,6 +63,11 @@ func (l *loginRateLimiter) allow(key string) bool {
 
 // recordFail registers a failed login attempt for key.
 func (l *loginRateLimiter) recordFail(key string) {
+	if c := sharedRedis(); c != nil {
+		if _, err := c.IncrWindow(redisLoginWindowKey(key), redisLoginWindowTTL()); err == nil {
+			return
+		}
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.fails[key] = append(l.fails[key], time.Now())
@@ -51,6 +76,11 @@ func (l *loginRateLimiter) recordFail(key string) {
 
 // reset clears all failed attempts for key after a successful login.
 func (l *loginRateLimiter) reset(key string) {
+	if c := sharedRedis(); c != nil {
+		if err := c.Del(redisLoginWindowKey(key)); err == nil {
+			return
+		}
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	delete(l.fails, key)

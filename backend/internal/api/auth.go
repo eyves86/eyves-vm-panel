@@ -77,6 +77,15 @@ func authContextFromRequest(r *http.Request) (AuthContext, bool) {
 	return ctx, ok
 }
 
+// claimsContextKey 缓存鉴权中间件已验证的 JWT claims：一个请求内多个 handler
+// （requestActor / isSubUserRequest / subuser / vnc）各自调 claimsFromRequest 时
+// 不再重复做 HMAC 验签。缓存只存进请求 context，随请求结束失效——吊销语义不变。
+type claimsContextKey struct{}
+
+func withClaims(r *http.Request, claims jwt.MapClaims) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), claimsContextKey{}, claims))
+}
+
 func requestActor(r *http.Request) string {
 	// 多节点转发场景：主控 → agent 转发时把原始请求的 actor 写到 X-Original-Actor。
 	// agent 端审计时应优先使用这个值，避免把"agent 自身 token"记成操作人。
@@ -270,24 +279,27 @@ func claimsFromToken(tokenString string) (jwt.MapClaims, bool) {
 	if subUser, _ := claims["sub_user"].(string); subUser != "" {
 		tokenVersionFloat, hasVersion := claims["token_version"].(float64)
 		tokenVersion := int(tokenVersionFloat)
-		foundSubUser := false
 		config.AppConfigMu.RLock()
-		for i := range config.AppConfig.SubUsers {
-			if config.AppConfig.SubUsers[i].Username == subUser {
-				foundSubUser = true
-				stored := config.AppConfig.SubUsers[i].TokenVersion
-				// If stored version > 0, require token_version to match exactly.
-				// This also rejects legacy tokens that lack token_version entirely.
-				if stored > 0 && (!hasVersion || tokenVersion != stored) {
-					config.AppConfigMu.RUnlock()
-					return nil, false
-				}
-				break
+		i, found := config.FindSubUserIndexByNameUnlocked(subUser)
+		if found {
+			// If stored version > 0, require token_version to match exactly.
+			// This also rejects legacy tokens that lack token_version entirely.
+			stored := config.AppConfig.SubUsers[i].TokenVersion
+			if stored > 0 && (!hasVersion || tokenVersion != stored) {
+				config.AppConfigMu.RUnlock()
+				return nil, false
 			}
 		}
 		config.AppConfigMu.RUnlock()
-		if !foundSubUser {
+		if !found {
 			return nil, false
+		}
+		// 分布式模式：内存快照可能落后于其他副本的轮换/删除，用共享信号复核。
+		// 不限 tokenVersion>0：删除墓碑（-1）必须能拦住 v0 遗留令牌。
+		if c := sharedRedis(); c != nil {
+			if !redisConfirmSharedVersion(c, redisRevSubKey(subUser), tokenVersion) {
+				return nil, false
+			}
 		}
 		return claims, ok
 	}
@@ -301,6 +313,11 @@ func claimsFromToken(tokenString string) (jwt.MapClaims, bool) {
 		tokenVersionFloat, hasVersion := claims["token_version"].(float64)
 		if !hasVersion || int(tokenVersionFloat) != acct.TokenVersion {
 			return nil, false
+		}
+		if c := sharedRedis(); c != nil {
+			if !redisConfirmSharedVersion(c, redisRevAdminKey(acct.Username), acct.TokenVersion) {
+				return nil, false
+			}
 		}
 		return claims, true
 	}
@@ -316,12 +333,21 @@ func claimsFromToken(tokenString string) (jwt.MapClaims, bool) {
 		if !hasVersion || int(tokenVersionFloat) != adminTokenVersion {
 			return nil, false
 		}
+		// 分布式模式：其他副本可能已轮换主管理员口令，用共享信号复核。
+		if c := sharedRedis(); c != nil {
+			if !redisConfirmSharedVersion(c, redisRevAdminGlobalKey(), adminTokenVersion) {
+				return nil, false
+			}
+		}
 	}
 
 	return claims, ok
 }
 
 func claimsFromRequest(r *http.Request) (jwt.MapClaims, bool) {
+	if claims, ok := r.Context().Value(claimsContextKey{}).(jwt.MapClaims); ok && claims != nil {
+		return claims, true
+	}
 	return claimsFromToken(tokenFromRequest(r))
 }
 
@@ -551,6 +577,7 @@ func HandleChangePassword(w http.ResponseWriter, r *http.Request) {
 		cfg.AdminPassHash = string(hash)
 		cfg.AdminTokenVersion++ // invalidate all previously issued admin tokens
 	})
+	notifyAdminGlobalRotated()
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Password changed successfully"})
 }
 
@@ -653,7 +680,7 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			if ctx.Type == authTypeAdmin && !enforceAdminRole(w, r, ctx.Role) {
 				return
 			}
-			next(w, withAuthContext(r, ctx))
+			next(w, withClaims(withAuthContext(r, ctx), claims))
 			return
 		}
 
@@ -678,7 +705,7 @@ func OptionalAuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if tokenString := tokenFromRequest(r); tokenString != "" {
 			if claims, ok := claimsFromToken(tokenString); ok {
-				next(w, withAuthContext(r, authContextFromClaims(claims)))
+				next(w, withClaims(withAuthContext(r, authContextFromClaims(claims)), claims))
 				return
 			}
 		}

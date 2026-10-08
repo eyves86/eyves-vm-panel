@@ -106,6 +106,7 @@ LOG_FILE="${EYVESCLOUD_LOG_FILE:-/var/log/eyvescloud-install.log}"
 INSTALL_DOWNLOAD_MARKER="${EYVESCLOUD_INSTALL_DOWNLOAD_MARKER:-/tmp/eyvescloud-install-dir.$$}"
 LIBVIRT_DEFAULT_MARKER="/var/lib/eyvescloud/kvm/default-network.created"
 EYVESCLOUD_NETWORK_ENV="/etc/eyvescloud/network.env"
+EYVESCLOUD_STORE_ENV="/etc/eyvescloud/store.env"
 
 normalize_eyvescloud_arch() {
     arch="$1"
@@ -375,6 +376,39 @@ tr_msg() {
         -e 's/检测到 /Detected /g' \
         -e 's/安装完成/Installation complete/g' \
         -e 's/Web 面板/Web panel/g' \
+        -e 's/分布式模式：Redis 共享信号 /Distributed mode: Redis shared signal at /g' \
+        -e 's/EYVESCLOUD_REDIS_ADDR 仅支持 host:port（暂不含 IPv6 括号写法），已按单机模式处理：/EYVESCLOUD_REDIS_ADDR only supports host:port (IPv6 bracket form not supported yet); falling back to single-node mode: /g' \
+        -e 's/EYVESCLOUD_REDIS_PASSWORD 含不可打印字符，已忽略密码（仅透传地址）/EYVESCLOUD_REDIS_PASSWORD contains non-printable characters; ignoring the password (address only)/g' \
+        -e 's/当前不可达：面板将以单机语义运行（fail-open），请检查地址\/防火墙/is unreachable: the panel will run with single-node semantics (fail-open); check the address and firewall/g' \
+        -e 's/多副本共享限流与吊销广播/multi-replica shared rate limiting and revocation broadcast/g' \
+        -e 's/存储后端：SQLite（默认）/Storage backend: SQLite (default)/g' \
+        -e 's/存储后端：沿用既有/Storage backend: keeping existing /g' \
+        -e 's/（本次未覆盖）/(not overridden this run)/g' \
+        -e 's/配置库后端：Postgres（DSN 已写入/Config store: Postgres (DSN written to /g' \
+        -e 's/，不进日志）/, not logged)/g' \
+        -e 's/cell 分库：已配置 /Cell sharding: /g' \
+        -e 's/ 个 cell/ cell(s) configured/g' \
+        -e 's/节点令牌加密密钥：由 env 提供（未提供时面板会在数据目录自动生成 .tokenkey）/Node token key: provided via env (otherwise the panel generates .tokenkey in the data dir)/g' \
+        -e 's/配置库为 Postgres：安装阶段无法预置面板语言，请在面板右上角切换（默认中文）/Config store is Postgres: the panel language cannot be preset at install time; switch it in the panel (defaults to Chinese)/g' \
+        -e 's/配置库为 Postgres：无法从本地读取容器网络记录，卸载不会自动清理其 iptables\/ipv6 规则，请按需人工核对。/Config store is Postgres: container network records cannot be read locally, so uninstall will not clean their iptables\/ipv6 rules; please verify manually./g' \
+        -e 's/ 含不可打印字符，已忽略（不写入 / contains non-printable characters; not written to /g' \
+        -e 's/EYVESCLOUD_CELL_DSNS 含面板会忽略的项（需要 id=dsn）：/EYVESCLOUD_CELL_DSNS has entries the panel will ignore (need id=dsn): /g' \
+        -e 's/配置库：/Config store: /g' \
+        -e 's/遥测仍在/telemetry stays at /g' \
+        -e 's/注意：/Note: /g' \
+        -e 's/ 仍存在。若你是从 SQLite 迁到 Postgres，它是旧库（可归档）；若是全新装，请检查是否有进程绕过 PG_DSN 走了 SQLite。/ still exists. If you migrated from SQLite to Postgres it is the old database (safe to archive); if this is a fresh install, check whether some process bypassed PG_DSN and used SQLite./g' \
+        -e 's/cell 分库：/Cell sharding: /g' \
+        -e 's/已配置（见/configured (see /g' \
+        -e 's/节点令牌密钥：/Node token key: /g' \
+        -e 's/由 env 提供/provided via env/g' \
+        -e 's/服务器配置库为 Postgres 且已有管理员账号，初始凭据文件不存在。/The server uses a Postgres config store and already has an admin account, so the initial credentials file does not exist./g' \
+        -e 's/取值不合法（示例：/invalid value (example: /g' \
+        -e 's/），已忽略：/); ignored: /g' \
+        -e 's/Go 内存软上限：/Go soft memory limit: /g' \
+        -e 's/Go 处理器数：/Go processor count: /g' \
+        -e 's/必须是正整数，已忽略：/must be a positive integer; ignored: /g' \
+        -e 's/被控自动更新已启用：每 /Controller auto-update enabled: every /g' \
+        -e 's/ 分钟检查一次/ minutes/g' \
         -e 's/快捷命令/Quick command/g' \
         -e 's/查看面板信息\/改账号\/重置密码\/重启服务/view panel info, change admin name, reset password, restart service/g' \
         -e 's/安装 vm 快捷命令/Install vm quick command/g' \
@@ -529,6 +563,18 @@ Environment variables:
   EYVESCLOUD_FORCE_DOWNGRADE=1         Allow downgrade install (default: refuse)
   EYVESCLOUD_REQUIRE_VERIFY=1          Abort install if the checksum manifest cannot be fetched (strict mode)
   EYVESCLOUD_SKIP_VERIFY=1             Skip release SHA-256 verification entirely (not recommended)
+  EYVESCLOUD_REDIS_ADDR=host:port     Optional. Multi-replica shared signals (distributed rate limiting + token revocation broadcast); unset = single-node
+  EYVESCLOUD_REDIS_PASSWORD=secret    Optional. Redis AUTH password (for a requirepass-enabled Redis)
+  EYVESCLOUD_PG_DSN=postgres://...    Optional. Config store on Postgres (telemetry stays in local telemetry.db); unset = SQLite
+  EYVESCLOUD_CELL_DSNS=cell-1=/a.db,cell-2=host:port
+                                      Optional. Per-cell shard map for nodes/containers; unset = single config DB
+  EYVESCLOUD_NODE_TOKEN_KEY=<64 hex>  Optional. AES-256 key for node tokens; unset = auto-generated into data dir (.tokenkey)
+  EYVESCLOUD_AGENT_GATEWAY_ADDR=host:port
+                                      Optional. Dedicated agent gateway address
+  EYVESCLOUD_GOMEMLIMIT=96GiB         Optional. Go soft memory limit for the panel service; unset = runtime default
+  EYVESCLOUD_GOMAXPROCS=32            Optional. Go processor count for the panel service; unset = runtime default
+                                      (Storage/Redis vars are persisted to 0600 /etc/eyvescloud/store.env|redis.env.
+                                       Passing them as empty strings clears them; not passing them keeps the existing file.)
 Examples:
   curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh
   curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh -s -- uninstall
@@ -556,6 +602,18 @@ EOF
   EYVESCLOUD_FORCE_REINSTALL=1       相同版本时强制重装
   EYVESCLOUD_REQUIRE_VERIFY=1        取不到校验清单时中止安装（严格模式；默认警告后继续）
   EYVESCLOUD_SKIP_VERIFY=1           完全跳过发行版 SHA-256 校验（不推荐）
+  EYVESCLOUD_REDIS_ADDR=host:port    可选。多副本共享信号（分布式限流 + 令牌吊销广播）；不设 = 单机模式
+  EYVESCLOUD_REDIS_PASSWORD=secret   可选。Redis AUTH 密码（对应 Redis 端 requirepass）
+  EYVESCLOUD_PG_DSN=postgres://...   可选。配置库改用 Postgres（遥测仍在本地 telemetry.db）；不设 = SQLite
+  EYVESCLOUD_CELL_DSNS=cell-1=/a.db,cell-2=host:port
+                                     可选。节点/容器的 per-cell 分库映射；不设 = 单一配置库
+  EYVESCLOUD_NODE_TOKEN_KEY=<64位hex> 可选。节点 Token 的 AES-256 密钥；不设 = 自动生成到数据目录（.tokenkey）
+  EYVESCLOUD_AGENT_GATEWAY_ADDR=host:port
+                                     可选。独立 Agent 网关地址
+  EYVESCLOUD_GOMEMLIMIT=96GiB        可选。面板服务的 Go 内存软上限；不设 = 运行时默认
+  EYVESCLOUD_GOMAXPROCS=32           可选。面板服务的 Go 处理器数；不设 = 运行时默认
+                                      （存储/Redis 类变量会落盘到 0600 的 /etc/eyvescloud/store.env|redis.env。
+                                       显式传空串 = 清除；完全不传 = 保留既有文件，升级不会静默丢配置。）
 
 示例：
   curl -fsSL ${REPO_RAW_INSTALL_URL} | sudo sh
@@ -840,6 +898,13 @@ read_eyvescloud_network_records() {
     db="/root/.eyvescloud/config.db"
     legacy="/root/.eyvescloud/config.json"
     query="SELECT COALESCE(virtualization,''), COALESCE(ipv6,''), COALESCE(ipv6_interface,''), COALESCE(mac_address,'') FROM containers WHERE COALESCE(ipv6,'') <> '' OR COALESCE(mac_address,'') <> '';"
+
+    # PG 配置库：容器网络记录在 Postgres 里，本函数（sqlite3/python 读本地库）取不到。
+    # 如实告知，避免卸载时"清理完成"却留下 iptables/ipv6 残留。
+    if [ ! -f "$db" ] && pg_config_backend_active; then
+        warn "配置库为 Postgres：无法从本地读取容器网络记录，卸载不会自动清理其 iptables/ipv6 规则，请按需人工核对。"
+        return 0
+    fi
 
     if [ -f "$db" ] && has_cmd sqlite3; then
         sqlite3 -separator '|' "$db" "$query" 2>/dev/null || true
@@ -1404,6 +1469,19 @@ install_dependencies() {
 
 network_prompt_available() {
     [ -r /dev/tty ] && [ -w /dev/tty ] && { printf '' > /dev/tty; } 2>/dev/null
+}
+
+# 返回可用于交互的输入设备，供需要提问的安装步骤使用：
+#   优先 /dev/tty —— `curl -fsSL … | sudo sh` 时 stdin 是脚本自身（管道），
+#   直接 read 会把脚本文本当答案吃掉，必须绕到控制终端；
+#   stdin 本身是终端时才回退用它。
+# 两者都不可用（真·非交互 / CI）输出空串，调用方据此走默认值。
+interactive_tty() {
+    if [ -r /dev/tty ] && [ -w /dev/tty ] && { printf '' > /dev/tty; } 2>/dev/null; then
+        printf '/dev/tty'
+    elif [ -t 0 ]; then
+        printf '/dev/stdin'
+    fi
 }
 
 current_bridge_subnet() {
@@ -2064,10 +2142,12 @@ release_tags_list() {
     fetch_release_list | tr ',' '\n' | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 100
 }
 
-# 交互式选择要安装/升级的版本。仅在交互终端且未显式指定 EYVESCLOUD_VERSION 时调用；
+# 交互式选择要安装/升级的版本。仅在可交互且未显式指定 EYVESCLOUD_VERSION 时调用；
 # 直接回车默认安装最新版本（latest），也可以输入版本号精确安装。
 choose_version_interactively() {
-    [ -t 0 ] || return 0
+    # 交互设备优先 /dev/tty —— `curl … | sudo sh` 时 stdin 是脚本自身，不能拿来读答案。
+    _in="$(interactive_tty)"
+    [ -n "$_in" ] || return 0
     # EYVESCLOUD_VERSION 已显式指定（非默认 latest）时不提示。
     if [ -n "${EYVESCLOUD_VERSION:-}" ]; then
         return 0
@@ -2091,8 +2171,8 @@ choose_version_interactively() {
         done
         echo "  Enter) 最新版本 (latest)"
         printf "  请输入版本号或编号 [Enter=latest]: "
-    } >&2
-    IFS= read -r answer || answer=""
+    } > "$_in"
+    IFS= read -r answer < "$_in" || answer=""
     answer="$(printf '%s' "$answer" | tr -d '[:space:]')"
     if [ -z "$answer" ]; then
         return 0
@@ -2127,14 +2207,16 @@ choose_version_interactively() {
 }
 
 # 交互式选择安装模式：主控 / 被控 / 主控+被控。
-# 非交互或 EYVESCLOUD_INSTALL_MODE 已设置时跳过。
+# EYVESCLOUD_INSTALL_MODE 已设置、或确实没有可用交互设备（无 tty 的 CI）时才跳过。
 choose_install_mode() {
     if [ -n "${EYVESCLOUD_INSTALL_MODE:-}" ]; then
         # 显式指定时不提示
         return 0
     fi
-    if [ ! -t 0 ]; then
-        # 非交互模式默认全装（向后兼容）
+    # 交互设备优先 /dev/tty —— `curl … | sudo sh` 时 stdin 是脚本自身，不能拿来读答案。
+    _in="$(interactive_tty)"
+    if [ -z "$_in" ]; then
+        # 真·非交互（无 tty）：默认全装（向后兼容）
         export EYVESCLOUD_INSTALL_MODE="controller-agent"
         return 0
     fi
@@ -2146,15 +2228,15 @@ choose_install_mode() {
         echo "  2) 仅主控       (controller)        —— 只跑控制平面，不跑被控 agent"
         echo "  3) 仅被控       (agent)             —— 只跑被控 agent，需要指定主控地址"
         printf "  请输入 1/2/3 [1]: "
-    } >&2
-    IFS= read -r answer || answer=""
+    } > "$_in"
+    IFS= read -r answer < "$_in" || answer=""
     case "$answer" in
         2) export EYVESCLOUD_INSTALL_MODE="controller" ;;
         3) export EYVESCLOUD_INSTALL_MODE="agent"
            # agent 模式需要主控地址
            if [ -z "${EYVESCLOUD_CONTROLLER:-}" ]; then
-               printf "  请输入主控地址（如 https://4.4.4.4:8999）: " >&2
-               IFS= read -r ctrl_addr || ctrl_addr=""
+               printf "  请输入主控地址（如 https://4.4.4.4:8999）: " > "$_in"
+               IFS= read -r ctrl_addr < "$_in" || ctrl_addr=""
                ctrl_addr="$(printf '%s' "$ctrl_addr" | sed 's/[[:space:]]*$//')"
                [ -n "$ctrl_addr" ] || die "agent 模式必须指定主控地址"
                export EYVESCLOUD_CONTROLLER="$ctrl_addr"
@@ -2643,16 +2725,43 @@ install_systemd_service() {
     # 被控自动更新开关：EYVESCLOUD_AUTO_UPDATE=<分钟，>=60> 时写入面板单元。
     # 同机部署下被控职责由面板进程承担（agent 服务已停用），因此这条变量必须落在
     # **面板**单元上才会生效；未设置时不写（默认关闭，无人值守自动升级需显式开启）。
+    #
+    # 下面每个可选 Environment 行都自带结尾换行：历史版本少了换行，AUTO_UPDATE 一开
+    # 就会把它和紧随其后的 EnvironmentFile 拼成同一行，导致 network.env 整条丢失
+    # （LXC/KVM 网段随之下发不到面板）。
     auto_update_env=""
     if [ -n "${EYVESCLOUD_AUTO_UPDATE:-}" ]; then
         case "$EYVESCLOUD_AUTO_UPDATE" in
             ''|*[!0-9]*) warn "EYVESCLOUD_AUTO_UPDATE 必须是数字（分钟，>=60），已忽略：$EYVESCLOUD_AUTO_UPDATE" ;;
             *) if [ "$EYVESCLOUD_AUTO_UPDATE" -ge 60 ]; then
-                   auto_update_env="Environment=EYVESCLOUD_AUTO_UPDATE=${EYVESCLOUD_AUTO_UPDATE}"
+                   auto_update_env="Environment=EYVESCLOUD_AUTO_UPDATE=${EYVESCLOUD_AUTO_UPDATE}
+"
                    log "被控自动更新已启用：每 ${EYVESCLOUD_AUTO_UPDATE} 分钟检查一次"
                else
                    warn "EYVESCLOUD_AUTO_UPDATE 至少 60 分钟，已忽略：$EYVESCLOUD_AUTO_UPDATE"
                fi ;;
+        esac
+    fi
+
+    # 大内存主控（如 36C/128G）可显式给 Go 运行时设软上限/处理器数；不设 = 交给运行时自决。
+    # 取值只允许 [0-9A-Za-z]（GOMEMLIMIT 形如 96GiB，GOMAXPROCS 形如 32）：这两个变量会
+    # 内插进 unit 文件，必须挡掉空格/引号/换行，否则就是 unit 语法注入面。
+    gomemlimit_env=""
+    if [ -n "${EYVESCLOUD_GOMEMLIMIT:-}" ]; then
+        case "$EYVESCLOUD_GOMEMLIMIT" in
+            *[!0-9A-Za-z]*) warn "EYVESCLOUD_GOMEMLIMIT 取值不合法（示例：96GiB），已忽略：$EYVESCLOUD_GOMEMLIMIT" ;;
+            *) gomemlimit_env="Environment=GOMEMLIMIT=${EYVESCLOUD_GOMEMLIMIT}
+"
+               log "Go 内存软上限：GOMEMLIMIT=${EYVESCLOUD_GOMEMLIMIT}" ;;
+        esac
+    fi
+    gomaxprocs_env=""
+    if [ -n "${EYVESCLOUD_GOMAXPROCS:-}" ]; then
+        case "$EYVESCLOUD_GOMAXPROCS" in
+            *[!0-9]*) warn "EYVESCLOUD_GOMAXPROCS 必须是正整数，已忽略：$EYVESCLOUD_GOMAXPROCS" ;;
+            *) gomaxprocs_env="Environment=GOMAXPROCS=${EYVESCLOUD_GOMAXPROCS}
+"
+               log "Go 处理器数：GOMAXPROCS=${EYVESCLOUD_GOMAXPROCS}" ;;
         esac
     fi
 
@@ -2671,7 +2780,9 @@ Restart=always
 RestartSec=5
 LimitNOFILE=1048576
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-${auto_update_env}EnvironmentFile=-${EYVESCLOUD_NETWORK_ENV}
+${auto_update_env}${gomemlimit_env}${gomaxprocs_env}EnvironmentFile=-${EYVESCLOUD_NETWORK_ENV}
+EnvironmentFile=-/etc/eyvescloud/redis.env
+EnvironmentFile=-${EYVESCLOUD_STORE_ENV}
 # 说明：此处不使用 NoNewPrivileges / ProtectControlGroups / ProtectKernelTunables /
 # ProtectKernelModules / RestrictSUIDSGID 等加固。
 # 原因：eyvescloud 通过派生子进程管理 LXC/KVM（lxc-start、mount -o loop、nsenter、
@@ -2707,6 +2818,16 @@ if [ -r /etc/eyvescloud/network.env ]; then
     . /etc/eyvescloud/network.env
     set +a
 fi
+if [ -r /etc/eyvescloud/redis.env ]; then
+    set -a
+    . /etc/eyvescloud/redis.env
+    set +a
+fi
+if [ -r /etc/eyvescloud/store.env ]; then
+    set -a
+    . /etc/eyvescloud/store.env
+    set +a
+fi
 
 depend() {
     need net
@@ -2719,8 +2840,162 @@ EOF
     rc-service eyvescloud restart
 }
 
+# persisted_env_value <file> <NAME>：从 0600 的 env 文件里取一个变量的值。
+persisted_env_value() {
+    [ -r "$1" ] || return 0
+    sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1
+    return 0
+}
+
+# load_persisted_env：把上一次安装持久化的环境变量补进安装器进程（只补未显式设置的，
+# 安装器本次传参优先）。
+#
+# 为什么需要：面板二进制的每次调用（含 `--version`）都会走 InitConfig 打开配置库。
+# 安装器自己也会调它（版本探测 / node-link / account）。若不补齐，PG 部署里这些探测
+# 会旁路创建一份空的 SQLite config.db —— 后续写语言就会写进那份没人用的库，报告"成功"
+# 而面板并不读它（假成功）。
+load_persisted_env() {
+    for env_file in "$EYVESCLOUD_STORE_ENV" /etc/eyvescloud/redis.env; do
+        [ -r "$env_file" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                EYVESCLOUD_*=*) ;;
+                *) continue ;;
+            esac
+            key="${line%%=*}"
+            case "$key" in *[!A-Za-z0-9_]*) continue ;; esac
+            eval "already_set=\${$key+x}"
+            [ "$already_set" = x ] && continue
+            export "$key=${line#*=}"
+        done < "$env_file"
+    done
+    return 0
+}
+
+# write_optional_env_file <target> <NAME>...
+#
+# 新架构（配置库 Postgres / cell 分库 / 节点令牌密钥 / Agent 网关地址 / Redis 信号）
+# 全部由环境变量门控，凭据类取值不能写进 0644 的 unit 文件，故统一落 0600 的 env 文件。
+#
+# 「显式 vs 未设置」语义（避免升级时静默丢配置）：
+#   变量被显式设置（含设成空串）⇒ 重写文件；空值项不写；全部为空 ⇒ 删文件（= 关闭）
+#   变量未设置            ⇒ 既不改也不删既有文件
+# 后半条是关键：升级时运维通常只跑 `install.sh` 而不重复导出变量；若默认删文件，
+# 面板会静默回落 SQLite —— 在 PG 部署里表现得像"数据全没了"。
+#
+# 返回 0 = 文件存在（已配置）；1 = 当前无配置。
+write_optional_env_file() {
+    target="$1"
+    shift
+    any_set=0
+    for key in "$@"; do
+        eval "is_set=\${$key+x}"
+        [ "$is_set" = x ] && any_set=1
+    done
+    if [ "$any_set" != 1 ]; then
+        [ -f "$target" ] && return 0
+        return 1
+    fi
+    body=""
+    for key in "$@"; do
+        eval "val=\${$key-}"
+        [ -n "$val" ] || continue
+        case "$val" in
+            *[![:print:]]*)
+                warn "$key 含不可打印字符，已忽略（不写入 $target）"
+                continue ;;
+        esac
+        body="${body}${key}=${val}
+"
+    done
+    if [ -z "$body" ]; then
+        rm -f "$target"
+        return 1
+    fi
+    mkdir -p /etc/eyvescloud
+    printf '%s' "$body" > "$target"
+    chmod 600 "$target"
+    return 0
+}
+
+# report_cell_dsns <raw>：点名 EYVESCLOUD_CELL_DSNS 里面板会静默丢弃的项。
+# 面板（store_cells.go parseCellDSNs）对缺 "="、空 id、空 dsn 的项是直接跳过的，
+# 不在这儿报出来，运维会以为分片开了其实没开。
+report_cell_dsns() {
+    raw="$(printf '%s' "${1-}" | tr -d '[:space:]')"
+    [ -n "$raw" ] || return 0
+    n=0
+    bad=""
+    rest="$raw"
+    while [ -n "$rest" ]; do
+        item="${rest%%,*}"
+        case "$rest" in
+            *,*) rest="${rest#*,}" ;;
+            *) rest="" ;;
+        esac
+        cid="${item%%=*}"
+        cdsn="${item#*=}"
+        if [ "$cid" = "$item" ] || [ -z "$cid" ] || [ -z "$cdsn" ]; then
+            bad="${bad}${item} "
+        else
+            n=$((n + 1))
+        fi
+    done
+    if [ -n "$bad" ]; then
+        warn "EYVESCLOUD_CELL_DSNS 含面板会忽略的项（需要 id=dsn）：$bad"
+    fi
+    if [ "$n" -gt 0 ]; then
+        log "cell 分库：已配置 $n 个 cell"
+    fi
+    return 0
+}
+
 install_service() {
     log "正在安装 EYVESCLOUD 服务..."
+
+    # 存储后端 / 节点身份：PG 配置库、cell 分库、节点令牌加密密钥、Agent 网关地址。
+    if write_optional_env_file "$EYVESCLOUD_STORE_ENV" \
+        EYVESCLOUD_PG_DSN EYVESCLOUD_CELL_DSNS \
+        EYVESCLOUD_NODE_TOKEN_KEY EYVESCLOUD_AGENT_GATEWAY_ADDR; then
+        if [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ]; then
+            log "配置库后端：Postgres（DSN 已写入 $EYVESCLOUD_STORE_ENV，不进日志）"
+        fi
+        report_cell_dsns "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_CELL_DSNS)"
+        if [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_NODE_TOKEN_KEY)" ]; then
+            log "节点令牌加密密钥：由 env 提供（未提供时面板会在数据目录自动生成 .tokenkey）"
+        fi
+    elif [ -f "$EYVESCLOUD_STORE_ENV" ]; then
+        log "存储后端：沿用既有 $EYVESCLOUD_STORE_ENV（本次未覆盖）"
+    else
+        log "存储后端：SQLite（默认）"
+    fi
+
+    # Redis 共享信号（多副本）：0600 env 文件（密码不能进 644 的 unit 文件）。
+    # 面板侧按 env 门控（redisgate.go）：未配置时行为与单机部署完全一致，
+    # Redis 不可达也只会回退进程内判定（fail-open）。
+    redis_env_file=/etc/eyvescloud/redis.env
+    if [ -n "${EYVESCLOUD_REDIS_ADDR:-}" ]; then
+        case "$EYVESCLOUD_REDIS_ADDR" in
+            *[!A-Za-z0-9.:\-_]*)
+                warn "EYVESCLOUD_REDIS_ADDR 仅支持 host:port（暂不含 IPv6 括号写法），已按单机模式处理：$EYVESCLOUD_REDIS_ADDR"
+                # 显式置空：write_optional_env_file 视显式空串为「清除」，否则会把刚判为
+                # 非法的地址原样写回 redis.env，与「按单机模式处理」的说法自相矛盾。
+                EYVESCLOUD_REDIS_ADDR=""
+                EYVESCLOUD_REDIS_PASSWORD="" ;;
+        esac
+    fi
+    if write_optional_env_file "$redis_env_file" \
+        EYVESCLOUD_REDIS_ADDR EYVESCLOUD_REDIS_PASSWORD; then
+        redis_addr_out="$(persisted_env_value "$redis_env_file" EYVESCLOUD_REDIS_ADDR)"
+        log "分布式模式：Redis 共享信号 ${redis_addr_out}"
+        if has_cmd timeout && command -v bash >/dev/null 2>&1; then
+            redis_host="${redis_addr_out%%:*}"
+            redis_port="${redis_addr_out##*:}"
+            if ! timeout 2 bash -c "exec 3<>/dev/tcp/$redis_host/$redis_port" 2>/dev/null; then
+                warn "Redis ${redis_addr_out} 当前不可达：面板将以单机语义运行（fail-open），请检查地址/防火墙"
+            fi
+        fi
+    fi
 
     if is_systemd; then
         install_systemd_service
@@ -2733,14 +3008,23 @@ install_service() {
 
 harden_data_dir_perms() {
     local dir="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}"
-    # 服务刚启动，data dir 里 config.db / WAL / shm / 首启凭据文件可能还没显式 chmod
-    # 后端每次 openConfigDB 也会 chmod 0600，这里作为安装时的兜底。
+    # 服务刚启动，data dir 里 config.db / telemetry.db / cell 库 / WAL / shm / 节点令牌
+    # 密钥 / 首启凭据文件可能还没显式 chmod，这里作为安装时的兜底（后端每次 openConfigDB
+    # 也会 chmod 0600）。PG 部署下没有 config.db，telemetry.db 与 *.tokenkey 仍在本地。
     if [ -d "$dir" ]; then
         chmod 0700 "$dir" 2>/dev/null || true
         chmod 0600 "$dir"/*.db "$dir"/*.db-wal "$dir"/*.db-shm 2>/dev/null || true
+        chmod 0600 "$dir"/*.tokenkey 2>/dev/null || true
         chmod 0600 "$dir"/*.json 2>/dev/null || true
         chmod 0600 "$dir"/initial-admin-credentials.txt 2>/dev/null || true
     fi
+}
+
+# pg_config_backend_active：当前（含上一次安装持久化的）配置库是不是 Postgres。
+# 安装器自己也要用它判断能不能直接写 SQLite 的 config.db。
+pg_config_backend_active() {
+    [ -n "${EYVESCLOUD_PG_DSN:-}" ] && return 0
+    [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ]
 }
 
 set_panel_language() {
@@ -2748,6 +3032,14 @@ set_panel_language() {
     db="/root/.eyvescloud/config.db"
     if [ "$lang" != "zh" ] && [ "$lang" != "en" ]; then
         lang="zh"
+    fi
+
+    # Postgres 配置库下没有本地 config.db：写 SQLite 只会写出一份面板不读的库（假成功）。
+    # 面板语言存在配置库的 app_meta 里，而 /api/language 需要管理员会话，安装阶段拿不到，
+    # 因此这里如实告知，不再走下面那套 SQLite/接口回退。
+    if pg_config_backend_active; then
+        log "配置库为 Postgres：安装阶段无法预置面板语言，请在面板右上角切换（默认中文）"
+        return 0
     fi
 
     saved=0
@@ -2953,6 +3245,28 @@ print_summary() {
     if [ -n "${KVM_NAT_SUBNET:-}" ]; then
         echo "  KVM NAT: ${KVM_NAT_SUBNET} (gateway ${KVM_NAT_GATEWAY:-})"
     fi
+    if [ -f /etc/eyvescloud/redis.env ]; then
+        redis_addr_out="$(sed -n 's/^EYVESCLOUD_REDIS_ADDR=//p' /etc/eyvescloud/redis.env)"
+        echo "  Redis: ${redis_addr_out} ($(tr_msg "多副本共享限流与吊销广播"))"
+    fi
+    # 存储后端：把实际生效的配置库/分片/密钥来源如实打印，避免"以为在用 PG/分片"。
+    data_dir_out="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}"
+    pg_out="$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)"
+    if [ -n "$pg_out" ]; then
+        echo "  $(tr_msg "配置库：")Postgres ($(tr_msg "遥测仍在")${data_dir_out}/telemetry.db)"
+        if [ -f "$data_dir_out/config.db" ]; then
+            echo "  $(tr_msg "注意：")${data_dir_out}/config.db $(tr_msg "仍存在。若你是从 SQLite 迁到 Postgres，它是旧库（可归档）；若是全新装，请检查是否有进程绕过 PG_DSN 走了 SQLite。")"
+        fi
+    else
+        echo "  $(tr_msg "配置库：")SQLite (${data_dir_out}/config.db)"
+    fi
+    cells_out="$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_CELL_DSNS)"
+    if [ -n "$cells_out" ]; then
+        echo "  $(tr_msg "cell 分库：")$(tr_msg "已配置（见")${EYVESCLOUD_STORE_ENV})"
+    fi
+    if [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_NODE_TOKEN_KEY)" ]; then
+        echo "  $(tr_msg "节点令牌密钥：")$(tr_msg "由 env 提供")"
+    fi
     echo "  $(tr_msg "安装日志：")$LOG_FILE"
     echo "  $(tr_msg "问题反馈：")$ISSUE_URL"
     if is_systemd; then
@@ -2972,7 +3286,11 @@ print_summary() {
         echo "$(tr_msg "⚠️  以上是一次性凭据，登录成功后会被后端自动删除。")"
         echo "$(tr_msg "   若文件仍在，说明后端还未成功启动；可手动查看。")"
     else
-        echo "$(tr_msg "  服务器已有 /root/.eyvescloud/config.db，初始凭据文件不存在。")"
+        if [ -n "$pg_out" ]; then
+            echo "$(tr_msg "  服务器配置库为 Postgres 且已有管理员账号，初始凭据文件不存在。")"
+        else
+            echo "$(tr_msg "  服务器已有 /root/.eyvescloud/config.db，初始凭据文件不存在。")"
+        fi
         echo "$(tr_msg "  管理员密码使用 bcrypt 存储，无法反查；请使用面板内修改密码或重置配置。")"
     fi
 
@@ -2988,6 +3306,11 @@ print_summary() {
             ;;
     esac
 }
+
+# 升级场景：先把上一次安装持久化的存储/分布式变量补进本进程，让安装器自身调用的
+# 面板二进制（--version / node-link / account）与面板服务走同一个后端，避免在 PG
+# 部署里旁路生成一份空的 SQLite config.db（那会让随后的"写入面板语言"变成假成功）。
+load_persisted_env
 
 run_step "兼容性检查" check_os_compatibility
 run_step "存储环境检查" check_storage_compatibility

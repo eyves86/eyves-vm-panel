@@ -306,9 +306,11 @@ func saveConfigIncremental(tx *sql.Tx, hint *dirtyHint) (rowFingerprints, error)
 	}
 	next := newRowFingerprints()
 
+	// 顺序契约：diffNodes 必须先于 diffContainers——容器（P3-c）的物理归属库跟随其
+	// 节点，靠 next.nodes 里的编码键解出，节点先 diff 才能反映本次的归属变更。
 	steps := []func() error{
-		func() error { return diffContainers(tx, &next, hint) },
 		func() error { return diffNodes(tx, &next, hint) },
+		func() error { return diffContainers(tx, &next, hint) },
 		func() error { return diffAccessLinks(tx, &next, hint) },
 		func() error { return diffSubUsers(tx, &next, hint) },
 		func() error { return diffAPIKeys(tx, &next, hint) },
@@ -327,21 +329,36 @@ func saveConfigIncremental(tx *sql.Tx, hint *dirtyHint) (rowFingerprints, error)
 
 // diffNodes 是节点的行级 diff（P2：节点从单行 JSON 改为每节点一行）。
 // 精确模式下只处理声明的节点；否则全量扫描。
+//
+// P3-c：节点表可分布于多个 cell 库。写入/删除按节点归属路由到对应库（见 store_cells.go
+// 的 applyNodeUpserts / applyNodeDeletes）；指纹键里编码了归属库（nodeRowKey），故
+// 「换 cell」= 指纹变化 ⇒ 触发换库写入，并从旧库删掉副本（applyNodeMoves）。指纹本身
+// 仍只回答「变没变」，与行落在哪个库无关。未配置任何 cell 库时行为与历史完全一致。
 func diffNodes(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) error {
+	stores := cellStoresSnapshot()
+	var upserts []Node
+	var deletes []string
+	// moved：ID → 旧归属库（"" = 控制库）。
+	moved := map[string]string{}
+
 	if hint != nil && hint.exact {
 		next.nodes = persistedRows.nodes
 		for i := range hint.set.Nodes {
 			n := hint.set.Nodes[i]
 			prev, known := next.nodes[n.ID]
-			fp := fingerprint(n)
-			if known && prev == fp {
+			target := nodeStoreIDIn(n, stores)
+			key := nodeRowKey(target, n)
+			if known && prev == key {
 				continue
 			}
-			hint.recordNode(n.ID, prev, known)
-			next.nodes[n.ID] = fp
-			if err := upsertNodeRow(tx, n); err != nil {
-				return err
+			if known {
+				if old, ok := rowKeyStore(prev); ok && old != target {
+					moved[n.ID] = old
+				}
 			}
+			hint.recordNode(n.ID, prev, known)
+			next.nodes[n.ID] = key
+			upserts = append(upserts, n)
 		}
 		for i := range hint.set.RemovedNodes {
 			n := hint.set.RemovedNodes[i]
@@ -351,30 +368,62 @@ func diffNodes(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) error {
 			}
 			hint.recordNode(n.ID, prev, true)
 			delete(next.nodes, n.ID)
-			if err := deleteNodeRow(tx, n.ID); err != nil {
-				return err
+			deletes = append(deletes, n.ID)
+		}
+	} else {
+		seen := make(map[string]bool, len(AppConfig.Nodes))
+		for i := range AppConfig.Nodes {
+			n := AppConfig.Nodes[i]
+			seen[n.ID] = true
+			target := nodeStoreIDIn(n, stores)
+			key := nodeRowKey(target, n)
+			prev, known := persistedRows.nodes[n.ID]
+			next.nodes[n.ID] = key
+			if known && prev == key {
+				continue
+			}
+			if known {
+				if old, ok := rowKeyStore(prev); ok && old != target {
+					moved[n.ID] = old
+				}
+			}
+			upserts = append(upserts, n)
+		}
+		for id := range persistedRows.nodes {
+			if !seen[id] {
+				deletes = append(deletes, id)
 			}
 		}
-		return nil
 	}
-	return diffStringKeyed(tx, strKeyedDiff[Node]{
-		dst:    &next.nodes,
-		prev:   persistedRows.nodes,
-		rows:   AppConfig.Nodes,
-		id:     func(n Node) string { return n.ID },
-		upsert: upsertNodeRow,
-		del:    deleteNodeRow,
-	})
+
+	if err := applyNodeUpserts(tx, stores, upserts); err != nil {
+		return err
+	}
+	if err := applyNodeMoves(tx, stores, moved); err != nil {
+		return err
+	}
+	return applyNodeDeletes(tx, stores, deletes)
 }
 
+// diffContainers 是容器的行级 diff。
+//
+// P3-c：容器可分布于多个 cell 库（归属跟随其节点）。指纹键里编码了归属库
+// （containerRowKey），故「节点换 cell ⇒ 其容器换库」= 指纹变化 ⇒ 触发新库写入 +
+// 旧库删除（applyContainerMoves）。未配置任何 cell 库时行为与历史完全一致。
 func diffContainers(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) error {
 	if hint != nil && hint.exact {
 		return diffContainersExact(tx, next, hint)
 	}
+	stores := cellStoresSnapshot()
 	seen := make(map[int]bool, len(AppConfig.Containers))
+	upserts := map[string][]Container{}
+	moved := map[string][]int{}
+	var deletes []int
 	for i := range AppConfig.Containers {
 		c := AppConfig.Containers[i]
 		seen[c.ID] = true
+		target := containerStoreIDIn(c, next, stores)
+		key := containerRowKey(target, c)
 		prev, known := persistedRows.containers[c.ID]
 		// 声明式快速路径：未声明改动且上次已落库的行沿用旧指纹，既不重算指纹
 		// 也不产生任何 SQL。（未声明 = nil hint，走全量。）
@@ -382,42 +431,55 @@ func diffContainers(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) error {
 			next.containers[c.ID] = prev
 			continue
 		}
-		fp := containerFingerprint(c)
-		next.containers[c.ID] = fp
-		if prev == fp {
+		next.containers[c.ID] = key
+		if known && prev == key {
 			continue
 		}
-		if err := upsertContainerRow(tx, c); err != nil {
-			return err
+		if known {
+			if old, ok := rowKeyStore(prev); ok && old != target {
+				moved[old] = append(moved[old], c.ID)
+			}
 		}
+		upserts[target] = append(upserts[target], c)
 	}
 	for id := range persistedRows.containers {
-		if seen[id] {
-			continue
-		}
-		if err := deleteContainerRow(tx, id); err != nil {
-			return err
+		if !seen[id] {
+			deletes = append(deletes, id)
 		}
 	}
-	return nil
+	if err := applyContainerUpserts(tx, stores, upserts); err != nil {
+		return err
+	}
+	if err := applyContainerMoves(tx, stores, moved); err != nil {
+		return err
+	}
+	return applyContainerDeletes(tx, stores, deletes)
 }
 
 // diffContainersExact 只处理调用方列出的容器：指纹表原地复用，未列出的行
 // 既不算指纹也不写入，簿记 O(声明行)。
 func diffContainersExact(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) error {
+	stores := cellStoresSnapshot()
 	next.containers = persistedRows.containers
+	upserts := map[string][]Container{}
+	moved := map[string][]int{}
+	var deletes []int
 	for i := range hint.set.Containers {
 		c := hint.set.Containers[i]
+		target := containerStoreIDIn(c, next, stores)
+		key := containerRowKey(target, c)
 		prev, known := next.containers[c.ID]
-		fp := containerFingerprint(c)
-		if known && prev == fp {
+		if known && prev == key {
 			continue
 		}
-		hint.recordContainer(c.ID, prev, known)
-		next.containers[c.ID] = fp
-		if err := upsertContainerRow(tx, c); err != nil {
-			return err
+		if known {
+			if old, ok := rowKeyStore(prev); ok && old != target {
+				moved[old] = append(moved[old], c.ID)
+			}
 		}
+		hint.recordContainer(c.ID, prev, known)
+		next.containers[c.ID] = key
+		upserts[target] = append(upserts[target], c)
 	}
 	for i := range hint.set.RemovedContainers {
 		c := hint.set.RemovedContainers[i]
@@ -427,11 +489,15 @@ func diffContainersExact(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) err
 		}
 		hint.recordContainer(c.ID, prev, true)
 		delete(next.containers, c.ID)
-		if err := deleteContainerRow(tx, c.ID); err != nil {
-			return err
-		}
+		deletes = append(deletes, c.ID)
 	}
-	return nil
+	if err := applyContainerUpserts(tx, stores, upserts); err != nil {
+		return err
+	}
+	if err := applyContainerMoves(tx, stores, moved); err != nil {
+		return err
+	}
+	return applyContainerDeletes(tx, stores, deletes)
 }
 
 func diffAccessLinks(tx *sql.Tx, next *rowFingerprints, hint *dirtyHint) error {

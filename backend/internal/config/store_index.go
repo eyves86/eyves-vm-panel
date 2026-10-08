@@ -30,6 +30,13 @@ var (
 	nodeIdxByID   = map[string]int{}
 	contIdxByUUID = map[string]int{}
 	contIdxByID   = map[int]int{}
+
+	// 子用户按 Username 下标：鉴权热路径（claimsFromToken 的 TokenVersion 吊销
+	// 校验）每请求至少一次查询，O(全部子用户) 线性扫在 10w 目录下不可接受。
+	subUserIdxByName = map[string]int{}
+	// 子用户按内部 ID 下标：列表接口按属主 ID 派生展示名（每页多次查询），
+	// O(全部子用户) 线性扫在 10w 目录下同样不可接受。
+	subUserIdxByID = map[string]int{}
 )
 
 // FindNodeIndexUnlocked 返回节点在 AppConfig.Nodes 中的下标。
@@ -137,6 +144,79 @@ func rebuildContainerIndexLocked(conts []Container) {
 	contIdxByID = byID
 }
 
+// FindSubUserIndexByNameUnlocked 返回子用户在 AppConfig.SubUsers 中的下标。
+// 调用方必须持有 AppConfigMu。用于鉴权热路径（TokenVersion 吊销校验），
+// 与节点/容器下标同一套「自校验 + 自愈」语义：未命中只会慢，不会错。
+func FindSubUserIndexByNameUnlocked(username string) (int, bool) {
+	if AppConfig == nil || username == "" {
+		return -1, false
+	}
+	sus := AppConfig.SubUsers
+	rowIdxMu.Lock()
+	defer rowIdxMu.Unlock()
+	if i, ok := subUserIdxByName[username]; ok {
+		if i < len(sus) && sus[i].Username == username {
+			return i, true
+		}
+		rebuildSubUserIndexLocked(sus)
+		if i, ok := subUserIdxByName[username]; ok && i < len(sus) && sus[i].Username == username {
+			return i, true
+		}
+		return -1, false
+	}
+	for i := range sus {
+		if sus[i].Username == username {
+			subUserIdxByName[username] = i
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// FindSubUserIndexByIDUnlocked 返回子用户在 AppConfig.SubUsers 中的下标。
+// 调用方必须持有 AppConfigMu。与 byName 同一套「自校验 + 自愈」语义：
+// 未命中只会慢，不会错。
+func FindSubUserIndexByIDUnlocked(id string) (int, bool) {
+	if AppConfig == nil || id == "" {
+		return -1, false
+	}
+	sus := AppConfig.SubUsers
+	rowIdxMu.Lock()
+	defer rowIdxMu.Unlock()
+	if i, ok := subUserIdxByID[id]; ok {
+		if i < len(sus) && sus[i].ID == id {
+			return i, true
+		}
+		rebuildSubUserIndexLocked(sus)
+		if i, ok := subUserIdxByID[id]; ok && i < len(sus) && sus[i].ID == id {
+			return i, true
+		}
+		return -1, false
+	}
+	for i := range sus {
+		if sus[i].ID == id {
+			subUserIdxByID[id] = i
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+func rebuildSubUserIndexLocked(sus []SubUser) {
+	byName := make(map[string]int, len(sus))
+	byID := make(map[string]int, len(sus))
+	for i := range sus {
+		if sus[i].Username != "" {
+			byName[sus[i].Username] = i
+		}
+		if sus[i].ID != "" {
+			byID[sus[i].ID] = i
+		}
+	}
+	subUserIdxByName = byName
+	subUserIdxByID = byID
+}
+
 // resetRowIndexes 清空下标缓存。切换配置快照（重载/测试 teardown）后调用：
 // 旧下标对新切片没有意义，留着只会让第一次查询多付一次重建。
 func resetRowIndexes() {
@@ -145,6 +225,8 @@ func resetRowIndexes() {
 	nodeIdxByID = map[string]int{}
 	contIdxByUUID = map[string]int{}
 	contIdxByID = map[int]int{}
+	subUserIdxByName = map[string]int{}
+	subUserIdxByID = map[string]int{}
 }
 
 // AppendContainerUnlocked 把一个新容器追加到 AppConfig.Containers 并登记其下标。

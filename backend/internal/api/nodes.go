@@ -654,6 +654,7 @@ func sanitizeNode(n config.Node) map[string]any {
 		"region_id":        n.RegionID,
 		"node_group_id":    n.NodeGroupID,
 		"cluster_id":       n.ClusterID,
+		"cell_id":          n.CellID,
 		"virt_types":       n.VirtTypes,
 		"created_at":       n.CreatedAt,
 		"maintenance_mode": n.MaintenanceMode,
@@ -2006,6 +2007,9 @@ func probeNode(n config.Node) bool {
 }
 
 func probeAllNodes() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	config.AppConfigMu.RLock()
 	nodes := append([]config.Node(nil), config.AppConfig.Nodes...)
 	config.AppConfigMu.RUnlock()

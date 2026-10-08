@@ -192,8 +192,9 @@ func TestApiKeyCreateNormalizesEmptyScopeToReadOnlyFallback(t *testing.T) {
 	}
 }
 
-// TestApiKeyFingerprintPreScreensInvalidKeys 验证 K1 修复：指纹预筛让不匹配的 Key
-// 在 O(1) 处被排除，不触发 argon2 慢哈希；只有指纹命中的候选才做昂贵验证。
+// TestApiKeyFingerprintPreScreensInvalidKeys 验证指纹筛选：不匹配的 Key 在 O(1) 处被
+// 排除（错误 Key 拒绝、不触发任何验证）；指纹命中的即凭证成立（P4 切片 2 后为直验，
+// 原语义为「命中后再做 argon2 验证」——两种实现下本测试都必须通过）。
 func TestApiKeyFingerprintPreScreensInvalidKeys(t *testing.T) {
 	previous := config.AppConfig
 	t.Cleanup(func() { config.AppConfig = previous })
@@ -231,6 +232,79 @@ func TestApiKeyFingerprintPreScreensInvalidKeys(t *testing.T) {
 	idx, _ = matchApiKey(raw)
 	if idx != 0 {
 		t.Fatalf("valid key should match at index 0, got %d", idx)
+	}
+}
+
+// TestApiKeyFingerprintAloneAuthenticates 锁定 P4 切片 2 语义：128-bit 随机 Key 的
+// SHA-256 指纹相等即凭证成立（GitHub/Stripe 惯例），不查 argon2 哈希——把 KeyHash
+// 换成垃圾数据仍必须通过；错误 Key 指纹不命中必须拒绝。
+func TestApiKeyFingerprintAloneAuthenticates(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+
+	raw := "eyvescloud_sk_0123456789abcdef0123456789abcdef"
+	config.AppConfig = &config.EyvescloudConfig{ApiKeys: []config.ApiKeyConfig{{
+		ID:             "key-fp",
+		Name:           "fp",
+		KeyHash:        "corrupted-on-purpose", // argon2 无法验证：证明指纹路径不查哈希
+		KeyFingerprint: apiKeyFingerprint(raw),
+	}}}
+
+	if !validateApiKey(raw, "127.0.0.1") {
+		t.Fatal("fingerprint match must authenticate without consulting the argon2 hash")
+	}
+	if validateApiKey(raw+"x", "127.0.0.1") {
+		t.Fatal("wrong key must be rejected")
+	}
+}
+
+// TestApiKeyBackfillsFingerprintOnFirstUse 旧 Key（无指纹、argon2 哈希）首用成功后
+// 必须回填指纹，让后续请求走快验路径；回填后鉴权结果不受影响。
+func TestApiKeyBackfillsFingerprintOnFirstUse(t *testing.T) {
+	previous := config.AppConfig
+	t.Cleanup(func() { config.AppConfig = previous })
+
+	raw := "eyvescloud_sk_0123456789abcdef0123456789abcdef"
+	hash, err := hashAPIKey(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.AppConfig = &config.EyvescloudConfig{ApiKeys: []config.ApiKeyConfig{{
+		ID:      "key-legacy-argon2",
+		Name:    "legacy",
+		KeyHash: hash,
+	}}}
+
+	if !validateApiKey(raw, "127.0.0.1") {
+		t.Fatal("valid legacy argon2 key must authenticate")
+	}
+	if got := config.AppConfig.ApiKeys[0].KeyFingerprint; got != apiKeyFingerprint(raw) {
+		t.Fatalf("fingerprint must be backfilled on first use, got %q", got)
+	}
+	if !validateApiKey(raw, "127.0.0.1") {
+		t.Fatal("key must still authenticate after fingerprint backfill")
+	}
+}
+
+// BenchmarkMatchApiKeyFingerprint 量化鉴权热路径（P4 切片 2 后）：100 把 Key 中匹配
+// 最后一把，单次校验应停留在微秒级；切片 2 之前每个有效 Key 请求都要跑一次
+// argon2id（m=64MB,t=3，约百毫秒级 CPU）。
+func BenchmarkMatchApiKeyFingerprint(b *testing.B) {
+	raw := "eyvescloud_sk_0123456789abcdef0123456789abcdef"
+	keys := make([]config.ApiKeyConfig, 100)
+	for i := range keys {
+		keys[i] = config.ApiKeyConfig{ID: fmt.Sprintf("decoy-%d", i), KeyFingerprint: apiKeyFingerprint(raw + fmt.Sprint(i))}
+	}
+	keys[99].KeyFingerprint = apiKeyFingerprint(raw)
+	previous := config.AppConfig
+	b.Cleanup(func() { config.AppConfig = previous })
+	config.AppConfig = &config.EyvescloudConfig{ApiKeys: keys}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if idx, _ := matchApiKey(raw); idx != 99 {
+			b.Fatalf("expected index 99, got %d", idx)
+		}
 	}
 }
 

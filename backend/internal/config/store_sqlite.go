@@ -164,6 +164,9 @@ func openConfigDB() error {
 		if err := openPostgresConfigDB(dsn); err != nil {
 			return err
 		}
+		if err := openCellStores(); err != nil {
+			return err
+		}
 		return openTelemetryDB()
 	}
 	configDBIsPostgres = false
@@ -188,6 +191,10 @@ func openConfigDB() error {
 		return err
 	}
 	_ = os.Chmod(dbPath, 0600)
+	// cell 分库：EYVESCLOUD_CELL_DSNS 未配置时直接返回，行为与历史完全一致。
+	if err := openCellStores(); err != nil {
+		return err
+	}
 	// 遥测独立成库（P1-c）：必须在 db 就绪之后打开，迁移会从旧的 config.db
 	// 读取遗留指标行。openTelemetryDB 内部不再取 dbMu（此处已持有），锁序 dbMu → telemetryMu。
 	if err := openTelemetryDB(); err != nil {
@@ -502,6 +509,7 @@ func sqliteSchemaStmts() []string {
 			region_id TEXT NOT NULL DEFAULT '',
 			node_group_id TEXT NOT NULL DEFAULT '',
 			cluster_id TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
 			virt_types TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT '',
 			maintenance_mode INTEGER NOT NULL DEFAULT 0,
@@ -556,12 +564,25 @@ func sqliteSchemaStmts() []string {
 }
 
 func ensureSchema() error {
-	for _, stmt := range sqliteSchemaStmts() {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("failed to create sqlite schema: %v", err)
+	return ensureSchemaOn(db, false)
+}
+
+// ensureSchemaOn 在任意连接上建基础表并跑共享列迁移。配置库与 cell 分库共用同一份
+// 建表语句与迁移清单——cell 库虽为新建（基础建表已含当前全部列），但它跨版本存活，
+// 后续版本新增列只能靠迁移补齐，故迁移不能省。
+func ensureSchemaOn(conn *sql.DB, isPG bool) error {
+	stmts := sqliteSchemaStmts()
+	label := "sqlite"
+	if isPG {
+		stmts = postgresSchemaStmts()
+		label = "postgres"
+	}
+	for _, stmt := range stmts {
+		if _, err := conn.Exec(stmt); err != nil {
+			return fmt.Errorf("failed to create %s schema: %w", label, err)
 		}
 	}
-	return ensureSchemaMigrations()
+	return ensureSchemaMigrationsOn(conn, isPG)
 }
 
 // schemaColumnMigration 描述一条「后加列」迁移：table.name 缺列时按 def 补列。
@@ -661,13 +682,18 @@ func schemaColumnMigrations() []schemaColumnMigration {
 		{"containers", "node_id", "TEXT"},
 		// node_local_id：实例在所属被控上的本地 ID（代理调用用）。
 		{"containers", "node_local_id", "INTEGER NOT NULL DEFAULT 0"},
+		// P3：节点的分片归属。nodes 表在旧版本里已建好，CREATE TABLE IF NOT EXISTS
+		// 对已存在的表是空操作，故新增列必须走这里才能补到存量库上。
+		{"nodes", "cell_id", "TEXT NOT NULL DEFAULT ''"},
 	}
 }
 
-func ensureSchemaMigrations() error {
+// ensureSchemaMigrationsOn 在 conn 上跑共享列迁移与回填。conn/isPG 参数化是为了让
+// cell 分库复用同一份迁移清单——cell 库跨版本存活，新增列只能靠这里补齐。
+func ensureSchemaMigrationsOn(conn *sql.DB, isPG bool) error {
 	added := map[string]bool{}
 	for _, column := range schemaColumnMigrations() {
-		wasAdded, err := ensureColumn(column.table, column.name, column.def)
+		wasAdded, err := ensureColumnOn(conn, isPG, column.table, column.name, column.def)
 		if err != nil {
 			return err
 		}
@@ -676,7 +702,7 @@ func ensureSchemaMigrations() error {
 		}
 	}
 	if added["containers.network_down_mbps"] || added["containers.network_up_mbps"] {
-		if _, err := db.Exec(`UPDATE containers
+		if _, err := conn.Exec(`UPDATE containers
 			SET network_down_mbps = COALESCE(NULLIF(network_down_mbps, 0), COALESCE(network_bw_mbps, 0)),
 			    network_up_mbps = COALESCE(NULLIF(network_up_mbps, 0), COALESCE(network_bw_mbps, 0))
 			WHERE COALESCE(network_bw_mbps, 0) > 0`); err != nil {
@@ -684,7 +710,7 @@ func ensureSchemaMigrations() error {
 		}
 	}
 	if added["containers.io_read_mbps"] || added["containers.io_write_mbps"] {
-		if _, err := db.Exec(`UPDATE containers
+		if _, err := conn.Exec(`UPDATE containers
 			SET io_read_mbps = COALESCE(NULLIF(io_read_mbps, 0), COALESCE(io_speed_mbps, 0)),
 			    io_write_mbps = COALESCE(NULLIF(io_write_mbps, 0), COALESCE(io_speed_mbps, 0))
 			WHERE COALESCE(io_speed_mbps, 0) > 0`); err != nil {
@@ -692,7 +718,7 @@ func ensureSchemaMigrations() error {
 		}
 	}
 	if added["tasks.cfg_network_down_mbps"] || added["tasks.cfg_network_up_mbps"] {
-		if _, err := db.Exec(`UPDATE tasks
+		if _, err := conn.Exec(`UPDATE tasks
 			SET cfg_network_down_mbps = COALESCE(NULLIF(cfg_network_down_mbps, 0), COALESCE(cfg_network_bw_mbps, 0)),
 			    cfg_network_up_mbps = COALESCE(NULLIF(cfg_network_up_mbps, 0), COALESCE(cfg_network_bw_mbps, 0))
 			WHERE COALESCE(cfg_network_bw_mbps, 0) > 0`); err != nil {
@@ -700,7 +726,7 @@ func ensureSchemaMigrations() error {
 		}
 	}
 	if added["tasks.cfg_io_read_mbps"] || added["tasks.cfg_io_write_mbps"] {
-		if _, err := db.Exec(`UPDATE tasks
+		if _, err := conn.Exec(`UPDATE tasks
 			SET cfg_io_read_mbps = COALESCE(NULLIF(cfg_io_read_mbps, 0), COALESCE(cfg_io_speed_mbps, 0)),
 			    cfg_io_write_mbps = COALESCE(NULLIF(cfg_io_write_mbps, 0), COALESCE(cfg_io_speed_mbps, 0))
 			WHERE COALESCE(cfg_io_speed_mbps, 0) > 0`); err != nil {
@@ -710,7 +736,7 @@ func ensureSchemaMigrations() error {
 	// 这几条是「NULL → 默认值」的一次性回填，只对历史遗留行有意义。必须带 IS NULL
 	// 谓词：否则每次启动都会改写整张表（10w 容器 = 每次启动 10w 行更新），而回填完成
 	// 后它本就是空操作，白白制造写放大。谓词让首次回填后自然归零。
-	if _, err := db.Exec(`UPDATE containers
+	if _, err := conn.Exec(`UPDATE containers
 		SET lan_ipv4_mode = COALESCE(lan_ipv4_mode, ''),
 		    lan_interface = COALESCE(lan_interface, ''),
 		    lan_ipv4_address = COALESCE(lan_ipv4_address, ''),
@@ -720,13 +746,13 @@ func ensureSchemaMigrations() error {
 		   OR lan_ipv4_prefix_len IS NULL OR lan_ipv4_gateway IS NULL`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`UPDATE containers
+	if _, err := conn.Exec(`UPDATE containers
 		SET storage_pool_id = COALESCE(storage_pool_id, ''),
 		    storage_path = COALESCE(storage_path, '')
 		WHERE storage_pool_id IS NULL OR storage_path IS NULL`); err != nil {
 		return err
 	}
-	if _, err := db.Exec(`UPDATE tasks
+	if _, err := conn.Exec(`UPDATE tasks
 		SET cfg_lan_ipv4_mode = COALESCE(cfg_lan_ipv4_mode, ''),
 		    cfg_lan_interface = COALESCE(cfg_lan_interface, ''),
 		    cfg_lan_ipv4_address = COALESCE(cfg_lan_ipv4_address, ''),
@@ -739,29 +765,29 @@ func ensureSchemaMigrations() error {
 	return nil
 }
 
-// ensureColumn 在列缺失时补列，返回是否真的新增。db 同一时刻只属于一个后端，
-// 故按 configDBIsPostgres 分支选择列存在性判断的方言；PG 侧还需把建表列类型
-// （SQLite 的 INTEGER/REAL）翻译成与 ensurePostgresSchema 一致的类型，否则
-// ALTER 出来的列会是 int4/float4（traffic_used_rx 之类的字节计数会溢出 int4）。
-func ensureColumn(table, name, def string) (bool, error) {
-	exists, err := columnExists(table, name)
+// ensureColumnOn 在列缺失时补列，返回是否真的新增。isPG 决定列存在性判断的方言；
+// PG 侧还需把建表列类型（SQLite 的 INTEGER/REAL）翻译成与 ensurePostgresSchema
+// 一致的类型，否则 ALTER 出来的列会是 int4/float4（traffic_used_rx 之类的字节计数
+// 会溢出 int4）。
+func ensureColumnOn(conn *sql.DB, isPG bool, table, name, def string) (bool, error) {
+	exists, err := columnExistsOn(conn, isPG, table, name)
 	if err != nil {
 		return false, err
 	}
 	if exists {
 		return false, nil
 	}
-	if configDBIsPostgres {
+	if isPG {
 		def = pgColumnDef(def)
 	}
-	_, err = db.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + def)
+	_, err = conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + def)
 	return err == nil, err
 }
 
-func columnExists(table, name string) (bool, error) {
-	if configDBIsPostgres {
+func columnExistsOn(conn *sql.DB, isPG bool, table, name string) (bool, error) {
+	if isPG {
 		var one int
-		err := db.QueryRow(`SELECT 1 FROM information_schema.columns
+		err := conn.QueryRow(`SELECT 1 FROM information_schema.columns
 			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
 			table, name).Scan(&one)
 		if err == sql.ErrNoRows {
@@ -769,7 +795,7 @@ func columnExists(table, name string) (bool, error) {
 		}
 		return err == nil, err
 	}
-	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	rows, err := conn.Query("PRAGMA table_info(" + table + ")")
 	if err != nil {
 		return false, err
 	}
@@ -926,6 +952,9 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if raw := strings.TrimSpace(meta["clusters"]); raw != "" {
 		_ = json.Unmarshal([]byte(raw), &cfg.Clusters)
 	}
+	if raw := strings.TrimSpace(meta["cells"]); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg.Cells)
+	}
 	if raw := strings.TrimSpace(meta["notifications"]); raw != "" {
 		if err := unmarshalDecryptingFields(raw, &cfg.Notifications, []string{"smtp_password"}); err != nil {
 			log.Printf("Warning: 解析已存通知设置失败（按空处理）: %v", err)
@@ -1000,9 +1029,18 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if _, err := migrateLegacyNodesRow(meta); err != nil {
 		return nil, false, err
 	}
+	// cell 分库：控制库里属于各 cell 的节点先搬进各自库（幂等），再从各库读回合并。
+	if err := migrateAllCellNodes(); err != nil {
+		return nil, false, err
+	}
 	if cfg.Nodes, err = loadNodes(); err != nil {
 		return nil, false, err
 	}
+	cellNodes, err := loadAllCellNodes()
+	if err != nil {
+		return nil, false, err
+	}
+	mergeCellNodes(cfg, cellNodes)
 	if cfg.Nodes == nil {
 		cfg.Nodes = []Node{}
 	}
@@ -1066,7 +1104,18 @@ func loadConfigFromDB() (*EyvescloudConfig, bool, error) {
 	if cfg.Containers, err = loadContainers(); err != nil {
 		return nil, false, err
 	}
-	// 机器级访问码凭据独立成表（container_access_links），加载后挂到容器上。
+	// cell 分库：控制库里属于各 cell 的容器（归属跟随其节点）先搬进各自库（幂等），
+	// 再从各库读回合并，与节点的分库口径一致。
+	if err := migrateCellContainers(cfg); err != nil {
+		return nil, false, err
+	}
+	cellContainers, err := loadAllCellContainers()
+	if err != nil {
+		return nil, false, err
+	}
+	mergeCellContainers(cfg, cellContainers)
+	// 机器级访问码凭据独立成表（container_access_links，控制库），加载后挂到容器上；
+	// 必须在合并之后，cell 库的容器同样要从控制库这张表取凭据。
 	if err := attachContainerAccessLinks(cfg); err != nil {
 		return nil, false, err
 	}
@@ -1110,16 +1159,20 @@ func seedPersistedRows(cfg *EyvescloudConfig, dbMeta map[string]string) {
 	// 清掉可能残留的脏标记，避免一次无意义的日志表重写。
 	logsDirty = false
 	next := newRowFingerprints()
+	// 节点/容器的键里都要编码「物理归属库」（P3-c），故播种时需 cell 库快照：加载后
+	// 内存==库，归属可直接由节点 CellID 推出，与 diffNodes/diffContainers 口径一致。
+	// 节点先播（容器归属要查节点键），容器后播。
+	stores := cellStoresSnapshot()
+	for _, n := range cfg.Nodes {
+		next.nodes[n.ID] = nodeRowKey(nodeStoreIDIn(n, stores), n)
+	}
 	for _, c := range cfg.Containers {
-		next.containers[c.ID] = containerFingerprint(c)
+		next.containers[c.ID] = containerRowKey(containerStoreIDIn(c, &next, stores), c)
 		code := strings.TrimSpace(c.AccessCode)
 		pw := strings.TrimSpace(c.AccessCodePassword)
 		if code != "" || pw != "" {
 			next.accessLinks[c.UUID] = fingerprint([2]string{code, pw})
 		}
-	}
-	for _, n := range cfg.Nodes {
-		next.nodes[n.ID] = fingerprint(n)
 	}
 	for _, su := range cfg.SubUsers {
 		next.subUsers[su.ID] = fingerprint(su)
@@ -1875,7 +1928,7 @@ func upsertSnapshotRow(tx *sql.Tx, snapshot Snapshot) error {
 const nodeColumns = `id, name, address, public_host, token, install_key,
 	install_key_created_at, install_key_ip, status, last_seen, version, os_name,
 	cpu_count, ram_total_mb, ram_used_mb, disk_total_gb, disk_used_gb, container_count,
-	region_id, node_group_id, cluster_id, virt_types, created_at,
+	region_id, node_group_id, cluster_id, cell_id, virt_types, created_at,
 	maintenance_mode, maintenance_since, tls_skip_verify, allow_private_addr`
 
 func nodeRowValues(n Node) ([]any, error) {
@@ -1891,7 +1944,7 @@ func nodeRowValues(n Node) ([]any, error) {
 		n.ID, n.Name, n.Address, n.PublicHost, token, installKey,
 		n.InstallKeyCreatedAt, n.InstallKeyIP, n.Status, n.LastSeen, n.Version, n.OSName,
 		n.CPUCount, n.RAMTotalMB, n.RAMUsedMB, n.DiskTotalGB, n.DiskUsedGB, n.ContainerCount,
-		n.RegionID, n.NodeGroupID, n.ClusterID, encodeStringSlice(n.VirtTypes), n.CreatedAt,
+		n.RegionID, n.NodeGroupID, n.ClusterID, n.CellID, encodeStringSlice(n.VirtTypes), n.CreatedAt,
 		boolInt(n.MaintenanceMode), n.MaintenanceSince, boolInt(n.TLSSkipVerify), boolInt(n.AllowPrivateAddr),
 	}, nil
 }
@@ -1915,11 +1968,24 @@ func deleteNodeRow(tx *sql.Tx, id string) error {
 	return err
 }
 
-// loadNodes 按创建时间读回节点。**顺序即 API 下发顺序**（列表接口原样透传，
-// 前端不再排序），拆分前是 app_meta JSON 数组的追加顺序，即创建顺序；
-// 这里用 created_at 复现同一顺序，并以 id 打破同秒并列，保证重启前后顺序稳定。
+// loadNodes 从控制库读回节点（未启用 cell 分库时即全部节点）。
 func loadNodes() ([]Node, error) {
-	rows, err := db.Query(`SELECT ` + nodeColumns + ` FROM nodes ORDER BY created_at, id`)
+	return queryNodes(db, "")
+}
+
+// queryNodes 从 conn 读回节点。where 是可选的附加谓词（含前导 " WHERE "），用于
+// cell 分库路由：控制库里按 cell_id 过滤出待搬迁的行。
+//
+// **顺序即 API 下发顺序**（列表接口原样透传，前端不再排序），拆分前是 app_meta
+// JSON 数组的追加顺序，即创建顺序；这里用 created_at 复现同一顺序，并以 id 打破
+// 同秒并列，保证重启前后顺序稳定。
+func queryNodes(conn *sql.DB, where string, args ...any) ([]Node, error) {
+	query := `SELECT ` + nodeColumns + ` FROM nodes`
+	if strings.TrimSpace(where) != "" {
+		query += where
+	}
+	query += ` ORDER BY created_at, id`
+	rows, err := conn.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1932,7 +1998,7 @@ func loadNodes() ([]Node, error) {
 		if err := rows.Scan(&n.ID, &n.Name, &n.Address, &n.PublicHost, &n.Token, &n.InstallKey,
 			&n.InstallKeyCreatedAt, &n.InstallKeyIP, &n.Status, &n.LastSeen, &n.Version, &n.OSName,
 			&n.CPUCount, &n.RAMTotalMB, &n.RAMUsedMB, &n.DiskTotalGB, &n.DiskUsedGB, &n.ContainerCount,
-			&n.RegionID, &n.NodeGroupID, &n.ClusterID, &virtTypes, &n.CreatedAt,
+			&n.RegionID, &n.NodeGroupID, &n.ClusterID, &n.CellID, &virtTypes, &n.CreatedAt,
 			&maintenanceMode, &n.MaintenanceSince, &tlsSkipVerify, &allowPrivateAddr); err != nil {
 			return nil, err
 		}
@@ -2016,7 +2082,12 @@ func migrateLegacyNodesRow(meta map[string]string) (bool, error) {
 }
 
 func loadContainers() ([]Container, error) {
-	rows, err := db.Query(`SELECT
+	return loadContainersFrom(db)
+}
+
+// loadContainersFrom 从指定连接读全部容器（含子表）。控制库与各 cell 库（P3-c）共用。
+func loadContainersFrom(conn *sql.DB) ([]Container, error) {
+	rows, err := conn.Query(`SELECT
 		id, uuid, name, virtualization, lxc_name, kvm_name, disk_image, storage_pool_id, storage_path, mac_address, template,
 		node_id, node_local_id,
 		vcpu, cpu_percent, ram_mb, disk_gb, network_bw_mbps, network_down_mbps, network_up_mbps,
@@ -2135,6 +2206,12 @@ func loadContainers() ([]Container, error) {
 		}
 		c.AllowedImageIDs = decodeStringSlice(allowedImageIDs.String)
 		NormalizeContainerResourceAliases(&c)
+		// 快照配额的历史默认值在**读取**时归一：0/NULL（旧库遗留）一律视为
+		// DefaultSnapshotLimit。此前靠启动迁移写回本字段，会把全部容器行标脏——
+		// 10w 容器在 Postgres 上要 11 分钟（每行 DELETE+INSERT 共 5 条语句）。
+		// 与别名 / 网络分配一样在加载时归一后，内存值与指纹自洽，启动零回写；
+		// 读取方仍可继续用 ContainerSnapshotLimit(c)（两者现在等价）。
+		c.SnapshotLimit = NormalizeSnapshotLimit(c.SnapshotLimit)
 		result = append(result, c)
 	}
 	if err := rows.Err(); err != nil {
@@ -2145,15 +2222,15 @@ func loadContainers() ([]Container, error) {
 	}
 	// 子表按容器 ID 一次取回后再分组：旧写法对每个容器各查三次（10w 容器 ≈ 30 万次
 	// 往返），SQLite 在进程内尚可接受，Postgres 上启动要数百秒。
-	pmByID, err := loadPortMappingsByContainer()
+	pmByID, err := loadPortMappingsByContainer(conn)
 	if err != nil {
 		return nil, err
 	}
-	ipv4ByID, err := loadPublicIPv4sByContainer()
+	ipv4ByID, err := loadPublicIPv4sByContainer(conn)
 	if err != nil {
 		return nil, err
 	}
-	ipv6ByID, err := loadIPv6AddressesByContainer()
+	ipv6ByID, err := loadIPv6AddressesByContainer(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -2180,8 +2257,8 @@ func mapGetOrEmpty[K comparable, V any](m map[K][]V, k K) []V {
 	return []V{}
 }
 
-func loadPortMappingsByContainer() (map[int][]PortMapping, error) {
-	rows, err := db.Query(`SELECT container_id, container_port, host_port, host_ip, protocol, description FROM port_mappings ORDER BY container_id, position`)
+func loadPortMappingsByContainer(conn *sql.DB) (map[int][]PortMapping, error) {
+	rows, err := conn.Query(`SELECT container_id, container_port, host_port, host_ip, protocol, description FROM port_mappings ORDER BY container_id, position`)
 	if err != nil {
 		return nil, err
 	}
@@ -2200,8 +2277,8 @@ func loadPortMappingsByContainer() (map[int][]PortMapping, error) {
 	return out, rows.Err()
 }
 
-func loadPublicIPv4sByContainer() (map[int][]PublicIPv4Assignment, error) {
-	rows, err := db.Query(`SELECT container_id, address, interface, prefix_len, gateway, rdns FROM container_public_ipv4s ORDER BY container_id, position`)
+func loadPublicIPv4sByContainer(conn *sql.DB) (map[int][]PublicIPv4Assignment, error) {
+	rows, err := conn.Query(`SELECT container_id, address, interface, prefix_len, gateway, rdns FROM container_public_ipv4s ORDER BY container_id, position`)
 	if err != nil {
 		return nil, err
 	}
@@ -2228,8 +2305,8 @@ func loadPublicIPv4sByContainer() (map[int][]PublicIPv4Assignment, error) {
 	return out, rows.Err()
 }
 
-func loadIPv6AddressesByContainer() (map[int][]IPv6Assignment, error) {
-	rows, err := db.Query(`SELECT container_id, address, prefix_len, interface, rdns FROM container_ipv6_addresses ORDER BY container_id, position`)
+func loadIPv6AddressesByContainer(conn *sql.DB) (map[int][]IPv6Assignment, error) {
+	rows, err := conn.Query(`SELECT container_id, address, prefix_len, interface, rdns FROM container_ipv6_addresses ORDER BY container_id, position`)
 	if err != nil {
 		return nil, err
 	}

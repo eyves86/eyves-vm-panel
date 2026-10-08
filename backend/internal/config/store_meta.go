@@ -254,6 +254,7 @@ func metaEntries(cfg *EyvescloudConfig) []metaEntry {
 		jsonKey("scheduled_actions", func() any { return cfg.ScheduledActions }),
 		jsonKey("node_groups", func() any { return cfg.NodeGroups }),
 		jsonKey("clusters", func() any { return cfg.Clusters }),
+		jsonKey("cells", func() any { return cfg.Cells }),
 		jsonSecretKey("notifications", func() any { return cfg.Notifications }, "smtp_password"),
 	}
 }

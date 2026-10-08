@@ -225,6 +225,9 @@ func updateAdmin(w http.ResponseWriter, r *http.Request, ctx AuthContext, id str
 	if !isSelf && req.Disabled != nil {
 		newDisabled = *req.Disabled
 	}
+	if newDisabled != acct.Disabled {
+		bumpToken = true // 禁用即吊销：与其他副本/令牌校验语义一致（v2 同口径）
+	}
 
 	if err := config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Admins {
@@ -242,6 +245,9 @@ func updateAdmin(w http.ResponseWriter, r *http.Request, ctx AuthContext, id str
 	}); err != nil {
 		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: err.Error()})
 		return
+	}
+	if bumpToken {
+		notifyAdminRotatedByID(id)
 	}
 	updated, _ := config.FindAdminAccountByID(id)
 	detail := "self=" + boolText(isSelf) + " role=" + newRole + " disabled=" + boolText(newDisabled) + " password_changed=" + boolText(bumpToken)
@@ -281,6 +287,7 @@ func deleteAdmin(w http.ResponseWriter, r *http.Request, ctx AuthContext, id str
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "管理员不存在"})
 		return
 	}
+	notifyAdminDeleted(acct.Username)
 	auditRequest(r, "admin.delete", acct.Username, "", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "管理员已删除"})
 }

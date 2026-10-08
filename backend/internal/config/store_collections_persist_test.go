@@ -47,6 +47,7 @@ func TestCollectionsSurviveRestart(t *testing.T) {
 		}}
 		cfg.NodeGroups = []NodeGroup{{ID: "ng-1", Name: "pool"}}
 		cfg.Clusters = []Cluster{{ID: "cl-1", Name: "cluster-a"}}
+		cfg.Cells = []Cell{{ID: "cell-1", Name: "shard-a"}}
 		cfg.Notifications = NotificationConfig{
 			SecurityAlertsEnabled: true, MinSeverity: "high",
 			WebhookURL: "https://example.com/alert",
@@ -78,6 +79,11 @@ func TestCollectionsSurviveRestart(t *testing.T) {
 	}
 	if n := len(cfg.Clusters); n != 1 {
 		t.Errorf("重启后 Clusters 应保留 1 个，实际 %d 个", n)
+	}
+	if n := len(cfg.Cells); n != 1 {
+		t.Errorf("重启后 Cells 应保留 1 个，实际 %d 个", n)
+	} else if cfg.Cells[0].Name != "shard-a" {
+		t.Errorf("Cells 内容不一致: %+v", cfg.Cells[0])
 	}
 	if !cfg.Notifications.SecurityAlertsEnabled || cfg.Notifications.MinSeverity != "high" {
 		t.Errorf("Notifications 内容不一致: %+v", cfg.Notifications)

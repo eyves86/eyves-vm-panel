@@ -414,6 +414,8 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		var oldOwnerID string
 		var ownerUsername string
 		var foundName string
+		var revokedOldOwner string
+		var revokedNewOwner string
 		saveErr := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.Containers {
 				if cfg.Containers[i].ID != id {
@@ -432,6 +434,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 						cfg.SubUsers[j].ContainerUUIDs = removeString(cfg.SubUsers[j].ContainerUUIDs, cfg.Containers[i].UUID)
 						cfg.SubUsers[j].ContainerNames = removeString(cfg.SubUsers[j].ContainerNames, cfg.Containers[i].Name)
 						cfg.SubUsers[j].TokenVersion++ // 强制旧属主刷新可见容器列表
+						revokedOldOwner = cfg.SubUsers[j].Username
 						break
 					}
 				}
@@ -447,6 +450,7 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 						cfg.SubUsers[j].ContainerNames = appendUniqueString(cfg.SubUsers[j].ContainerNames, cfg.Containers[i].Name)
 						cfg.SubUsers[j].TokenVersion++
 						ownerUsername = cfg.SubUsers[j].Username
+						revokedNewOwner = ownerUsername
 						break
 					}
 				}
@@ -460,6 +464,12 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		if saveErr != nil {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
 			return
+		}
+		if revokedOldOwner != "" {
+			notifySubUserRotated(revokedOldOwner)
+		}
+		if revokedNewOwner != "" {
+			notifySubUserRotated(revokedNewOwner)
 		}
 		auditDetail := fmt.Sprintf("old=%s new=%s", oldOwnerID, newOwner)
 		auditRequest(r, "container.owner", foundName, auditDetail, true, "")
@@ -746,75 +756,122 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 }
 
 func listContainers(w http.ResponseWriter, r *http.Request) {
-	containers, _ := listByRuntime()
-	containers = filterContainersForRequest(r, containers)
-	// 回收站视图：?recycled=true 只看回收站；默认视图排除回收站实例。
-	containers = listContainersFilterRecycled(containers, r)
-	// 标签过滤（企业成本分摊 / 按标签过滤，类比 AWS DescribeInstances Filters）。
-	// 支持两种形式：?tag=key:value（精确匹配）；?tag-key=key（存在性匹配）。
-	if tagFilter := strings.TrimSpace(r.URL.Query().Get("tag")); tagFilter != "" {
-		if k, v, ok := strings.Cut(tagFilter, ":"); ok {
-			k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-			filtered := containers[:0]
-			for _, c := range containers {
-				if c.Tags[k] == v {
-					filtered = append(filtered, c)
-				}
-			}
-			containers = filtered
-		}
-	}
-	if tagKeyFilter := strings.TrimSpace(r.URL.Query().Get("tag-key")); tagKeyFilter != "" {
-		filtered := containers[:0]
-		for _, c := range containers {
-			if _, ok := c.Tags[tagKeyFilter]; ok {
-				filtered = append(filtered, c)
-			}
-		}
-		containers = filtered
-	}
-	// 服务端筛选 / 排序（企业级大规模列表：万级容器下不下发全量到浏览器）。
-	// 仅处理"纯数据"维度；任务态 / 排队占位由前端叠加。
-	filterOptions := buildContainerFilterOptions(containers)
-	containers = filterContainersByQuery(containers, r)
-	sortContainersByQuery(containers, r)
-
-	for i := range containers {
-		sanitizeContainerResponse(r, &containers[i])
-		// 列表为只读汇总视图，一律不回显登录口令（detail/console 需要时单独拉取）。
-		containers[i].SSHPassword = ""
-	}
-	// 属主名派生填充：前端据此显示属主徽标/下拉，无需拉取全量子用户（万级可用性）。
-	if ownerNames := config.SubUserUsernameByID(); len(ownerNames) > 0 {
-		for i := range containers {
-			if containers[i].OwnerSubUserID != "" {
-				containers[i].OwnerUsername = ownerNames[containers[i].OwnerSubUserID]
-			}
-		}
-	}
-	// 分页：未传 page/page_size 时保持全量数组返回（向后兼容）。
 	p := parsePagination(r)
 	if p.Invalid {
 		errResponse(w, http.StatusBadRequest, "INVALID_REQUEST",
 			"page must be >= 1 and page_size within [1, 200]")
 		return
 	}
+	// 探测阶段（无锁）：只探测本机容器并把运行时事实写回内存态全局。此前
+	// 这里是 config.GetContainers() 全量值拷贝（#142 实测 20w 容器 ~270MB/请求，
+	// 并发下线性放大直至 OOM 的根因）；企业形态下主控本机容器≈0，本阶段成本
+	// 随之为 O(本机容器数)。
+	lxcManager.RefreshLocalRuntime()
+	kvmManager.RefreshLocalRuntime()
+	// 共享只读视界：读锁贯穿管道全链路（过滤/排序只重排指针切片，指针切片
+	// views 为本请求私有分配，绝不写穿指针）。元素值在锁内按"将响应的范围"
+	// 拷出（分页请求只拷当页），释放读锁后再做脱敏与属主名派生。
+	ro, release := config.ContainersROView()
+	views := make([]*config.Container, len(ro))
+	for i := range ro {
+		views[i] = &ro[i]
+	}
+	views = filterContainersForRequestPtr(r, views)
+	// 回收站视图：?recycled=true 只看回收站；默认视图排除回收站实例。
+	views = listContainersFilterRecycledPtr(views, r)
+	// 标签过滤（企业成本分摊 / 按标签过滤，类比 AWS DescribeInstances Filters）。
+	// 支持两种形式：?tag=key:value（精确匹配）；?tag-key=key（存在性匹配）。
+	if tagFilter := strings.TrimSpace(r.URL.Query().Get("tag")); tagFilter != "" {
+		if k, v, ok := strings.Cut(tagFilter, ":"); ok {
+			k, v = strings.TrimSpace(k), strings.TrimSpace(v)
+			filtered := views[:0]
+			for _, c := range views {
+				if c.Tags[k] == v {
+					filtered = append(filtered, c)
+				}
+			}
+			views = filtered
+		}
+	}
+	if tagKeyFilter := strings.TrimSpace(r.URL.Query().Get("tag-key")); tagKeyFilter != "" {
+		filtered := views[:0]
+		for _, c := range views {
+			if _, ok := c.Tags[tagKeyFilter]; ok {
+				filtered = append(filtered, c)
+			}
+		}
+		views = filtered
+	}
+	// 服务端筛选 / 排序（企业级大规模列表：万级容器下不下发全量到浏览器）。
+	// 仅处理"纯数据"维度；任务态 / 排队占位由前端叠加。
+	filterOptions := buildContainerFilterOptions(views)
+	views = filterContainersByQuery(views, r)
+	sortContainersByQuery(views, r)
+
+	// 分页：未传 page/page_size 时保持全量数组返回（向后兼容）。锁内只把
+	// 将响应的范围按值拷出（分页请求只拷当页），随即释放读锁。
+	total := len(views)
+	if p.Requested {
+		views = paginate(views, p)
+	}
+	items := make([]config.Container, 0, len(views))
+	for _, v := range views {
+		items = append(items, *v)
+	}
+	// 物化要查子用户索引（内部取读锁）：RWMutex 不可重入，必须先释放上面的
+	// 读锁再物化，否则排队写者会令锁内重入永久阻塞。
+	release()
+	items = materializeContainerViews(r, items)
 	if p.Requested {
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
-			"items":          paginate(containers, p),
-			"total":          len(containers),
+			"items":          items,
+			"total":          total,
 			"page":           p.Page,
 			"page_size":      p.PageSize,
 			"filter_options": filterOptions,
 		}})
 		return
 	}
-	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: containers})
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: items})
+}
+
+// listContainersFilterRecycledPtr 指针版回收站过滤（值版保留给 HandleDashboard）。
+func listContainersFilterRecycledPtr(containers []*config.Container, r *http.Request) []*config.Container {
+	wantRecycled := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("recycled")), "true")
+	filtered := containers[:0]
+	for _, c := range containers {
+		if wantRecycled == (c.RecycledAt != "") {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
+// materializeContainerViews 把（读锁内按值拷出的）容器做脱敏与属主名派生。
+// 输入是本请求私有值拷贝，可就地修改；调用方必须已释放 ContainersROView 的
+// 读锁——FindSubUserByID 内部取读锁，RWMutex 不可重入。
+func materializeContainerViews(r *http.Request, items []config.Container) []config.Container {
+	for i := range items {
+		c := &items[i]
+		sanitizeContainerResponse(r, c)
+		// 列表为只读汇总视图，一律不回显登录口令（detail/console 需要时单独拉取）。
+		c.SSHPassword = ""
+		// 属主名派生填充：前端据此显示属主徽标/下拉，无需拉取全量子用户；
+		// 查不到（账号已删）与旧行为一致置空。
+		if c.OwnerSubUserID != "" {
+			c.OwnerUsername = ""
+			if su, ok := config.FindSubUserByID(c.OwnerSubUserID); ok {
+				c.OwnerUsername = su.Username
+			}
+		}
+	}
+	return items
 }
 
 // buildContainerFilterOptions 汇总筛选下拉的可选项（systems / tenants）。
 // 取自"筛选前"的全量集合，保证翻页 / 筛选过程中下拉选项不抖动。
-func buildContainerFilterOptions(containers []config.Container) map[string]interface{} {
+// 只读：不拷贝、不修改元素。
+func buildContainerFilterOptions(containers []*config.Container) map[string]interface{} {
 	systemLabels := map[string]string{
 		"ubuntu": "Ubuntu", "debian": "Debian", "alpine": "Alpine",
 		"centos": "CentOS", "archlinux": "Arch Linux", "fedora": "Fedora",
@@ -873,7 +930,7 @@ func containerSystemGroup(template string) string {
 
 // filterContainersByQuery 应用 search / type / system / status / tenant / owner / node 筛选。
 // 前缀为 "search=" 的关键字检索覆盖 名称 / ID / UUID / IP / IPv6 / 模板 / 租户 / 端口 / 备注。
-func filterContainersByQuery(containers []config.Container, r *http.Request) []config.Container {
+func filterContainersByQuery(containers []*config.Container, r *http.Request) []*config.Container {
 	q := r.URL.Query()
 	search := strings.ToLower(strings.TrimSpace(q.Get("search")))
 	typ := strings.ToLower(strings.TrimSpace(q.Get("type")))
@@ -929,7 +986,7 @@ func filterContainersByQuery(containers []config.Container, r *http.Request) []c
 	return filtered
 }
 
-func containerMatchesSearch(c config.Container, keyword string) bool {
+func containerMatchesSearch(c *config.Container, keyword string) bool {
 	fields := []string{
 		strconv.Itoa(c.ID), c.Name, c.UUID, c.IP, c.IPv6, c.Template,
 		c.Tenant, c.Remark, strconv.Itoa(c.SSHPort),
@@ -943,14 +1000,15 @@ func containerMatchesSearch(c config.Container, keyword string) bool {
 }
 
 // sortContainersByQuery 支持 sort=id|name|status|vcpu|ram_mb|disk_gb|node_id|created_at，
-// order=asc|desc。未传 sort 时保持自然顺序（不改动）。
-func sortContainersByQuery(containers []config.Container, r *http.Request) {
+// order=asc|desc。未传 sort 时保持自然顺序（不改动）。指针版：排序只换指针，
+// 不再为每次 swap 复制整个容器结构体。
+func sortContainersByQuery(containers []*config.Container, r *http.Request) {
 	key := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("sort")))
 	if key == "" {
 		return
 	}
 	desc := strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("order")), "desc")
-	sortSliceStable(containers, func(a, b config.Container) bool {
+	sortSliceStable(containers, func(a, b *config.Container) bool {
 		var less bool
 		switch key {
 		case "name", "hostname":
@@ -2545,6 +2603,9 @@ func StartRecyclePurgeWorker() {
 		ticker := time.NewTicker(time.Hour)
 		defer ticker.Stop()
 		purgeOnce := func() {
+			if !maintenanceLeaseActive() {
+				return
+			}
 			retention := config.RecycleRetentionDays
 			if v := strings.TrimSpace(os.Getenv("EYVESCLOUD_RECYCLE_DAYS")); v != "" {
 				if n, err := strconv.Atoi(v); err == nil && n > 0 {

@@ -70,6 +70,9 @@ func policyCooldownMinutes(rule config.PolicyRule) int {
 }
 
 func evaluatePolicyRules() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	if config.AppConfig == nil {
 		return
 	}

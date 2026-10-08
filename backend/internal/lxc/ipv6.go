@@ -1006,6 +1006,12 @@ func publicIPv4AddressBound(address string, iface string) bool {
 
 func EnsureAllAssignedPublicIPv4s() {
 	for _, c := range config.ContainersView() {
+		// 只恢复本机容器的公网 IP 绑定：远程容器的公网 IP 属于其所在被控节点，
+		// 在主控上执行 `ip addr add` 既无意义又把每个 IP 都换成一次 exec（10w
+		// 规模下启动会被这个 O(全部容器) 循环拖成分钟级）。
+		if c.NodeID != "" {
+			continue
+		}
 		EnsureAssignedPublicIPv4s(c.PublicIPv4s)
 	}
 }

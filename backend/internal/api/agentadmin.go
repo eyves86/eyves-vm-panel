@@ -54,6 +54,18 @@ func consumeAgentPairingKey() {
 	config.SaveConfigLogged()
 }
 
+// restartNodeSide 执行「重启节点侧」动作。抽成变量是为了让测试能替换掉它：
+// 注册/对接链路（HandleAgentRegister 的配对密钥分支、HandleAgentRestart）会在
+// 2 秒后真的下发 systemctl restart，而单测跑在宿主机上——实测 go test
+// ./internal/api/ 会把跑测试这台机器的生产面板重启掉。
+var restartNodeSide = func() {
+	if exec.Command("systemctl", "is-active", "--quiet", "eyvescloud-agent").Run() == nil {
+		_ = exec.Command("systemctl", "restart", "eyvescloud-agent").Run()
+		return
+	}
+	_ = exec.Command("systemctl", "restart", "eyvescloud").Run()
+}
+
 // scheduleNodeSideRestart 让"节点侧"在被控注册/切换主控后生效：
 //   - 独立 agent 部署（安装了 eyvescloud-agent 服务）：重启该服务；
 //   - 面板即被控节点（同机部署，无独立 agent 服务）：重启面板本身——
@@ -63,11 +75,7 @@ func consumeAgentPairingKey() {
 func scheduleNodeSideRestart() {
 	go func() {
 		time.Sleep(2 * time.Second)
-		if exec.Command("systemctl", "is-active", "--quiet", "eyvescloud-agent").Run() == nil {
-			_ = exec.Command("systemctl", "restart", "eyvescloud-agent").Run()
-			return
-		}
-		_ = exec.Command("systemctl", "restart", "eyvescloud").Run()
+		restartNodeSide()
 	}()
 }
 

@@ -254,10 +254,45 @@ else
     fi
 fi
 
+# --- 2c) Redis env 透传：安装器带 EYVESCLOUD_REDIS_ADDR 时落盘 /etc/eyvescloud/redis.env（0600）---
+redis_env_file=/etc/eyvescloud/redis.env
+if ( cd "$INSTALL_CWD" && EYVESCLOUD_FORCE_REINSTALL=1 EYVESCLOUD_REDIS_ADDR="127.0.0.1:6390" EYVESCLOUD_REDIS_PASSWORD="e2e-redis-pw" \
+        EYVESCLOUD_LOG_FILE="$REPORT_DIR/install-redis-script.log" EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH_RUN" install ) \
+        >"$REPORT_DIR/install-redis.log" 2>&1 </dev/null; then
+    redis_unit_ok=1
+    if [ -f /etc/systemd/system/eyvescloud.service ] \
+            && ! grep -q 'EnvironmentFile=-/etc/eyvescloud/redis.env' /etc/systemd/system/eyvescloud.service; then
+        redis_unit_ok=0
+    fi
+    if [ -f "$redis_env_file" ] \
+            && grep -q '^EYVESCLOUD_REDIS_ADDR=127.0.0.1:6390$' "$redis_env_file" \
+            && grep -q '^EYVESCLOUD_REDIS_PASSWORD=e2e-redis-pw$' "$redis_env_file" \
+            && [ "$(stat -c %a "$redis_env_file" 2>/dev/null)" = "600" ] \
+            && [ "$redis_unit_ok" = "1" ]; then
+        record PASS "Redis env 透传（0600 env 文件 + 服务单元引用）"
+    else
+        record FAIL "Redis env 透传" "redis.env 内容/权限或服务单元引用缺失"
+    fi
+else
+    record FAIL "Redis env 重装退出码 0" "rc=$?，见 install-redis.log"
+fi
+
+# --- 2d) 未设置 REDIS env：残留 redis.env 必须被删除（回到单机模式）---
+if ( cd "$INSTALL_CWD" && EYVESCLOUD_FORCE_REINSTALL=1 \
+        EYVESCLOUD_LOG_FILE="$REPORT_DIR/install-noredis-script.log" EYVESCLOUD_VERSION="$VER" bash "$INSTALL_SH_RUN" install ) \
+        >"$REPORT_DIR/install-noredis.log" 2>&1 </dev/null; then
+    if [ ! -e "$redis_env_file" ]; then
+        record PASS "未设 Redis：残留 redis.env 已删除"
+    else
+        record FAIL "未设 Redis：残留 redis.env 已删除" "$redis_env_file 仍存在"
+    fi
+else
+    record FAIL "Redis 未设重装退出码 0" "rc=$?，见 install-noredis.log"
+fi
+
 # ---------------------------------------------------------------------------
 # 步骤 3：服务与端口就绪
-# ---------------------------------------------------------------------------
-hdr "步骤 3：服务与端口就绪"
+# ---------------------------------------------------------------------------hdr "步骤 3：服务与端口就绪"
 ready=0
 for _ in $(seq 1 60); do
     if have systemctl && systemctl is-active --quiet eyvescloud 2>/dev/null; then ready=1; break; fi

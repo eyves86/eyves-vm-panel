@@ -272,6 +272,15 @@ func setupRoutes(mux *http.ServeMux) {
 		}
 		api.HandleClusterItem(w, r, path)
 	})))
+	mux.HandleFunc("/api/cells", corsMiddleware(api.AdminMiddleware(api.HandleCells)))
+	mux.HandleFunc("/api/cells/", corsMiddleware(api.AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		path := strings.TrimPrefix(r.URL.Path, "/api/cells/")
+		if path == "" {
+			api.HandleCells(w, r)
+			return
+		}
+		api.HandleCellItem(w, r, path)
+	})))
 	mux.HandleFunc("/api/nodes/binary", corsMiddleware(api.HandleNodeBinary))
 
 	// 批次3 网络管理：区域 / IP组与故障切换 / ISO 目录
@@ -770,6 +779,9 @@ func serveAgentGateway(ln net.Listener, tlsCfg *tls.Config) {
 func Run() error {
 	// Use embedded frontend files
 	webFS = GetEmbeddedFS()
+	// 分布式租约（设计 §4.5）：多副本下全局维护循环只在持租约副本执行；
+	// 未配置 Redis 时为空操作，所有循环照常运行。
+	api.StartMaintenanceLease()
 	api.StartHostMetricSampler()
 	api.StartContainerMetricSampler()
 	api.StartMetricRollup()

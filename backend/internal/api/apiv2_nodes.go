@@ -61,6 +61,12 @@ func init() {
 	registerV2("DELETE /api/v2/node-groups/{id}", v2Auth(v2NodeGroupDelete))
 	registerV2("PUT /api/v2/node-groups/{id}/nodes", v2Auth(v2NodeGroupSetNodes))
 
+	registerV2("GET /api/v2/cells", v2Auth(v2CellsList))
+	registerV2("POST /api/v2/cells", v2Auth(v2CellsCreate))
+	registerV2("PATCH /api/v2/cells/{id}", v2Auth(v2CellUpdate))
+	registerV2("DELETE /api/v2/cells/{id}", v2Auth(v2CellDelete))
+	registerV2("PUT /api/v2/cells/{id}/nodes", v2Auth(v2CellSetNodes))
+
 	registerV2("GET /api/v2/regions", v2Auth(v2RegionsList))
 	registerV2("POST /api/v2/regions", v2Auth(v2RegionsCreate))
 	registerV2("PATCH /api/v2/regions/{id}", v2Auth(v2RegionUpdate))
@@ -837,6 +843,163 @@ func v2NodeGroupSetNodes(w http.ResponseWriter, r *http.Request) {
 	auditRequest(r, "api.v2.node_group.set_nodes", groupID,
 		fmt.Sprintf("成员整体替换为 %d 个节点，变更 %d", len(targets), changed), true, "")
 	v2OK(w, r, map[string]interface{}{"node_group_id": groupID, "node_ids": req.NodeIDs, "changed": changed})
+}
+
+// ---------------------------------------------------------------------------
+// Cell（分片单元，P3）
+// ---------------------------------------------------------------------------
+
+func v2CellsList(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "node:read") {
+		return
+	}
+	query := v2ParsePage(r)
+	config.AppConfigMu.RLock()
+	cells := append([]config.Cell(nil), config.AppConfig.Cells...)
+	nodes := append([]config.Node(nil), config.AppConfig.Nodes...)
+	config.AppConfigMu.RUnlock()
+
+	items := make([]map[string]interface{}, 0, len(cells))
+	for _, cell := range cells {
+		members := []map[string]interface{}{}
+		for i := range nodes {
+			if nodes[i].CellID == cell.ID {
+				members = append(members, map[string]interface{}{"id": nodes[i].ID, "name": nodes[i].Name, "status": nodes[i].Status})
+			}
+		}
+		items = append(items, map[string]interface{}{
+			"id": cell.ID, "name": cell.Name, "description": cell.Description,
+			"node_count": len(members), "nodes": members,
+			"created_at": v2Time(cell.CreatedAt),
+		})
+	}
+	total := len(items)
+	start, end := query.Slice(total)
+	v2List(w, r, items[start:end], query, total)
+}
+
+func v2CellsCreate(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "node:write") {
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := v2Decode(r, &req); err != nil {
+		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+		return
+	}
+	if details := v2RequiredStrings(map[string]string{"name": req.Name}); details != nil {
+		v2BadRequest(w, r, "缺少必填字段", details)
+		return
+	}
+	cell, err := config.AddCell(config.Cell{
+		ID:          "cell-" + randomHex(6),
+		Name:        strings.TrimSpace(req.Name),
+		Description: strings.TrimSpace(req.Description),
+		CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
+	})
+	if err != nil {
+		v2Internal(w, r, "创建分片单元失败："+err.Error())
+		return
+	}
+	auditRequest(r, "api.v2.cell.create", cell.Name, "", true, "")
+	v2Created(w, r, map[string]interface{}{"id": cell.ID, "name": cell.Name})
+}
+
+func v2CellUpdate(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "node:write") {
+		return
+	}
+	cellID := strings.TrimSpace(r.PathValue("id"))
+	var req struct {
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+	}
+	if err := v2Decode(r, &req); err != nil {
+		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+		return
+	}
+	updated, ok := config.UpdateCell(cellID, func(c *config.Cell) {
+		if req.Name != nil {
+			c.Name = strings.TrimSpace(*req.Name)
+		}
+		if req.Description != nil {
+			c.Description = strings.TrimSpace(*req.Description)
+		}
+	})
+	if !ok {
+		v2NotFound(w, r, "分片单元不存在："+cellID)
+		return
+	}
+	auditRequest(r, "api.v2.cell.update", updated.Name, "", true, "")
+	v2OK(w, r, map[string]interface{}{"id": updated.ID, "name": updated.Name, "description": updated.Description})
+}
+
+func v2CellDelete(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "node:write") {
+		return
+	}
+	cellID := strings.TrimSpace(r.PathValue("id"))
+	// 与分组不同：成员被清引用会触发「节点+容器从 cell 库物理搬回控制库」的批量
+	// 迁移，因此有成员时拒绝（409），由管理员先迁空再删。
+	if n := config.CountCellNodes(cellID); n > 0 {
+		v2Conflict(w, r, fmt.Sprintf("分片单元仍有 %d 个成员节点，请先迁空再删除", n))
+		return
+	}
+	if !config.RemoveCell(cellID) {
+		v2NotFound(w, r, "分片单元不存在："+cellID)
+		return
+	}
+	auditRequest(r, "api.v2.cell.delete", cellID, "", true, "")
+	v2NoContent(w, r)
+}
+
+// v2CellSetNodes PUT /api/v2/cells/{id}/nodes {node_ids: [...]}（整体替换语义）。
+// 改 CellID 会在下一次落库时把节点及其容器在控制库与 cell 库之间物理搬迁。
+func v2CellSetNodes(w http.ResponseWriter, r *http.Request) {
+	if !v2RequireScope(w, r, "node:write") {
+		return
+	}
+	cellID := strings.TrimSpace(r.PathValue("id"))
+	var req struct {
+		NodeIDs []string `json:"node_ids"`
+	}
+	if err := v2Decode(r, &req); err != nil {
+		v2BadRequest(w, r, "请求体解析失败", map[string]string{"body": err.Error()})
+		return
+	}
+	if _, ok := config.FindCell(cellID); !ok {
+		v2NotFound(w, r, "分片单元不存在："+cellID)
+		return
+	}
+	targets := map[string]bool{}
+	for _, id := range req.NodeIDs {
+		if _, ok := config.FindNode(id); !ok {
+			v2NotFound(w, r, "节点不存在："+id)
+			return
+		}
+		targets[id] = true
+	}
+	config.AppConfigMu.RLock()
+	nodes := append([]config.Node(nil), config.AppConfig.Nodes...)
+	config.AppConfigMu.RUnlock()
+	changed := 0
+	for _, n := range nodes {
+		shouldJoin := targets[n.ID]
+		if shouldJoin && n.CellID != cellID {
+			config.UpdateNode(n.ID, func(node *config.Node) { node.CellID = cellID })
+			changed++
+		}
+		if !shouldJoin && n.CellID == cellID {
+			config.UpdateNode(n.ID, func(node *config.Node) { node.CellID = "" })
+			changed++
+		}
+	}
+	auditRequest(r, "api.v2.cell.set_nodes", cellID,
+		fmt.Sprintf("成员整体替换为 %d 个节点，变更 %d", len(targets), changed), true, "")
+	v2OK(w, r, map[string]interface{}{"cell_id": cellID, "node_ids": req.NodeIDs, "changed": changed})
 }
 
 // ---------------------------------------------------------------------------

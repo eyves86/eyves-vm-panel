@@ -45,6 +45,9 @@ func StartScheduledActionsWorker() {
 }
 
 func runScheduledActionsTick() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	now := time.Now().UTC()
 	actions := config.ListAllScheduledActions()
 	for _, a := range actions {

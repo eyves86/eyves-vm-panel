@@ -53,6 +53,9 @@ func StartBackupPlanScheduler() {
 
 // backupPlanTick 扫描全部计划，执行到期的计划（每个计划独立 goroutine）。
 func backupPlanTick() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	now := time.Now()
 	for _, plan := range config.BackupPlans() {
 		if !plan.Enabled {

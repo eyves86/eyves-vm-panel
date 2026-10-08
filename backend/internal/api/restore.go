@@ -27,6 +27,13 @@ func CaptureRuntimeRestoreState() {
 	config.AppConfigMu.Lock()
 	for i := range config.AppConfig.Containers {
 		c := &config.AppConfig.Containers[i]
+		// 节点容器：本地探测不到（不在本机 LXC/KVM 里），恢复标记由所属节点自己维护。
+		// 此前未跳过：主控退出时会为每台被控的每个容器 exec 一次 lxc-info/virsh，
+		// 10w 容器下退出拖成分钟级；且该循环全程持 AppConfigMu 写锁，落库同时被堵死
+		// （见 config.FlushDeferredSaves 卡在 RWMutex.Lock 的退出转储）。
+		if c.NodeID != "" {
+			continue
+		}
 		status, err := runtimeStatus(*c, lxcManager, kvmManager)
 		if err != nil {
 			fmt.Printf("Warning: failed to capture runtime state for %s: %v\n", c.Name, err)
@@ -72,6 +79,11 @@ func RestoreHostBootState() {
 
 	for _, c := range containers {
 		if !c.RestoreOnHostBoot {
+			continue
+		}
+		// 同 CaptureRuntimeRestoreState：远程容器的拉起由所属节点负责，
+		// 本机 start 它只会失败并刷日志。
+		if c.NodeID != "" {
 			continue
 		}
 		if c.PolicyBlocked {

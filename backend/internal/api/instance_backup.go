@@ -34,6 +34,9 @@ func StartInstanceBackupScheduler() {
 
 // runDueInstanceBackups 在到达备份周期时，为所有运行中的容器创建一份磁盘备份。
 func runDueInstanceBackups() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	settings := config.GetInstanceBackupSettings()
 	if !settings.Enabled {
 		return

@@ -3834,10 +3834,10 @@ func applyContainerIPv4Details(c *config.Container, ip string, prefixLen int, ga
 	return changed
 }
 
-// refreshListedContainerIPv4 把 IPv4 明细同时写入「本次响应副本」与「全局配置」。
-// 全局部分持写锁、且只在确有变化时落库——列表接口由此不再依赖"与全局切片共享
-// 底层数组"来顺手改内存态（那正是数据竞态的来源）。
-func (m *Manager) refreshListedContainerIPv4(c *config.Container) {
+// refreshProbedContainerIPv4 把一次 IPv4 明细探测结果写回内存态全局（持写锁、
+// 只在确有变化时落库）。容器列表热路径不再持有"响应副本"，探测结果一律以
+// 内存态全局为准（#143）。
+func (m *Manager) refreshProbedContainerIPv4(c *config.Container) {
 	if c == nil || c.IsKVM() {
 		return
 	}
@@ -3845,7 +3845,6 @@ func (m *Manager) refreshListedContainerIPv4(c *config.Container) {
 	if err != nil {
 		return
 	}
-	applyContainerIPv4Details(c, ip, prefixLen, gateway)
 	changed := false
 	config.MutateContainerNoSave(c.ID, func(g *config.Container) {
 		changed = applyContainerIPv4Details(g, ip, prefixLen, gateway)
@@ -3855,39 +3854,39 @@ func (m *Manager) refreshListedContainerIPv4(c *config.Container) {
 	}
 }
 
-// ListContainers lists all LXC containers and updates statuses
-func (m *Manager) ListContainers() ([]config.Container, error) {
-	// 锁内快照：列表语义必须只读。此前这里直接引用全局切片，与任务队列
-	// （持锁改容器状态）和创建路径（append 替换切片头）并发时构成数据竞态
-	// ——go test -race 实测（v2.2.42）。探测结果通过持锁 API 写回全局，
-	// 不再依赖"共享底层数组"的副作用。
-	containers := config.GetContainers()
-	for i := range containers {
-		// 节点容器：本地无法探测（不在本机 LXC 里），状态/网络由主控心跳同步
-		// 维护。此前未跳过：本地同名 LXC 的探测结果会把心跳维护的状态
-		// （如 orphaned）覆写回 stopped —— 生产实测踩坑（v2.2.36）。
-		if containers[i].NodeID != "" {
-			continue
-		}
-		if containers[i].IsKVM() {
-			continue
-		}
-		status, err := m.GetContainerStatus(containers[i].LxcName())
+// RefreshLocalRuntime 探测本机（NodeID 为空）LXC 容器的运行时事实：状态经
+// UpdateContainerStatusNotify 写回内存态全局（含状态钩子），IPv4 经持锁 API 落
+// 内存态、确有变化才落库。容器列表热路径由此不再为探测做全量值拷贝
+// （#142 实测 20w 容器每次 ~270MB，并发下线性放大直至 OOM 的根因）。
+// 节点容器本地无法探测，状态由主控心跳同步维护——本地同名 LXC 的探测结果
+// 不得覆写心跳状态（如 orphaned），生产实测踩坑（v2.2.36）。
+func (m *Manager) RefreshLocalRuntime() {
+	local, _ := config.LocalProbeContainers()
+	for i := range local {
+		status, err := m.GetContainerStatus(local[i].LxcName())
 		if err == nil {
-			containers[i].Status = status
 			// 状态写回全局走持锁 API（含状态钩子），避免吞掉后续真实事件
 			// （下次探测时 old 已被改写）。
-			config.UpdateContainerStatusNotify(containers[i].ID, status)
+			config.UpdateContainerStatusNotify(local[i].ID, status)
 		}
 		if status == "running" {
-			ip, err := m.GetContainerIP(containers[i].LxcName())
-			if err == nil {
-				containers[i].IP = ip
+			if ip, err := m.GetContainerIP(local[i].LxcName()); err == nil {
+				// IPv4 明细探测失败时的兜底：写内存态（不落库），语义与旧
+				// "拷贝覆盖"一致，只是权威状态从响应副本换成内存态全局。
+				config.MutateContainerNoSave(local[i].ID, func(g *config.Container) { g.IP = ip })
 			}
-			m.refreshListedContainerIPv4(&containers[i])
+			m.refreshProbedContainerIPv4(&local[i])
 		}
 	}
-	return containers, nil
+}
+
+// ListContainers 探测后返回全量快照（私有拷贝）。CLI 与非热路径调用点用；
+// API 容器列表热路径改走 RefreshLocalRuntime + config.ContainersROView（#143）。
+func (m *Manager) ListContainers() ([]config.Container, error) {
+	m.RefreshLocalRuntime()
+	// GetContainers 自带读锁、返回私有拷贝：下游过滤（filtered[:0] 原地复用）
+	// 只重写这份拷贝，不会写坏内存态全局（v2.2.42 锁内快照语义保持）。
+	return config.GetContainers(), nil
 }
 
 // ImportExistingEyvescloudContainers imports existing LXC containers into the EYVESCLOUD

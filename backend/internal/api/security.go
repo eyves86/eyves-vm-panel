@@ -408,6 +408,9 @@ func (ss *SecurityScanner) alertCount() int {
 }
 
 func (ss *SecurityScanner) checkAllContainers() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	config.AppConfigMu.RLock()
 	arpEnabled := config.AppConfig.ARPProtectionEnabled
 	abuseEnabled := config.AppConfig.AbuseDetectionEnabled

@@ -335,11 +335,18 @@ func matchApiKey(rawKey string) (idx int, needsRehash bool) {
 	config.AppConfigMu.RLock()
 	defer config.AppConfigMu.RUnlock()
 	for i, k := range config.AppConfig.ApiKeys {
-		// Fast O(1) pre-screen: if the key has a stored fingerprint and it does
-		// not match, skip the expensive argon2 verification entirely.
-		if k.KeyFingerprint != "" && k.KeyFingerprint != finger {
+		if k.KeyFingerprint != "" {
+			// 高熵 Key（128-bit 随机）按 GitHub/Stripe 惯例以 SHA-256 指纹直验：
+			// 指纹相等即凭证成立（constant-time 比较），不再为每个 API 请求付一次
+			// argon2id（m=64MB,t=3 的 CPU 以百毫秒计）。argon2 只用于人类口令这类
+			// 低熵输入；对随机令牌做慢哈希不增加安全性，只烧 CPU。
+			if subtle.ConstantTimeCompare([]byte(k.KeyFingerprint), []byte(finger)) == 1 {
+				return i, false
+			}
 			continue
 		}
+		// 无指纹的旧 Key：保留 argon2 验证；首用成功后回填指纹（见 validateApiKeyDetails），
+		// 之后同样走快验路径。legacy 哈希迁移语义不变。
 		if verifyAPIKeyHash(rawKey, k.KeyHash) {
 			return i, false
 		}
@@ -388,6 +395,16 @@ func validateApiKeyDetails(rawKey, clientIP string) (*config.ApiKeyConfig, bool)
 				return config.DirtySet{}
 			})
 		}
+	}
+	if live.KeyFingerprint == "" {
+		// 旧 Key 首用成功：回填指纹，让后续请求走指纹快验（每 Key 一次性成本）。
+		config.MutateGlobalSaveCatalogExact(func(cfg *config.EyvescloudConfig) config.DirtySet {
+			if idx < len(cfg.ApiKeys) && cfg.ApiKeys[idx].ID == live.ID {
+				cfg.ApiKeys[idx].KeyFingerprint = apiKeyFingerprint(rawKey)
+				return config.DirtySet{APIKeys: []config.ApiKeyConfig{cfg.ApiKeys[idx]}}
+			}
+			return config.DirtySet{}
+		})
 	}
 	copyKey := live
 	return &copyKey, true
@@ -536,11 +553,24 @@ func ApiKeyMiddleware(next http.HandlerFunc) http.HandlerFunc {
 // enforceAPIKeyRateLimit 对携带 RateLimitPerMinute 的 Key 做单 key 滑动窗口限流；
 // 超限时写 429 + Retry-After 并返回 false。
 //
+// 配置 EYVESCLOUD_REDIS_ADDR 后计数走 Redis 固定窗口（跨副本共享阈值）；
+// Redis 出错回退本进程滑动窗口（fail-open）。
+//
 // 注意：真正的鉴权入口是 AuthMiddleware（所有路由都经它），因此该检查必须同时
 // 在 AuthMiddleware 中调用，否则限流形同虚设。
 func enforceAPIKeyRateLimit(w http.ResponseWriter, key *config.ApiKeyConfig) bool {
 	if key == nil || key.RateLimitPerMinute <= 0 {
 		return true
+	}
+	if c := sharedRedis(); c != nil {
+		if n, err := c.IncrWindow(redisAPIKeyWindowKey(key.ID), 60); err == nil {
+			if n <= int64(key.RateLimitPerMinute) {
+				return true
+			}
+			w.Header().Set("Retry-After", "60")
+			jsonResponse(w, http.StatusTooManyRequests, APIResponse{Success: false, Message: "API key rate limit exceeded"})
+			return false
+		}
 	}
 	if apiKeyLimiter.AllowKey(key.ID, key.RateLimitPerMinute) {
 		return true

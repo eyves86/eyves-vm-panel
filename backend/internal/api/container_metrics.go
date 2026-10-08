@@ -68,6 +68,9 @@ func StartMetricRollup() {
 }
 
 func runMetricRollup() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	// Aggregate raw samples older than the current hour (keeps live samples raw).
 	upto := time.Now().Truncate(time.Hour).UnixMilli()
 	if err := config.RollupMetricSamples(upto); err != nil {
@@ -83,6 +86,9 @@ func runMetricRollup() {
 }
 
 func sampleAllContainerMetrics() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	containers, _ := listByRuntime()
 	sem := make(chan struct{}, containerMetricConcurrency)
 	var wg sync.WaitGroup

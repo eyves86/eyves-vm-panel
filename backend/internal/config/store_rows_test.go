@@ -70,6 +70,7 @@ func TestNodeRowRoundTripsEveryField(t *testing.T) {
 		Version: "v2.2.50", OSName: "Ubuntu 22.04", CPUCount: 16,
 		RAMTotalMB: 32768, RAMUsedMB: 12345, DiskTotalGB: 1023.5, DiskUsedGB: 456.25,
 		ContainerCount: 42, RegionID: "region-1", NodeGroupID: "group-1", ClusterID: "cluster-1",
+		CellID:    "cell-1",
 		VirtTypes: []string{"lxc", "kvm"}, CreatedAt: "2026-10-06 01:00:00",
 		MaintenanceMode: true, MaintenanceSince: "2026-10-06 01:01:00",
 		TLSSkipVerify: true, AllowPrivateAddr: true,

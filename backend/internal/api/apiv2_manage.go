@@ -257,6 +257,7 @@ func v2UserCreate(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	})
+	notifySubUserRotated(subUser.Username)
 	auditRequest(r, "api.v2.user.create", username,
 		"绑定 "+itoaV2(len(req.ContainerUUIDs))+" 个实例", true, "")
 	v2Created(w, r, map[string]interface{}{
@@ -291,12 +292,14 @@ func v2UserUpdate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	found := false
+	rotatedID := ""
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SubUsers {
 			if cfg.SubUsers[i].ID != userID && !strings.EqualFold(cfg.SubUsers[i].Username, userID) {
 				continue
 			}
 			found = true
+			rotatedID = cfg.SubUsers[i].ID
 			if req.Email != nil {
 				cfg.SubUsers[i].Email = strings.TrimSpace(*req.Email)
 			}
@@ -340,6 +343,7 @@ func v2UserUpdate(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "用户不存在："+userID)
 		return
 	}
+	notifySubUserRotatedByID(rotatedID)
 	auditRequest(r, "api.v2.user.update", userID, "", true, "")
 	v2OK(w, r, map[string]interface{}{"id": userID, "updated": true})
 }
@@ -350,12 +354,14 @@ func v2UserDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := strings.TrimSpace(r.PathValue("id"))
 	removed := false
+	removedName := ""
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		var subUserID string
 		out := cfg.SubUsers[:0]
 		for i := range cfg.SubUsers {
 			if cfg.SubUsers[i].ID == userID || strings.EqualFold(cfg.SubUsers[i].Username, userID) {
 				subUserID = cfg.SubUsers[i].ID
+				removedName = cfg.SubUsers[i].Username
 				removed = true
 				continue
 			}
@@ -374,6 +380,7 @@ func v2UserDelete(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "用户不存在："+userID)
 		return
 	}
+	notifySubUserDeleted(removedName)
 	auditRequest(r, "api.v2.user.delete", userID, "并解除容器归属", true, "")
 	v2NoContent(w, r)
 }
@@ -397,12 +404,14 @@ func v2UserRotatePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	found := false
+	rotatedID := ""
 	config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.SubUsers {
 			if cfg.SubUsers[i].ID != userID && !strings.EqualFold(cfg.SubUsers[i].Username, userID) {
 				continue
 			}
 			found = true
+			rotatedID = cfg.SubUsers[i].ID
 			cfg.SubUsers[i].PassHash = string(hash)
 			cfg.SubUsers[i].Password = password
 			cfg.SubUsers[i].TokenVersion++ // 旧令牌立刻失效
@@ -413,6 +422,7 @@ func v2UserRotatePassword(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "用户不存在："+userID)
 		return
 	}
+	notifySubUserRotatedByID(rotatedID)
 	auditRequest(r, "api.v2.user.rotate_password", userID, "", true, "")
 	v2OK(w, r, map[string]interface{}{"id": userID, "password": password})
 }
@@ -471,6 +481,7 @@ func v2AdminCreate(w http.ResponseWriter, r *http.Request) {
 	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		cfg.Admins = append(cfg.Admins, account)
 	})
+	notifyAdminRotatedByID(account.ID)
 	auditRequest(r, "api.v2.admin.create", username, "role="+account.Role, true, "")
 	v2Created(w, r, map[string]interface{}{"id": account.ID, "username": account.Username, "role": account.Role})
 }
@@ -507,12 +518,14 @@ func v2AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		newHash = string(hash)
 	}
 	found := false
+	rotatedAdminID := ""
 	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Admins {
 			if cfg.Admins[i].ID != adminID && !strings.EqualFold(cfg.Admins[i].Username, adminID) {
 				continue
 			}
 			found = true
+			rotatedAdminID = cfg.Admins[i].ID
 			if req.Role != nil {
 				cfg.Admins[i].Role = config.NormalizeAdminRole(*req.Role)
 			}
@@ -530,6 +543,7 @@ func v2AdminUpdate(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "管理员不存在："+adminID)
 		return
 	}
+	notifyAdminRotatedByID(rotatedAdminID)
 	auditRequest(r, "api.v2.admin.update", adminID, "", true, "")
 	v2OK(w, r, map[string]interface{}{"id": adminID, "updated": true})
 }
@@ -548,11 +562,13 @@ func v2AdminDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	removed := false
+	removedAdminName := ""
 	config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
 		out := cfg.Admins[:0]
 		for i := range cfg.Admins {
 			if cfg.Admins[i].ID == adminID || strings.EqualFold(cfg.Admins[i].Username, adminID) {
 				removed = true
+				removedAdminName = cfg.Admins[i].Username
 				continue
 			}
 			out = append(out, cfg.Admins[i])
@@ -563,6 +579,7 @@ func v2AdminDelete(w http.ResponseWriter, r *http.Request) {
 		v2NotFound(w, r, "管理员不存在："+adminID)
 		return
 	}
+	notifyAdminDeleted(removedAdminName)
 	auditRequest(r, "api.v2.admin.delete", adminID, "", true, "")
 	v2NoContent(w, r)
 }

@@ -235,6 +235,9 @@ func StartAuditRetention() {
 var retentionOnce sync.Once
 
 func purgeRetainedLogs() {
+	if !maintenanceLeaseActive() {
+		return
+	}
 	if config.AppConfig == nil {
 		return
 	}
@@ -396,6 +399,9 @@ func StartBackupScheduler() {
 			ticker := time.NewTicker(30 * time.Minute)
 			defer ticker.Stop()
 			for range ticker.C {
+				if !maintenanceLeaseActive() {
+					continue
+				}
 				cfg := config.GetBackupSettings()
 				if !cfg.Enabled || cfg.IntervalHours < 1 {
 					continue
@@ -935,8 +941,8 @@ func HandleTenants(w http.ResponseWriter, r *http.Request) {
 		config.AppConfigMu.RLock()
 		tenants := append([]config.Tenant(nil), config.AppConfig.Tenants...)
 		config.AppConfigMu.RUnlock()
-		// GetContainers 自带读锁，须在释放读锁后调用，避免递归读锁死锁。
-		containers := config.GetContainers()
+		// 只读共享视界（零拷贝），避免每次列表都整份拷贝全部容器（#142 实测 20w 容器 ~270MB/次）。
+		containers, releaseContainers := config.ContainersROView()
 		if tenants == nil {
 			tenants = []config.Tenant{}
 		}
@@ -959,6 +965,7 @@ func HandleTenants(w http.ResponseWriter, r *http.Request) {
 				"usage_disk_gb":    usage.DiskGB,
 			})
 		}
+		releaseContainers()
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: data})
 	case http.MethodPost:
 		var req struct {
@@ -1062,13 +1069,19 @@ func HandleTenantItem(w http.ResponseWriter, r *http.Request) {
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "租户已更新"})
 	case http.MethodDelete:
 		// 仅允许删除空租户（未绑定任何容器）。
-		// GetContainers 自带读锁，不能在上面的读锁内调用，否则构成递归读锁死锁。
-		containers := config.GetContainers()
+		// 只读共享视界（零拷贝）；扫描完立即释放，禁止读锁跨随后的写路径。
+		containers, releaseContainers := config.ContainersROView()
+		tenantInUse := false
 		for _, c := range containers {
 			if c.Tenant == id {
-				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "租户下仍有容器，无法删除"})
-				return
+				tenantInUse = true
+				break
 			}
+		}
+		releaseContainers()
+		if tenantInUse {
+			jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "租户下仍有容器，无法删除"})
+			return
 		}
 		removed := false
 		config.MutateGlobalMetaOnly(func(cfg *config.EyvescloudConfig) {
@@ -1134,15 +1147,16 @@ func checkTenantQuota(tenantID string, vcpu float64, ramMB int, diskGB float64) 
 		}
 	}
 	config.AppConfigMu.RUnlock()
-	// GetContainers 自带读锁，须在释放上面的读锁之后再调用，避免递归读锁死锁。
-	containers := config.GetContainers()
 	if !found {
 		return fmt.Errorf("租户 %q 不存在", tenantID)
 	}
 	if !tenant.Enabled {
 		return fmt.Errorf("租户 %q 已禁用", tenantID)
 	}
+	// 只读共享视界（零拷贝）统计该租户用量；不能带出释放点之后再读。
+	containers, releaseContainers := config.ContainersROView()
 	usage := tenantUsage(tenantID, containers)
+	releaseContainers()
 	nextContainers := usage.Containers + 1
 	nextVCPU := usage.VCPU + int(math.Ceil(vcpu))
 	nextRAM := usage.RAMMB + int64(ramMB)

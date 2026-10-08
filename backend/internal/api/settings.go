@@ -195,6 +195,7 @@ func HandleAdminPasswordChange(w http.ResponseWriter, r *http.Request) {
 		cfg.AdminPassHash = string(hash)
 		cfg.AdminTokenVersion++ // invalidate all previously issued admin tokens
 	})
+	notifyAdminGlobalRotated()
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "密码修改成功"})
 }
 
@@ -228,5 +229,6 @@ func HandleAdminUsernameChange(w http.ResponseWriter, r *http.Request) {
 		cfg.AdminUser = req.NewUsername
 		cfg.AdminTokenVersion++ // username change revokes existing admin tokens
 	})
+	notifyAdminGlobalRotated()
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "用户名修改成功"})
 }

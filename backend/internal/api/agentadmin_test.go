@@ -13,6 +13,15 @@ import (
 	"eyvescloud/internal/config"
 )
 
+// TestMain 屏蔽「节点侧重启」副作用：注册/对接链路（TestNodeAdoptEndToEnd 等）
+// 会触发 scheduleNodeSideRestart，默认实现 2 秒后真的执行
+// systemctl restart eyvescloud —— 在开发机上跑单测会把生产面板重启掉
+// （实测：go test ./internal/api/ 导致宿主机 eyvescloud.service 重启）。
+func TestMain(m *testing.M) {
+	restartNodeSide = func() {}
+	os.Exit(m.Run())
+}
+
 // agentAdminTestConfig 把 AppConfig 指向临时 DataDir（agent.json 隔离）。
 func agentAdminTestConfig(t *testing.T) string {
 	t.Helper()

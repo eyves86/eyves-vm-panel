@@ -86,6 +86,11 @@ func v2OpenAPIMetadata() map[string]v2OpenAPIMeta {
 		"PATCH /api/v2/node-groups/{id}":     {Summary: "修改节点分组"},
 		"DELETE /api/v2/node-groups/{id}":    {Summary: "删除节点分组（自动解除成员归属）"},
 		"PUT /api/v2/node-groups/{id}/nodes": {Summary: "设置分组成员（整体替换）", Body: "node_ids[]"},
+		"GET /api/v2/cells":                  {Summary: "分片单元（cell）列表"},
+		"POST /api/v2/cells":                 {Summary: "创建分片单元", Body: "name / description"},
+		"PATCH /api/v2/cells/{id}":           {Summary: "修改分片单元"},
+		"DELETE /api/v2/cells/{id}":          {Summary: "删除分片单元（须先迁空成员）"},
+		"PUT /api/v2/cells/{id}/nodes":       {Summary: "设置分片成员（整体替换，触发节点/容器跨库搬迁）", Body: "node_ids[]"},
 
 		"GET /api/v2/regions":         {Summary: "区域列表（含节点数/在线数、配额用量与节点水位）"},
 		"POST /api/v2/regions":        {Summary: "创建区域", Body: "name / location / country / max_instances / max_ram_mb / max_disk_gb"},
@@ -170,7 +175,7 @@ func v2OpenAPITagFor(path string) string {
 		return "认证"
 	case "instances":
 		return "实例"
-	case "nodes", "node-groups", "regions":
+	case "nodes", "node-groups", "cells", "regions":
 		return "节点与区域"
 	case "images", "iso-images", "storage-pools", "ssh-keys", "security-groups", "ip-pools":
 		return "资源目录"

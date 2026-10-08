@@ -27,9 +27,11 @@ import {
   createNode,
   createNodeContainer,
   createNodeGroup,
+  createCell,
   deleteCluster,
   deleteNode,
   deleteNodeGroup,
+  deleteCell,
   generateAgentPairingKey,
   getAgentRegistration,
   getEnabledImages,
@@ -40,6 +42,7 @@ import {
   getRegions,
   listClusters,
   listNodeGroups,
+  listCells,
   nodeColdBackup,
   nodeContainerAction,
   registerAgentController,
@@ -47,7 +50,9 @@ import {
   syncNodeImages,
   updateCluster,
   updateNodeGroup,
+  updateCell,
   type AgentRegistration,
+  type Cell,
   type Cluster,
   type ManualBootstrap,
   type NodeInstallCommand,
@@ -88,12 +93,13 @@ function formatGBBytes(bytes?: number) {
   return `${v.toFixed(1)} ${units[i]}`
 }
 
-// 后端 Node 结构带有 node_group_id / cluster_id / region_id（omitempty），
+// 后端 Node 结构带有 node_group_id / cluster_id / region_id / cell_id（omitempty），
 // ManagedNode 类型未声明这些字段，这里用扩展类型读取分组归属。
 type GroupedNode = ManagedNode & {
   node_group_id?: string
   cluster_id?: string
   region_id?: string
+  cell_id?: string
 }
 
 export default function NodeManagement() {
@@ -159,6 +165,7 @@ export default function NodeManagement() {
   const [nodeGroups, setNodeGroups] = useState<NodeGroup[]>([])
   const [clusters, setClusters] = useState<Cluster[]>([])
   const [regions, setRegions] = useState<Region[]>([])
+  const [cells, setCells] = useState<Cell[]>([])
 
   // 节点分组弹窗（groupEditTarget 为 null 表示新建，否则编辑该分组）
   const [groupFormOpen, setGroupFormOpen] = useState(false)
@@ -179,6 +186,14 @@ export default function NodeManagement() {
   const [clusterNodeIds, setClusterNodeIds] = useState<string[]>([])
   const [clusterSaving, setClusterSaving] = useState(false)
 
+  // 分片单元弹窗（cellEditTarget 为 null 表示新建，否则编辑该单元）
+  const [cellFormOpen, setCellFormOpen] = useState(false)
+  const [cellEditTarget, setCellEditTarget] = useState<Cell | null>(null)
+  const [cellName, setCellName] = useState('')
+  const [cellDesc, setCellDesc] = useState('')
+  const [cellNodeIds, setCellNodeIds] = useState<string[]>([])
+  const [cellSaving, setCellSaving] = useState(false)
+
   const refresh = useCallback(async () => {
     try {
       const res = await getNodes()
@@ -190,13 +205,19 @@ export default function NodeManagement() {
     }
   }, [])
 
-  // 拉取节点分组 / 集群 / 区域（供分组与集群管理使用）
+  // 拉取节点分组 / 集群 / 区域 / 分片单元（供分组、集群与 cell 管理使用）
   const refreshGroups = useCallback(async () => {
     try {
-      const [groupsRes, clustersRes, regionsRes] = await Promise.all([listNodeGroups(), listClusters(), getRegions()])
+      const [groupsRes, clustersRes, regionsRes, cellsRes] = await Promise.all([
+        listNodeGroups(),
+        listClusters(),
+        getRegions(),
+        listCells(),
+      ])
       setNodeGroups(groupsRes.data.data || [])
       setClusters(clustersRes.data.data || [])
       setRegions(regionsRes.data.data || [])
+      setCells(cellsRes.data.data || [])
     } catch {
       // 保留上次数据
     }
@@ -812,6 +833,71 @@ export default function NodeManagement() {
     }
   }
 
+  // ---- 分片单元（cell） ----
+
+  // cell 成员 = cell 归属（cell_id）指向该 cell 的节点，随节点列表自动刷新。
+  const cellMembers = (cellId: string) => nodes.filter((n) => (n as GroupedNode).cell_id === cellId)
+
+  const openCellCreate = () => {
+    setCellEditTarget(null)
+    setCellName('')
+    setCellDesc('')
+    setCellNodeIds([])
+    setCellFormOpen(true)
+  }
+
+  const openCellEdit = (cell: Cell) => {
+    setCellEditTarget(cell)
+    setCellName(cell.name)
+    setCellDesc(cell.description || '')
+    setCellNodeIds(cellMembers(cell.id).map((n) => n.id))
+    setCellFormOpen(true)
+  }
+
+  const toggleCellNode = (nodeId: string) => {
+    setCellNodeIds((prev) =>
+      prev.includes(nodeId) ? prev.filter((id) => id !== nodeId) : [...prev, nodeId]
+    )
+  }
+
+  const saveCell = async () => {
+    const name = cellName.trim()
+    if (!name) {
+      await alert(t('提示'), t('请填写分片单元名称'))
+      return
+    }
+    setCellSaving(true)
+    try {
+      const payload = { name, description: cellDesc.trim(), node_ids: cellNodeIds }
+      if (cellEditTarget) {
+        await updateCell(cellEditTarget.id, payload)
+        await alert(t('完成'), t('分片单元已更新，成员变更会在节点数据下次保存时跨库搬迁'))
+      } else {
+        await createCell(payload)
+        await alert(t('完成'), t('分片单元已创建'))
+      }
+      setCellFormOpen(false)
+      refreshGroups()
+      refresh()
+    } catch (e: any) {
+      await alert(t('保存失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setCellSaving(false)
+    }
+  }
+
+  const removeCell = async (cell: Cell) => {
+    const ok = await confirm(t('删除分片单元'), `${t('确定删除分片单元')} ${cell.name}？`)
+    if (!ok) return
+    try {
+      await deleteCell(cell.id)
+      await alert(t('完成'), t('分片单元已删除'))
+      refreshGroups()
+    } catch (e: any) {
+      await alert(t('删除失败'), e?.response?.data?.message || String(e))
+    }
+  }
+
   // 一键升级被控节点：默认把「全部在线节点」升级到**与主控相同版本**。
   // 被控受理后就地替换二进制并重启服务（节点上的容器不受影响）；
   // 约 30 秒后列表里的版本号会刷新，可用于确认结果。
@@ -1311,6 +1397,71 @@ export default function NodeManagement() {
                         </button>
                         <button
                           onClick={() => removeCluster(cluster)}
+                          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-gray-700 dark:hover:bg-red-950"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                          {t('删除')}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 分片单元（cell）：成员节点的数据物理落在独立 cell 库 */}
+      <div className="rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+          <div className="flex items-center gap-2">
+            <HardDrive className="h-4 w-4 shrink-0 text-gray-400" />
+            <div>
+              <h2 className="text-sm font-semibold text-black dark:text-white">{t('分片单元（cell）')}</h2>
+              <p className="text-xs text-gray-400">{t('每个单元一个独立配置库：成员节点的节点/容器数据物理隔离存储')}</p>
+            </div>
+          </div>
+          <button
+            onClick={openCellCreate}
+            className="flex items-center gap-1.5 rounded-md bg-brand-600 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-brand-700 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            {t('新建分片单元')}
+          </button>
+        </div>
+        {cells.length === 0 ? (
+          <p className="px-4 py-10 text-center text-sm text-gray-400">{t('暂无分片单元；未归属单元的节点数据存在默认库')}</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[560px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  <th className="px-4 py-3 font-medium">{t('名称')}</th>
+                  <th className="px-4 py-3 font-medium">{t('说明')}</th>
+                  <th className="px-4 py-3 font-medium">{t('成员节点')}</th>
+                  <th className="px-4 py-3 text-right font-medium">{t('操作')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cells.map((cell) => (
+                  <tr key={cell.id} className="border-b border-gray-100 last:border-0 dark:border-gray-800">
+                    <td className="px-4 py-3 font-medium text-black dark:text-white">{cell.name}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300">{cell.description || '-'}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-gray-300" title={cellMembers(cell.id).map((n) => n.name).join('、')}>
+                      {cellMembers(cell.id).length}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => openCellEdit(cell)}
+                          className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300 dark:hover:bg-gray-800"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          {t('编辑')}
+                        </button>
+                        <button
+                          onClick={() => removeCell(cell)}
                           className="inline-flex items-center gap-1 rounded-md border border-gray-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50 dark:border-gray-700 dark:hover:bg-red-950"
                         >
                           <Trash2 className="h-3 w-3" />
@@ -2127,6 +2278,89 @@ export default function NodeManagement() {
                 className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
               >
                 {clusterSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                {t('保存')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 分片单元弹窗 */}
+      {cellFormOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4 dark:bg-black/70">
+          <div className="w-full max-w-md overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900">
+            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-700">
+              <h3 className="text-sm font-semibold text-black dark:text-white">
+                {cellEditTarget ? t('编辑分片单元') : t('新建分片单元')}
+              </h3>
+              <button onClick={() => setCellFormOpen(false)} className="rounded p-1 text-gray-400 hover:bg-gray-100 hover:text-black dark:hover:bg-gray-800 dark:hover:text-white">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('名称')}</label>
+                <input
+                  value={cellName}
+                  onChange={(e) => setCellName(e.target.value)}
+                  placeholder="cell-1"
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('说明')}</label>
+                <input
+                  value={cellDesc}
+                  onChange={(e) => setCellDesc(e.target.value)}
+                  placeholder={t('可选')}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-black outline-none focus:border-brand-500 dark:border-gray-700 dark:bg-gray-950 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs text-gray-500">{t('成员节点')}</label>
+                {nodes.length === 0 ? (
+                  <p className="text-xs text-gray-400">{t('暂无节点，可先在上方创建')}</p>
+                ) : (
+                  <div className="max-h-40 space-y-1.5 overflow-y-auto rounded-md border border-gray-200 p-2.5 dark:border-gray-700">
+                    {nodes.map((node) => {
+                      const gn = node as GroupedNode
+                      const otherCell = cellEditTarget && gn.cell_id && gn.cell_id !== cellEditTarget.id
+                      const otherName = otherCell ? cells.find((c) => c.id === gn.cell_id)?.name : ''
+                      return (
+                        <label key={node.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700 dark:text-gray-200">
+                          <input
+                            type="checkbox"
+                            checked={cellNodeIds.includes(node.id)}
+                            onChange={() => toggleCellNode(node.id)}
+                            className="h-4 w-4"
+                          />
+                          <span>{node.name}</span>
+                          {otherCell && (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400" title={t('勾选保存后将从原单元移出')}>
+                              {t('当前属')} {otherName || gn.cell_id}
+                            </span>
+                          )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="mt-1.5 text-[11px] text-gray-400">{t('保存时整体替换成员集合；一个节点只能属于一个分片单元，成员变更会把该节点的节点/容器数据搬到对应库')}</p>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-gray-100 bg-gray-50 px-5 py-3 dark:border-gray-700 dark:bg-gray-800">
+              <button
+                onClick={() => setCellFormOpen(false)}
+                className="rounded-md px-4 py-2 text-sm text-gray-700 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-gray-700"
+              >
+                {t('取消')}
+              </button>
+              <button
+                onClick={saveCell}
+                disabled={cellSaving}
+                className="inline-flex items-center gap-2 rounded-md bg-brand-600 px-4 py-2 text-sm text-white hover:bg-brand-700 disabled:opacity-50 dark:bg-brand-500 dark:text-white dark:hover:bg-brand-400"
+              >
+                {cellSaving && <Loader2 className="h-4 w-4 animate-spin" />}
                 {t('保存')}
               </button>
             </div>

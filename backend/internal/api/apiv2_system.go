@@ -496,14 +496,15 @@ func v2ApiKeysCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	entry := config.ApiKeyConfig{
-		ID:          "ak-" + randomHex(8),
-		Name:        strings.TrimSpace(req.Name),
-		KeyHash:     hash,
-		Prefix:      rawKey[:20] + "...",
-		IPWhitelist: strings.TrimSpace(req.IPWhitelist),
-		CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
-		Scopes:      req.Scopes,
-		ExpiresAt:   normalizeV2Date(req.ExpiresAt),
+		ID:             "ak-" + randomHex(8),
+		Name:           strings.TrimSpace(req.Name),
+		KeyHash:        hash,
+		KeyFingerprint: apiKeyFingerprint(rawKey),
+		Prefix:         rawKey[:20] + "...",
+		IPWhitelist:    strings.TrimSpace(req.IPWhitelist),
+		CreatedAt:      time.Now().Format("2006-01-02 15:04:05"),
+		Scopes:         req.Scopes,
+		ExpiresAt:      normalizeV2Date(req.ExpiresAt),
 	}
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		cfg.ApiKeys = append(cfg.ApiKeys, entry)

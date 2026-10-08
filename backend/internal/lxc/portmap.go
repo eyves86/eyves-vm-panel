@@ -257,6 +257,12 @@ func EnsureAllRunningPortMappings() {
 	containers := config.ContainersView()
 	for i := range containers {
 		c := &containers[i]
+		// 节点容器不在本机：端口映射由所属被控节点自行恢复。主控在这里既不该下发
+		// 也不该清理——否则主控会为每台被控的每个容器跑一遍 iptables（10w 规模下
+		// 这个 O(全部容器) 循环会把启动拖成分钟级，且规则落在错误的主机上）。
+		if c.NodeID != "" {
+			continue
+		}
 		if c.Status != "running" || strings.TrimSpace(c.IP) == "" {
 			if err := m.CleanPortMappings(c.ID); err != nil {
 				fmt.Printf("Warning: failed to clean inactive port mappings for %s: %v\n", c.Name, err)

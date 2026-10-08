@@ -2242,6 +2242,27 @@ export const updateCluster = (id: string, payload: Partial<Cluster> & { node_ids
 export const deleteCluster = (id: string) =>
   api.delete<APIResponse<null>>(`/clusters/${id}`)
 
+// ---- Cell（分片单元：成员节点的容器/节点数据物理落在独立 cell 库） ----
+export interface Cell {
+  id: string
+  name: string
+  description?: string
+  created_at?: string
+}
+
+export const listCells = () =>
+  api.get<APIResponse<Cell[]>>('/cells')
+
+export const createCell = (payload: { name: string; description?: string; node_ids?: string[] }) =>
+  api.post<APIResponse<Cell>>('/cells', payload)
+
+// node_ids 非 undefined 时整体替换成员集合；成员变更会在下次保存时触发节点/容器跨库搬迁
+export const updateCell = (id: string, payload: Partial<Cell> & { node_ids?: string[] }) =>
+  api.put<APIResponse<null>>(`/cells/${id}`, payload)
+
+export const deleteCell = (id: string) =>
+  api.delete<APIResponse<null>>(`/cells/${id}`)
+
 // ---- 容器迁移 ----
 export const migrateContainer = (id: number, targetNodeID: string, force = false) =>
   api.put<APIResponse<{ node_id: string }>>(`/containers/${id}/migrate`, { target_node_id: targetNodeID, force })

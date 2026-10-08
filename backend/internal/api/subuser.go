@@ -288,6 +288,7 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			var merged *existingResult
+			mergedRotated := false
 			config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 				for i := range cfg.SubUsers {
 					su := &cfg.SubUsers[i]
@@ -323,6 +324,7 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 							su.PassHash = string(hash)
 							su.Password = req.Password
 							su.TokenVersion++
+							mergedRotated = true
 							password = req.Password
 							message = "Sub-user password updated and containers merged"
 						}
@@ -333,6 +335,7 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 							su.PassHash = string(hash)
 							su.Password = password
 							su.TokenVersion++
+							mergedRotated = true
 							message = "Sub-user password generated and containers merged"
 						}
 					} else {
@@ -356,6 +359,9 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 			})
 			if merged != nil {
 				mergedResult = merged
+				if mergedRotated {
+					notifySubUserRotated(mergedResult.su.Username)
+				}
 			} else {
 				// 目标在预检后、落库前被并发删除：拒绝而不是继续创建新账号
 				jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "The sub-user bound to these containers was removed concurrently; retry the request"})
@@ -454,6 +460,7 @@ func HandleSubUserCreate(w http.ResponseWriter, r *http.Request) {
 			auditTargets = append(auditTargets, c.Name)
 		}
 	})
+	notifySubUserRotated(subUser.Username)
 
 	auditDetail := fmt.Sprintf("用户: %s, 邮箱: %s", username, emailNorm)
 	if len(auditTargets) > 0 {
@@ -1135,6 +1142,22 @@ func filterContainersForRequest(r *http.Request, containers []config.Container) 
 	return filtered
 }
 
+// filterContainersForRequestPtr 指针版属主过滤：容器列表热路径用——过滤阶段
+// 零元素拷贝（值版每个命中元素都要复制整个容器结构体）。
+func filterContainersForRequestPtr(r *http.Request, containers []*config.Container) []*config.Container {
+	allowed, restricted := requestAllowedContainers(r)
+	if !restricted {
+		return containers
+	}
+	filtered := containers[:0]
+	for _, c := range containers {
+		if isContainerAllowed(allowed, c) {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
 func filterTasksForRequest(r *http.Request, tasks []*Task) []*Task {
 	filtered := make([]*Task, 0, len(tasks))
 	for _, task := range tasks {
@@ -1486,6 +1509,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
 		}
+		notifySubUserRotated(updated.Username)
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
 			"password": password,
 			"username": updated.Username,
@@ -1541,6 +1565,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
 		}
+		notifySubUserRotated(updated.Username)
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: newSubUserResponse(updated, updated.Password)})
 
 	case action == "role" && r.Method == http.MethodPut:
@@ -1574,6 +1599,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
 		}
+		notifySubUserRotated(updated.Username)
 		auditRequest(r, "subuser.role", updated.Username, "role="+role, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: newSubUserResponse(updated, updated.Password)})
 
@@ -1605,6 +1631,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
 		}
+		notifySubUserRotated(updated.Username)
 		auditRequest(r, "subuser.tenant", updated.Username, "tenant="+tenant, true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: newSubUserResponse(updated, updated.Password)})
 
@@ -1669,6 +1696,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		var usernameChanged bool
 		var emailChanged bool
 		var passwordChanged bool
+		oldUsername := ""
 		config.MutateGlobalSaveCatalogOnly(func(cfg *config.EyvescloudConfig) {
 			for i := range cfg.SubUsers {
 				if cfg.SubUsers[i].ID != subUserID {
@@ -1676,6 +1704,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 				}
 				if newUsername != "" && cfg.SubUsers[i].Username != newUsername {
 					usernameChanged = true
+					oldUsername = cfg.SubUsers[i].Username
 					cfg.SubUsers[i].Username = newUsername
 				}
 				if newEmail != "" && strings.TrimSpace(cfg.SubUsers[i].Email) != newEmail {
@@ -1701,6 +1730,13 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 		if updated.ID == "" {
 			jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Sub-user not found"})
 			return
+		}
+		if usernameChanged {
+			// 改名：旧用户名的存量令牌写墓碑（其他副本的陈旧快照仍认识旧名）。
+			notifySubUserDeleted(oldUsername)
+		}
+		if usernameChanged || passwordChanged {
+			notifySubUserRotated(updated.Username)
 		}
 
 		// 审计日志
@@ -1754,6 +1790,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
 			return
 		}
+		notifySubUserDeleted(removed.Username)
 		auditRequest(r, "subuser.delete", removed.Username, "freed="+strings.Join(freedContainers, ","), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]interface{}{
 			"id":               removed.ID,
@@ -1895,6 +1932,7 @@ func HandleSubUserAction(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to save config"})
 			return
 		}
+		notifySubUserRotated(updated.Username)
 		auditRequest(r, "subuser.bind-containers", updated.Username, "bound="+strings.Join(names, ",")+" unbound="+strings.Join(unboundNames, ","), true, "")
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: newSubUserResponse(updated, "")})
 
@@ -2012,6 +2050,7 @@ func HandleSubUserChangePassword(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	})
+	notifySubUserRotated(su.Username)
 
 	auditRequest(r, "subuser.self.change_password", su.Username, "self password change", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Password changed. Please sign in again with the new password."})
@@ -2153,6 +2192,7 @@ func HandleSubUserSelfRotatePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	})
+	notifySubUserRotated(su.Username)
 
 	auditRequest(r, "subuser.self.rotate_password", su.Username, "self random password rotation", true, "")
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
@@ -2218,6 +2258,7 @@ func rotateContainerAccessCodePassword(w http.ResponseWriter, r *http.Request, c
 	}
 	password := generateRandomStr(16)
 	ownerID := strings.TrimSpace(c.OwnerSubUserID)
+	rotatedOwnerName := ""
 	config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		for i := range cfg.Containers {
 			if (c.UUID != "" && cfg.Containers[i].UUID == c.UUID) || (c.UUID == "" && cfg.Containers[i].ID == c.ID) {
@@ -2229,10 +2270,14 @@ func rotateContainerAccessCodePassword(w http.ResponseWriter, r *http.Request, c
 		for i := range cfg.SubUsers {
 			if ownerID != "" && cfg.SubUsers[i].ID == ownerID {
 				cfg.SubUsers[i].TokenVersion++
+				rotatedOwnerName = cfg.SubUsers[i].Username
 				break
 			}
 		}
 	})
+	if rotatedOwnerName != "" {
+		notifySubUserRotated(rotatedOwnerName)
+	}
 	c.AccessCodePassword = password
 
 	auditRequest(r, "container.rotate_access_code_password", c.Name, "access-code password rotated", true, "")

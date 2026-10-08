@@ -2239,38 +2239,27 @@ func parseWindowsGuestMetrics(stdout string) (windowsGuestMetrics, error) {
 	return metrics, nil
 }
 
-func (m *Manager) ListContainers(containers []config.Container) []config.Container {
-	for i := range containers {
-		// 节点容器：本地不探测（见 lxc.ListContainers 同款说明）。
-		if containers[i].NodeID != "" {
-			continue
-		}
-		if !containers[i].IsKVM() {
-			continue
-		}
-		status, err := m.GetContainerStatus(containers[i].VirshName())
+// RefreshLocalRuntime 探测本机（NodeID 为空）KVM 虚拟机的运行时事实：状态经
+// UpdateContainerStatusNotify 写回内存态全局；VNC 端口与 IP 由 RefreshVNCPort /
+// RefreshNetwork 持锁落内存态、确有变化才落库。节点虚拟机本地不探测（同
+// lxc.RefreshLocalRuntime 的说明），其状态由主控心跳同步维护。
+func (m *Manager) RefreshLocalRuntime() {
+	_, local := config.LocalProbeContainers()
+	for i := range local {
+		status, err := m.GetContainerStatus(local[i].VirshName())
 		if err == nil && status != "" {
-			containers[i].Status = status
-			// 同 lxc.ListContainers：状态写回全局走持锁 API，不靠共享底层数组。
-			config.UpdateContainerStatusNotify(containers[i].ID, status)
+			config.UpdateContainerStatusNotify(local[i].ID, status)
 		}
 		if status == "running" {
-			if _, err := m.RefreshVNCPort(containers[i].ID); err == nil {
-				if refreshed := config.FindContainer(containers[i].ID); refreshed != nil {
-					containers[i].VNCPort = refreshed.VNCPort
-				}
-			}
-			if ip, err := m.RefreshNetwork(containers[i].ID); err == nil && ip != "" {
-				containers[i].IP = ip
-			}
+			_, _ = m.RefreshVNCPort(local[i].ID)
+			_, _ = m.RefreshNetwork(local[i].ID)
 		}
 	}
-	return containers
 }
 
 func (m *Manager) RefreshNetwork(id int) (string, error) {
-	c := config.FindContainer(id)
-	if c == nil {
+	c, ok := config.GetContainerSnapshot(id)
+	if !ok {
 		return "", fmt.Errorf("container not found: %d", id)
 	}
 	if !c.IsKVM() {
@@ -2280,8 +2269,11 @@ func (m *Manager) RefreshNetwork(id int) (string, error) {
 	if err != nil || ip == "" {
 		return "", err
 	}
-	changed := c.IP != ip
-	c.IP = ip
+	changed := false
+	config.MutateContainerNoSave(id, func(g *config.Container) {
+		changed = g.IP != ip
+		g.IP = ip
+	})
 	if changed {
 		config.SaveConfig()
 	}
@@ -3401,8 +3393,8 @@ func undefineDomain(name string) error {
 }
 
 func (m *Manager) RefreshVNCPort(id int) (int, error) {
-	c := config.FindContainer(id)
-	if c == nil {
+	c, ok := config.GetContainerSnapshot(id)
+	if !ok {
 		return 0, fmt.Errorf("container not found: %d", id)
 	}
 	if !c.IsKVM() {
@@ -3412,8 +3404,14 @@ func (m *Manager) RefreshVNCPort(id int) (int, error) {
 	if port <= 0 {
 		return 0, fmt.Errorf("VNC display is not available for %s", c.VirshName())
 	}
-	if c.VNCPort != port {
-		c.VNCPort = port
+	changed := false
+	config.MutateContainerNoSave(id, func(g *config.Container) {
+		if g.VNCPort != port {
+			g.VNCPort = port
+			changed = true
+		}
+	})
+	if changed {
 		config.SaveConfig()
 	}
 	return port, nil

@@ -115,21 +115,31 @@ func (c rebindConn) QueryContext(ctx context.Context, query string, args []drive
 	return nil, driver.ErrSkip
 }
 
-// openPostgresConfigDB 打开 Postgres 配置库并建表。调用方（openConfigDB）已持有 dbMu。
-func openPostgresConfigDB(dsn string) error {
+// openPostgresConn 打开一个 Postgres 连接（不触碰全局 db / 后端标志），供配置库与
+// cell 分库共用。SQLite 必须单连接（单写者），Postgres 不需要。
+func openPostgresConn(dsn string) (*sql.DB, error) {
 	cc, err := pgx.ParseConfig(dsn)
 	if err != nil {
-		return fmt.Errorf("解析 %s 失败: %w", pgDSNEnv, err)
+		return nil, fmt.Errorf("解析 Postgres DSN 失败: %w", err)
 	}
-	next := sql.OpenDB(rebindConnector{inner: stdlib.GetConnector(*cc)})
-	// SQLite 必须单连接（单写者），Postgres 不需要；所有配置库访问仍由 dbMu 串行。
-	next.SetMaxOpenConns(4)
-	next.SetMaxIdleConns(4)
+	conn := sql.OpenDB(rebindConnector{inner: stdlib.GetConnector(*cc)})
+	conn.SetMaxOpenConns(4)
+	conn.SetMaxIdleConns(4)
+	if err := conn.Ping(); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("连接 Postgres 失败: %w", err)
+	}
+	return conn, nil
+}
+
+// openPostgresConfigDB 打开 Postgres 配置库并建表。调用方（openConfigDB）已持有 dbMu。
+func openPostgresConfigDB(dsn string) error {
+	next, err := openPostgresConn(dsn)
+	if err != nil {
+		return err
+	}
 	db = next
 	configDBIsPostgres = true
-	if err := next.Ping(); err != nil {
-		return fmt.Errorf("连接 Postgres 配置库失败: %w", err)
-	}
 	return ensurePostgresSchema()
 }
 
@@ -442,6 +452,7 @@ func postgresSchemaStmts() []string {
 			region_id TEXT NOT NULL DEFAULT '',
 			node_group_id TEXT NOT NULL DEFAULT '',
 			cluster_id TEXT NOT NULL DEFAULT '',
+			cell_id TEXT NOT NULL DEFAULT '',
 			virt_types TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL DEFAULT '',
 			maintenance_mode BIGINT NOT NULL DEFAULT 0,
@@ -494,10 +505,5 @@ func postgresSchemaStmts() []string {
 // （否则 CREATE TABLE IF NOT EXISTS 对已存在的表是空操作、新列永远补不上），
 // 新库则等价于「基础表 + 迁移列」的并集。幂等。
 func ensurePostgresSchema() error {
-	for _, stmt := range postgresSchemaStmts() {
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("failed to create postgres schema: %w", err)
-		}
-	}
-	return ensureSchemaMigrations()
+	return ensureSchemaOn(db, true)
 }
