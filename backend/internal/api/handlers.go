@@ -95,6 +95,30 @@ func HandleContainerListAlias(w http.ResponseWriter, r *http.Request) {
 	listContainers(w, r)
 }
 
+// enforceMasterReinstallImageAllowed 强制主控的镜像可见性策略：被主控隐藏（未启用）的镜像
+// 不允许任何容器（含转发到被控节点的容器）重装。返回 false 表示已写入错误响应，调用方应立即 return。
+// 读取后会复位请求体，便于后续 routeToAgent / 任务队列继续消费。
+func enforceMasterReinstallImageAllowed(w http.ResponseWriter, r *http.Request) bool {
+	buf, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "读取请求体失败: " + err.Error()})
+		return false
+	}
+	r.Body = io.NopCloser(bytes.NewReader(buf))
+	var req struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.Unmarshal(buf, &req); err != nil {
+		// 解析失败交由下游按原有逻辑处理（例如返回 400）。
+		return true
+	}
+	if req.TemplateID != "" && !imageEnabledOnPanel(req.TemplateID) {
+		jsonResponse(w, http.StatusForbidden, APIResponse{Success: false, Message: "该镜像已被主控隐藏，禁止重装：" + req.TemplateID})
+		return false
+	}
+	return true
+}
+
 // HandleSingleContainer handles individual container operations by ID or name: /api/containers/{id-or-name}/...
 func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/containers/")
@@ -236,6 +260,10 @@ func HandleSingleContainer(w http.ResponseWriter, r *http.Request) {
 		HandleSingleTaskAction(w, r, id, "restart")
 	case action == "reinstall" && r.Method == http.MethodPost:
 		if !requireScope(w, r, "container:reinstall") {
+			return
+		}
+		// 主控镜像可见性强制：隐藏的镜像禁止重装（含被控节点上的容器）。
+		if !enforceMasterReinstallImageAllowed(w, r) {
 			return
 		}
 		if routeToAgent("reinstall", r.Body) {

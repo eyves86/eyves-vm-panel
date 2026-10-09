@@ -37,6 +37,7 @@ import {
   getEnabledImages,
   getNodeContainers,
   getNodeImages,
+  deleteNodeImage,
   getNodeInstallCommand,
   getNodes,
   getRegions,
@@ -588,6 +589,25 @@ export default function NodeManagement() {
       await alert(t('镜像同步失败'), e?.response?.data?.message || String(e))
     } finally {
       setSyncingImages(false)
+    }
+  }
+
+  // 删除被控节点上的镜像：一键清理该镜像的清单与已下载缓存
+  const deleteImage = async (node: ManagedNode, img: NodeCatalogImage & { kind?: string }) => {
+    const ok = await confirm(
+      t('删除镜像'),
+      `${t('确定从该被控节点删除镜像')} ${img.name || img.id}？${t('将同时清理其已下载缓存，且无法撤销。')}`
+    )
+    if (!ok) return
+    setBusyId(`${node.id}:image-delete:${img.id}`)
+    try {
+      const res = await deleteNodeImage(node.id, img.id)
+      await alert(t('删除镜像'), res.data?.message || t('已删除'))
+      await loadImages(node)
+    } catch (e: any) {
+      await alert(t('删除镜像失败'), e?.response?.data?.message || String(e))
+    } finally {
+      setBusyId('')
     }
   }
 
@@ -1956,6 +1976,18 @@ export default function NodeManagement() {
                           </div>
                           {img.sha256 && <div className="mt-0.5 truncate font-mono text-[10px] text-gray-400" title={img.sha256}>{img.sha256}</div>}
                         </div>
+                        <button
+                          onClick={() => deleteImage(detailNode, img)}
+                          disabled={busyId === `${detailNode.id}:image-delete:${img.id}`}
+                          className="shrink-0 rounded-md border border-gray-200 p-1.5 text-gray-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600 disabled:opacity-40 dark:border-gray-700 dark:hover:border-red-800 dark:hover:bg-red-950"
+                          title={t('删除镜像')}
+                        >
+                          {busyId === `${detailNode.id}:image-delete:${img.id}` ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                        </button>
                       </div>
                     ))}
                   </div>

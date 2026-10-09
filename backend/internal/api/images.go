@@ -1057,6 +1057,48 @@ func HandleImageCancel(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Cancel requested"})
 }
 
+// deleteCachedImage removes a downloaded template image cache from disk and
+// drops it from the enabled list. found=false means no such LXC template or KVM
+// image is registered on this panel. Shared by the local delete handler and the
+// agent-side delete handler so both sides behave identically.
+func deleteCachedImage(templateID string) (found bool, err error) {
+	tmpl := lxc.FindTemplate(templateID)
+	if tmpl == nil {
+		image := kvm.FindImage(templateID)
+		if image == nil {
+			return false, nil
+		}
+		if err := kvm.DeleteImage(image.ID); err != nil {
+			return true, err
+		}
+		removeImageEnabled(image.ID)
+		return true, nil
+	}
+	if tmpl.Custom {
+		if err := lxc.DeleteCustomImage(tmpl.ID); err != nil {
+			return true, err
+		}
+		removeImageEnabled(tmpl.ID)
+		return true, nil
+	}
+	cachePath, ok := officialLXCImageCachePath(tmpl.ID)
+	if !ok {
+		return true, fmt.Errorf("template cache path is not managed by EYVESCLOUD")
+	}
+	if err := os.RemoveAll(cachePath); err != nil {
+		return true, fmt.Errorf("delete image cache: %w", err)
+	}
+	removeImageEnabled(tmpl.ID)
+	return true, nil
+}
+
+// imageEnabledOnPanel reports whether the master panel currently allows this
+// template (hidden images are excluded). An empty enabled list means every
+// image is enabled by default.
+func imageEnabledOnPanel(templateID string) bool {
+	return getEnabledImageSet()[templateID]
+}
+
 // HandleImageDelete deletes a cached template image from disk.
 func HandleImageDelete(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
@@ -1079,47 +1121,15 @@ func HandleImageDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tmpl := lxc.FindTemplate(req.TemplateID)
-	if tmpl == nil {
-		if image := kvm.FindImage(req.TemplateID); image != nil {
-			if err := kvm.DeleteImage(image.ID); err != nil {
-				jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to delete image cache: " + err.Error()})
-				return
-			}
-			removeImageEnabled(image.ID)
-			jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Deleted"})
-			return
-		}
+	found, err := deleteCachedImage(req.TemplateID)
+	if !found {
 		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Template not found"})
 		return
 	}
-	if tmpl.Custom {
-		if err := lxc.DeleteCustomImage(tmpl.ID); err != nil {
-			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to delete image cache: " + err.Error()})
-			return
-		}
-		removeImageEnabled(tmpl.ID)
-		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Deleted"})
+	if err != nil {
+		jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to delete image cache: " + err.Error()})
 		return
 	}
-
-	// Remove cache directory
-	cachePath, ok := officialLXCImageCachePath(tmpl.ID)
-	if !ok {
-		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "Template cache path is not managed by EYVESCLOUD"})
-		return
-	}
-	if err := os.RemoveAll(cachePath); err != nil {
-		jsonResponse(w, http.StatusInternalServerError, APIResponse{
-			Success: false,
-			Message: fmt.Sprintf("Failed to delete image cache: %v", err),
-		})
-		return
-	}
-
-	// Remove from enabled list
-	removeImageEnabled(tmpl.ID)
-
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Deleted"})
 }
 

@@ -4,9 +4,11 @@ import { useDialog } from '../components/Dialog'
 import {
   createWebhook,
   deleteWebhook,
+  listWebhookEventTypes,
   listWebhooks,
   testWebhook,
   updateWebhook,
+  type WebhookEventType,
   type WebhookSubscription,
 } from '../services/api'
 import { copyToClipboard } from '../utils/clipboard'
@@ -15,16 +17,69 @@ import { useLanguage } from '../contexts/LanguageContext'
 interface WebhookForm {
   name: string
   url: string
-  eventTypes: string
+  eventTypes: string[]
   enabled: boolean
 }
 
-const EMPTY_FORM: WebhookForm = { name: '', url: '', eventTypes: '', enabled: true }
+const EMPTY_FORM: WebhookForm = { name: '', url: '', eventTypes: [], enabled: true }
 
-// 逗号分隔解析事件类型，留空 = 全部事件（undefined）
-function parseEventTypes(raw: string): string[] | undefined {
-  const types = raw.split(',').map((t) => t.trim()).filter(Boolean)
-  return types.length > 0 ? types : undefined
+// 事件目录分类的中文标签（后端 category 字段）。
+const CATEGORY_LABELS: Record<string, string> = {
+  container: '容器 / 虚拟机',
+  node: '被控节点',
+  security: '安全',
+}
+
+// 按分类分组的复选多选；不勾选任意项 = 订阅全部事件（由父级提示文案说明）。
+function EventTypePicker({
+  catalog,
+  value,
+  onChange,
+}: {
+  catalog: WebhookEventType[]
+  value: string[]
+  onChange: (next: string[]) => void
+}) {
+  const { t } = useLanguage()
+  const toggle = (type: string) => {
+    onChange(value.includes(type) ? value.filter((v) => v !== type) : [...value, type])
+  }
+  const groups: { category: string; items: WebhookEventType[] }[] = []
+  for (const item of catalog) {
+    let g = groups.find((x) => x.category === item.category)
+    if (!g) {
+      g = { category: item.category, items: [] }
+      groups.push(g)
+    }
+    g.items.push(item)
+  }
+  return (
+    <div className="divide-y divide-gray-100 rounded-md border border-gray-200 dark:divide-gray-800 dark:border-gray-700">
+      {groups.map((g) => (
+        <div key={g.category} className="px-3 py-2.5">
+          <div className="mb-1.5 text-xs font-medium text-gray-500 dark:text-gray-400">
+            {t(CATEGORY_LABELS[g.category] || g.category)}
+          </div>
+          <div className="space-y-1.5">
+            {g.items.map((item) => (
+              <label key={item.type} className="flex cursor-pointer items-start gap-2">
+                <input
+                  type="checkbox"
+                  checked={value.includes(item.type)}
+                  onChange={() => toggle(item.type)}
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-brand-600 focus:ring-brand-500 dark:border-gray-600"
+                />
+                <span className="min-w-0">
+                  <span className="block font-mono text-xs text-black dark:text-white">{item.type}</span>
+                  <span className="block text-xs text-gray-400">{t(item.description)}</span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function isDeliverySuccess(status: string | undefined): boolean {
@@ -53,6 +108,10 @@ export default function Webhooks() {
 
   const [testingId, setTestingId] = useState<string | null>(null)
 
+  // 事件类型目录（供多选渲染）
+  const [eventCatalog, setEventCatalog] = useState<WebhookEventType[]>([])
+  const [catalogError, setCatalogError] = useState('')
+
   const fetchWebhooks = useCallback(async () => {
     try {
       const res = await listWebhooks()
@@ -66,7 +125,19 @@ export default function Webhooks() {
     }
   }, [])
 
+  const fetchEventCatalog = useCallback(async () => {
+    try {
+      const res = await listWebhookEventTypes()
+      setEventCatalog(res.data.data || [])
+      setCatalogError('')
+    } catch (err: unknown) {
+      // 目录拉取失败必须显式提示（否则多选为空 = 假 UI）
+      setCatalogError((err as { response?: { data?: { message?: string } } }).response?.data?.message || '加载事件类型失败')
+    }
+  }, [])
+
   useEffect(() => { fetchWebhooks() }, [fetchWebhooks])
+  useEffect(() => { fetchEventCatalog() }, [fetchEventCatalog])
 
   // ---- 新建 ------------------------------------------------------------------
   const openCreate = () => {
@@ -96,7 +167,7 @@ export default function Webhooks() {
       const res = await createWebhook({
         name: createForm.name.trim(),
         url: createForm.url.trim(),
-        event_types: parseEventTypes(createForm.eventTypes),
+        event_types: createForm.eventTypes.length > 0 ? createForm.eventTypes : undefined,
         enabled: createForm.enabled,
       })
       const created = res.data.data
@@ -132,7 +203,7 @@ export default function Webhooks() {
     setEditForm({
       name: hook.name,
       url: hook.url,
-      eventTypes: (hook.event_types || []).join(', '),
+      eventTypes: hook.event_types || [],
       enabled: hook.enabled,
     })
   }
@@ -152,8 +223,8 @@ export default function Webhooks() {
       await updateWebhook(editTarget.id, {
         name: editForm.name.trim(),
         url: editForm.url.trim(),
-        // 编辑时清空 = 恢复订阅全部事件
-        event_types: parseEventTypes(editForm.eventTypes) ?? [],
+        // 全部取消勾选 = 恢复订阅全部事件（后端以空数组表示全部）
+        event_types: editForm.eventTypes,
         enabled: editForm.enabled,
       })
       setEditTarget(null)
@@ -403,14 +474,18 @@ export default function Webhooks() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("事件类型（逗号分隔，留空 = 订阅全部事件）")}</label>
-                    <input
-                      type="text"
-                      value={createForm.eventTypes}
-                      onChange={(e) => setCreateForm((f) => ({ ...f, eventTypes: e.target.value }))}
-                      placeholder="container.created, container.deleted"
-                      className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 font-mono text-sm outline-none focus:border-gray-400"
-                    />
+                    <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("订阅事件类型")}</label>
+                    {catalogError ? (
+                      <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+                        <span>{catalogError}</span>
+                        <button type="button" onClick={() => { void fetchEventCatalog() }} className="underline">{t("重试")}</button>
+                      </div>
+                    ) : eventCatalog.length === 0 ? (
+                      <div className="rounded-md border border-gray-200 px-3 py-3 text-xs text-gray-400 dark:border-gray-700">{t("加载事件类型…")}</div>
+                    ) : (
+                      <EventTypePicker catalog={eventCatalog} value={createForm.eventTypes} onChange={(next) => setCreateForm((f) => ({ ...f, eventTypes: next }))} />
+                    )}
+                    <p className="mt-1 text-xs text-gray-400">{t("不勾选任何类型 = 订阅全部事件")}</p>
                   </div>
                   <div className="flex items-center justify-between rounded-md border border-gray-200 dark:border-gray-700 px-3 py-2.5">
                     <div>
@@ -485,14 +560,18 @@ export default function Webhooks() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("事件类型（逗号分隔，清空 = 恢复订阅全部事件）")}</label>
-                <input
-                  type="text"
-                  value={editForm.eventTypes}
-                  onChange={(e) => setEditForm((f) => ({ ...f, eventTypes: e.target.value }))}
-                  placeholder="container.created, container.deleted"
-                  className="w-full rounded-md border border-gray-200 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100 px-2.5 py-1.5 font-mono text-sm outline-none focus:border-gray-400"
-                />
+                <label className="mb-1 block text-xs font-medium text-gray-500 dark:text-gray-400">{t("订阅事件类型")}</label>
+                {catalogError ? (
+                  <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-800 dark:bg-red-950 dark:text-red-300">
+                    <span>{catalogError}</span>
+                    <button type="button" onClick={() => { void fetchEventCatalog() }} className="underline">{t("重试")}</button>
+                  </div>
+                ) : eventCatalog.length === 0 ? (
+                  <div className="rounded-md border border-gray-200 px-3 py-3 text-xs text-gray-400 dark:border-gray-700">{t("加载事件类型…")}</div>
+                ) : (
+                  <EventTypePicker catalog={eventCatalog} value={editForm.eventTypes} onChange={(next) => setEditForm((f) => ({ ...f, eventTypes: next }))} />
+                )}
+                <p className="mt-1 text-xs text-gray-400">{t("全部取消勾选 = 恢复订阅全部事件")}</p>
               </div>
               <div className="flex items-center justify-between rounded-md border border-gray-200 dark:border-gray-700 px-3 py-2.5">
                 <div>

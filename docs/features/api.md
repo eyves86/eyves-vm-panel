@@ -468,9 +468,12 @@ GET /api/v1/tasks/stats
 ```text
 POST <callback_url>
 Content-Type: application/json
+X-EyvesCloud-Event: <事件类型，如 container.status_changed>
 X-EyvesCloud-Signature: sha256=<hex(HMAC-SHA256(secret, body))>
 X-EyvesCloud-Delivery: <每次投递唯一 ID，用于接收方去重>
 ```
+
+> HTTP 头字段名大小写不敏感（RFC 9110）。上表为标准写法；接收端务必按大小写不敏感方式读取（例如 Go 服务端在 HTTP/1.1 线路上可能呈现为 `X-Eyvescloud-*`，HTTP/2 按规范全部小写）。请勿以精确字符串匹配头名。
 
 ```json
 {

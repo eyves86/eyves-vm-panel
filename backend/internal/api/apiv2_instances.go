@@ -1089,6 +1089,11 @@ func v2InstanceReinstall(w http.ResponseWriter, r *http.Request) {
 		v2BadRequest(w, r, "镜像不存在："+req.TemplateID, nil)
 		return
 	}
+	// 主控镜像可见性强制：被主控隐藏的镜像禁止重装（含被控节点上的容器）。
+	if !imageEnabledOnPanel(req.TemplateID) {
+		v2Forbidden(w, r, "该镜像已被主控隐藏，禁止重装："+req.TemplateID)
+		return
+	}
 	if c.NodeID != "" {
 		node, ok := config.FindNode(c.NodeID)
 		if !ok || node.Address == "" {
@@ -1852,6 +1857,10 @@ func v2InstancesBatch(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.TrimSpace(req.TemplateID) == "" {
 			v2BadRequest(w, r, "缺少必填字段", map[string]string{"template_id": "批量重装必填"})
+			return
+		}
+		if !imageEnabledOnPanel(req.TemplateID) {
+			v2Forbidden(w, r, "该镜像已被主控隐藏，禁止重装："+req.TemplateID)
 			return
 		}
 		taskType, agentAction = TaskReinstall, "reinstall"

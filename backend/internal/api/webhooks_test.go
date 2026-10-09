@@ -201,6 +201,125 @@ func TestWebhookAgentModeGuard(t *testing.T) {
 	}
 }
 
+// TestWebhookEventCatalog 验证事件目录：非空、无重复、字段完整、覆盖全部已知常量。
+func TestWebhookEventCatalog(t *testing.T) {
+	cat := webhookEventCatalog()
+	if len(cat) == 0 {
+		t.Fatal("catalog is empty")
+	}
+	seen := map[string]bool{}
+	want := []string{
+		webhookEventTypeStatusChanged,
+		webhookEventTypeCreated,
+		webhookEventTypeDeleted,
+		webhookEventTypeReinstalled,
+		webhookEventTypeNodeRegistered,
+		webhookEventTypeNodeAdopted,
+		webhookEventTypeNodeDeleted,
+		webhookEventTypeAccessDenied,
+		webhookEventTypeLoginFailed,
+	}
+	for _, d := range cat {
+		if d.Type == "" || d.Category == "" || d.Description == "" {
+			t.Errorf("catalog entry incomplete: %+v", d)
+		}
+		if seen[d.Type] {
+			t.Errorf("duplicate event type in catalog: %s", d.Type)
+		}
+		seen[d.Type] = true
+	}
+	for _, w := range want {
+		if !seen[w] {
+			t.Errorf("catalog missing event type %s", w)
+		}
+	}
+}
+
+// TestEmitEventDispatch 验证 emitEvent 按事件类型过滤：匹配订阅收到，不匹配收不到。
+func TestEmitEventDispatch(t *testing.T) {
+	created := make(chan string, 2)
+	srvCreated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		created <- "created"
+	}))
+	defer srvCreated.Close()
+	deleted := make(chan string, 2)
+	srvDeleted := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deleted <- "deleted"
+	}))
+	defer srvDeleted.Close()
+
+	swapAppConfig(t, &config.EyvescloudConfig{
+		Webhooks: []config.WebhookSubscription{
+			{ID: "wh-created", URL: srvCreated.URL, Enabled: true, EventTypes: []string{webhookEventTypeCreated}},
+			{ID: "wh-deleted", URL: srvDeleted.URL, Enabled: true, EventTypes: []string{webhookEventTypeDeleted}},
+		},
+	})
+	t.Cleanup(func() { config.SetAgentToken("") })
+
+	emitEvent(webhookEventTypeCreated, map[string]interface{}{"container_id": 42, "name": "vm-42"})
+
+	select {
+	case <-created:
+	case <-time.After(2 * time.Second):
+		t.Fatal("subscriber for container.created was not delivered")
+	}
+	select {
+	case <-deleted:
+		t.Error("subscriber for container.deleted must not receive container.created")
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// TestEmitEventAgentGuard 验证 agent 模式（token 非空）不投递，主控模式恢复投递。
+func TestEmitEventAgentGuard(t *testing.T) {
+	hits := make(chan string, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits <- "hit"
+	}))
+	defer srv.Close()
+
+	swapAppConfig(t, &config.EyvescloudConfig{
+		Webhooks: []config.WebhookSubscription{{ID: "wh-guard2", URL: srv.URL, Enabled: true}},
+	})
+	t.Cleanup(func() { config.SetAgentToken("") })
+
+	config.SetAgentToken("agent-token")
+	emitEvent(webhookEventTypeNodeRegistered, map[string]interface{}{"node_id": "n-1"})
+	select {
+	case <-hits:
+		t.Error("agent mode should not deliver events locally")
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	config.SetAgentToken("")
+	emitEvent(webhookEventTypeNodeRegistered, map[string]interface{}{"node_id": "n-1"})
+	select {
+	case <-hits:
+	case <-time.After(2 * time.Second):
+		t.Error("master mode should deliver events")
+	}
+}
+
+// TestWebhookEventsEndpoint 验证 GET /api/webhooks/events 返回事件目录。
+func TestWebhookEventsEndpoint(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/api/webhooks/events", nil)
+	rec := httptest.NewRecorder()
+	HandleWebhookItem(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var resp struct {
+		Success bool                  `json:"success"`
+		Data    []webhookEventTypeDef `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("response not JSON: %v", err)
+	}
+	if !resp.Success || len(resp.Data) == 0 {
+		t.Errorf("unexpected response: %+v", resp)
+	}
+}
+
 // verifyTestSignature 用与生产一致的 HMAC-SHA256 算法验证签名（测试侧独立实现）。
 func verifyTestSignature(secret string, body []byte, hexSig string) bool {
 	mac := hmac.New(sha256.New, []byte(secret))

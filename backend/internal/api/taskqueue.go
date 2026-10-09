@@ -739,6 +739,10 @@ func (q *TaskQueue) runCreateTask(task *Task) {
 		return
 	}
 	config.AddAuditLog(string(task.Type), task.ContainerName, "成功", "admin")
+	emitEvent(webhookEventTypeCreated, map[string]interface{}{
+		"container_id": task.ContainerID,
+		"name":         task.ContainerName,
+	})
 	q.finishTask(task, "done", nil)
 }
 
@@ -814,6 +818,16 @@ func (q *TaskQueue) runOperationTask(task *Task) {
 		clearPolicyBlockAfterAdminRecovery(task)
 	case TaskReinstall:
 		clearPolicyBlockAfterAdminRecovery(task)
+		emitEvent(webhookEventTypeReinstalled, map[string]interface{}{
+			"container_id": task.ContainerID,
+			"name":         task.ContainerName,
+			"template_id":  task.TemplateID,
+		})
+	case TaskDelete:
+		emitEvent(webhookEventTypeDeleted, map[string]interface{}{
+			"container_id": task.ContainerID,
+			"name":         task.ContainerName,
+		})
 	}
 	q.finishTask(task, "done", nil)
 }

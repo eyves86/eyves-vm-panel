@@ -468,9 +468,12 @@ Callback contract:
 ```text
 POST <callback_url>
 Content-Type: application/json
+X-EyvesCloud-Event: <event type, e.g. container.status_changed>
 X-EyvesCloud-Signature: sha256=<hex(HMAC-SHA256(secret, body))>
 X-EyvesCloud-Delivery: <unique id per delivery, for receiver-side dedup>
 ```
+
+> HTTP header field names are case-insensitive (RFC 9110). The names above are the canonical form; receivers must match them case-insensitively (a Go server may emit `X-Eyvescloud-*` on the HTTP/1.1 wire, and HTTP/2 mandates all-lowercase). Do not match header names by exact string.
 
 ```json
 {

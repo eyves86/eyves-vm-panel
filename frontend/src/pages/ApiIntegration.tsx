@@ -81,6 +81,12 @@ interface EndpointDoc {
   note?: string
 }
 
+// scopeGroups 是创建/编辑 API Key 时的「权限范围」目录。
+// ⚠ 必须与后端实际强制的 scope 保持一致（backend/internal/api 内 requireScope、
+// v2RequireScope、hasAnyScope、scopeAllowed(ctx.Scopes, ...)、secGroupScopeForMethod
+// 等校验的字符串），少列一类就会导致该权限申请不到（API 页权限不齐全）。
+// 回归保护见 backend/internal/api/scope_catalog_test.go；核对命令：
+//   grep -rhoE '(requireScope|v2RequireScope)\(w, r, "[^"]+"' backend/internal/api
 const scopeGroups = [
   {
     title: '总览与只读',
@@ -107,19 +113,49 @@ const scopeGroups = [
       ['container:traffic', '流量管理'],
       ['container:network', '网络与端口映射'],
       ['container:password', '重置密码'],
+      ['container:account', '创建/管理账号'],
+      ['container:ssh-key', 'SSH 公钥'],
       ['ipv6:assign', '分配 IPv6'],
     ],
   },
   {
-    title: '快照与终端',
+    title: '快照、备份与终端',
     scopes: [
       ['snapshot:read', '查看快照'],
       ['snapshot:create', '创建快照'],
       ['snapshot:delete', '删除快照'],
       ['snapshot:restore', '恢复快照'],
       ['snapshot:schedule', '计划/配额'],
+      ['backup:read', '查看备份'],
+      ['backup:write', '备份/还原'],
       ['terminal:ssh', 'WebSSH 票据'],
       ['terminal:vnc', 'WebVNC 票据'],
+    ],
+  },
+  {
+    title: '网络与安全',
+    scopes: [
+      ['secgroup:read', '安全组查询（v1）'],
+      ['secgroup:write', '安全组管理（v1）'],
+      ['security:read', '安全数据'],
+      ['security:write', '安全组管理（v2）'],
+      ['security:check', '安全扫描'],
+      ['security:settings', '安全设置'],
+    ],
+  },
+  {
+    title: '节点与调度',
+    scopes: [
+      ['node:read', '节点列表'],
+      ['node:write', '节点管理'],
+    ],
+  },
+  {
+    title: '策略与用量',
+    scopes: [
+      ['policy:read', '策略查看'],
+      ['policy:write', '策略配置'],
+      ['usage:read', '用量导出'],
     ],
   },
   {
@@ -128,15 +164,13 @@ const scopeGroups = [
       ['image:download', '下载镜像'],
       ['image:delete', '删除镜像'],
       ['image:toggle', '启停镜像'],
-      ['security:read', '安全数据'],
-      ['security:check', '安全扫描'],
-      ['security:settings', '安全设置'],
       ['swap:read', 'Swap 信息'],
       ['swap:manage', 'Swap 管理'],
       ['subuser:read', '子用户列表'],
       ['subuser:create', '创建子用户'],
       ['subuser:update', '更新子用户'],
       ['audit:read', '操作日志'],
+      ['audit:settings', '审计设置'],
       ['loginlog:read', '登录日志'],
       ['apikey:read', 'Key 列表'],
       ['apikey:create', '创建 Key'],
@@ -1647,19 +1681,32 @@ function formatJSON(value: unknown) {
 }
 
 function ScopeSummary({ scopes }: { scopes: string[] }) {
+  // 默认只展示前 3 个权限（列表单元格放不下），但「+N」是可点击的：点开后
+  // 展开全部 scope，方便核对一把 Key 到底申请到了哪些权限。原实现的「+N」
+  // 是纯静态文本，无法展开，会被误认为权限只申请了一部分。
+  const [expanded, setExpanded] = useState(false)
   if (scopes.includes('*')) {
     return <span className="rounded bg-red-50 px-2 py-1 text-xs font-medium text-red-600">全权限</span>
   }
-  const visible = scopes.slice(0, 3)
+  if (scopes.length === 0) {
+    return <span className="text-xs text-gray-400">未授予任何权限</span>
+  }
+  const visible = expanded ? scopes : scopes.slice(0, 3)
   return (
-    <div className="flex max-w-xs flex-wrap gap-1">
+    <div className="flex max-w-xs flex-wrap gap-1" title={scopes.join(' ')}>
       {visible.map(scope => (
         <span key={scope} className="rounded bg-gray-100 px-1.5 py-0.5 font-mono text-[10px] text-gray-600">
           {scope}
         </span>
       ))}
-      {scopes.length > visible.length && (
-        <span className="rounded bg-gray-100 px-1.5 py-0.5 text-[10px] text-gray-500">+{scopes.length - visible.length}</span>
+      {scopes.length > 3 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(v => !v)}
+          className="rounded bg-brand-50 px-1.5 py-0.5 text-[10px] font-medium text-brand-500 hover:bg-brand-100"
+        >
+          {expanded ? '收起' : `+${scopes.length - 3}`}
+        </button>
       )}
     </div>
   )

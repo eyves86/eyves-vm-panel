@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"eyvescloud/internal/config"
+	"eyvescloud/internal/kvm"
+	"eyvescloud/internal/lxc"
 	"eyvescloud/internal/safehttp"
 )
 
@@ -133,6 +136,54 @@ func HandleAgentImageSync(w http.ResponseWriter, r *http.Request) {
 		"pulled":  pulled,
 		"failed":  failed,
 	}})
+}
+
+// HandleAgentImageDelete 移除被控上的自定义镜像：删除配置元数据与已下载缓存，
+// 使该镜像不再出现在主控「被控镜像」列表中（主控再次下发清单时可重新同步回来）。
+func HandleAgentImageDelete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})
+		return
+	}
+	var req struct {
+		TemplateID string `json:"template_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.TemplateID) == "" {
+		jsonResponse(w, http.StatusBadRequest, APIResponse{Success: false, Message: "template_id required"})
+		return
+	}
+	id := strings.TrimSpace(req.TemplateID)
+	if isImageDownloadActive(id) {
+		jsonResponse(w, http.StatusConflict, APIResponse{Success: false, Message: "Image is downloading; cancel it before deleting"})
+		return
+	}
+
+	removed := false
+	if img := config.FindCustomLXCImage(id); img != nil {
+		_ = lxc.DeleteCustomImage(id)             // /var/cache/lxc/download/custom/<id>
+		_ = os.Remove(customLXCCachePath(*img))   // 主控同步拉取的统一缓存
+		_ = os.Remove(customLXCCachePath(*img) + ".tmp")
+		if _, err := config.RemoveCustomLXCImage(id); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to remove image: " + err.Error()})
+			return
+		}
+		removed = true
+	}
+	if img := config.FindCustomKVMImage(id); img != nil {
+		_ = kvm.DeleteImage(id)
+		_ = os.Remove(customKVMCachePath(*img))
+		_ = os.Remove(customKVMCachePath(*img) + ".tmp")
+		if _, err := config.RemoveCustomKVMImage(id); err != nil {
+			jsonResponse(w, http.StatusInternalServerError, APIResponse{Success: false, Message: "Failed to remove image: " + err.Error()})
+			return
+		}
+		removed = true
+	}
+	if !removed {
+		jsonResponse(w, http.StatusNotFound, APIResponse{Success: false, Message: "Image not found"})
+		return
+	}
+	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Deleted"})
 }
 
 // reconcileImageCatalog 纯函数：计算将 incoming 清单应用到本地后「新增/更新」的镜像数量。

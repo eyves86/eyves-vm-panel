@@ -225,6 +225,16 @@ func sanitizeAuditDetail(detail string) string {
 func auditRequest(r *http.Request, action, target, detail string, success bool, errMsg string) {
 	detail = sanitizeAuditDetail(detail)
 	config.AddAuditLogFull(action, target, detail, requestActor(r), clientIP(r), r.UserAgent(), success, errMsg)
+	// 安全事件旁路：RBAC 拒绝在审计收口处统一转出站事件，三个 rbac.denied 调用点
+	// （adminrbac / admins / apiv2_core）及各 v1 调用点无需各自挂 emit。
+	if action == "rbac.denied" {
+		emitEvent(webhookEventTypeAccessDenied, map[string]interface{}{
+			"path":   r.URL.Path,
+			"method": r.Method,
+			"target": target,
+			"detail": detail,
+		})
+	}
 }
 
 func jsonResponse(w http.ResponseWriter, status int, resp APIResponse) {

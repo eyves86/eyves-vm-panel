@@ -189,6 +189,9 @@ export default function ImageManagement() {
             管理 LXC / KVM 系统镜像，下载后的镜像才能用于创建容器/虚拟机。
             已下载 {downloadedCount}/{images.length}
           </p>
+          <p className="text-xs text-gray-400 mt-1">
+            被隐藏（未启用）的镜像不会出现在开通与重装的镜像选择列表中，也不会被下发到被控节点。
+          </p>
         </div>
         <button
           onClick={() => { fetchImages(); fetchStorage() }}

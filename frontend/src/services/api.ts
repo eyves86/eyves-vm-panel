@@ -1467,6 +1467,10 @@ export const getNodeImages = (nodeId: string) =>
 export const syncNodeImages = (nodeId: string) =>
   api.post<APIResponse<{ added?: number; updated?: number; pulled?: string[]; failed?: string[] }>>(`/nodes/${nodeId}/images/sync`, {}, { timeout: 600000 })
 
+// 删除被控节点上的镜像（移除该镜像的清单与已下载缓存）
+export const deleteNodeImage = (nodeId: string, templateId: string) =>
+  api.post<APIResponse>(`/nodes/${nodeId}/images/delete`, { template_id: templateId })
+
 export const nodeColdBackup = (nodeId: string) =>
   api.post<APIResponse<{ backed_up?: number; failed?: string[]; total_bytes?: number; container_cnt?: number }>>(`/nodes/${nodeId}/backup`, {}, { timeout: 600000 })
 
@@ -2400,6 +2404,16 @@ export interface WebhookSubscription {
   auto_disabled_reason?: string
   created_at: string
 }
+
+// 事件类型目录（后端 /api/webhooks/events），供订阅表单渲染多选。
+export interface WebhookEventType {
+  type: string
+  category: string
+  description: string
+}
+
+export const listWebhookEventTypes = () =>
+  api.get<APIResponse<WebhookEventType[]>>('/webhooks/events')
 
 export const listWebhooks = () =>
   api.get<APIResponse<WebhookSubscription[]>>('/webhooks')

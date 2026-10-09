@@ -140,6 +140,13 @@ func HandleNodeSubRoutes(w http.ResponseWriter, r *http.Request) {
 		})(w, r)
 	case rest == "images/sync" && r.Method == http.MethodPost:
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) { handleNodeImageSyncProxy(w, r, nodeID) })(w, r)
+	case rest == "images/delete" && r.Method == http.MethodPost:
+		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
+			if !requireScope(w, r, "image:delete") {
+				return
+			}
+			handleNodeImageProxy(w, r, nodeID, http.MethodPost, "/api/agent/images/delete", r.Body)
+		})(w, r)
 	case rest == "backup" && r.Method == http.MethodPost:
 		// 节点级冷备份：主控触发被控对全部容器做完整备份（重装/重建前保全）。
 		AdminMiddleware(func(w http.ResponseWriter, r *http.Request) {
@@ -304,6 +311,10 @@ func handleNodeRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRequest(r, "node.register", name, "节点注册成功（install_key 已消费并清空）", true, "")
+	emitEvent(webhookEventTypeNodeRegistered, map[string]interface{}{
+		"node_id": node.ID,
+		"name":    name,
+	})
 	jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: map[string]string{
 		"node_id": node.ID,
 		"token":   node.Token,
@@ -501,6 +512,11 @@ func handleNodeAdopt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	auditRequest(r, "node.adopt", node.Name, "对接已有面板 "+panelURL+"（内网豁免: "+boolLabel(req.AllowPrivate)+"）", true, "")
+	emitEvent(webhookEventTypeNodeAdopted, map[string]interface{}{
+		"node_id": node.ID,
+		"name":    node.Name,
+		"url":     panelURL,
+	})
 
 	// 主控对外地址（优先面板绑定域名）；本主控走明文 http 时告知被控豁免（与安装命令一致）。
 	controllerURL := externalBaseURL(r)
@@ -691,6 +707,11 @@ func handleNodeItem(w http.ResponseWriter, r *http.Request, nodeID string) {
 		// 级联移除该节点的容器记录，避免留下悬空 node_id 的幽灵实例（见 config.RemoveNode）。
 		auditRequest(r, "node.delete", node.Name,
 			fmt.Sprintf("删除被控节点（一并移除 %d 个实例记录）", conts), true, "")
+		emitEvent(webhookEventTypeNodeDeleted, map[string]interface{}{
+			"node_id":            nodeID,
+			"name":               node.Name,
+			"removed_containers": conts,
+		})
 		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Message: "Node deleted"})
 	default:
 		jsonResponse(w, http.StatusMethodNotAllowed, APIResponse{Success: false, Message: "Method not allowed"})

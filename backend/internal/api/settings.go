@@ -104,6 +104,14 @@ func HandleTaskQueueSettings(w http.ResponseWriter, r *http.Request) {
 // RecordLoginLog adds a login attempt to the log (persisted to config)
 func RecordLoginLog(username, ip, userAgent string, success bool) {
 	config.AddLoginLog(username, ip, userAgent, success)
+	// 登录失败在记录收口处统一转出站事件（v1/v2 各失败点均经此函数）。
+	if !success {
+		emitEvent(webhookEventTypeLoginFailed, map[string]interface{}{
+			"username":   username,
+			"ip":         ip,
+			"user_agent": userAgent,
+		})
+	}
 
 	log := LoginLog{
 		Time:      time.Now().UTC().Format("2006-01-02 15:04:05 UTC"),

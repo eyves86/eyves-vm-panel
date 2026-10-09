@@ -29,11 +29,43 @@ import (
 // 可靠性：连续失败 10 次自动停用并记录原因，防止向故障端点无限重试造成雪崩。
 
 const (
-	webhookEventTypeStatusChanged = "container.status_changed"
-	webhookAutoDisableThreshold   = 10
-	webhookMaxRetries             = 3
-	webhookHTTPTimeout            = 10 * time.Second
+	webhookEventTypeStatusChanged  = "container.status_changed"
+	webhookEventTypeCreated        = "container.created"
+	webhookEventTypeDeleted        = "container.deleted"
+	webhookEventTypeReinstalled    = "container.reinstalled"
+	webhookEventTypeNodeRegistered = "node.registered"
+	webhookEventTypeNodeAdopted    = "node.adopted"
+	webhookEventTypeNodeDeleted    = "node.deleted"
+	webhookEventTypeAccessDenied   = "security.access_denied"
+	webhookEventTypeLoginFailed    = "security.login_failed"
+
+	webhookAutoDisableThreshold = 10
+	webhookMaxRetries           = 3
+	webhookHTTPTimeout          = 10 * time.Second
 )
+
+// webhookEventTypeDef 是事件类型的目录条目，供前端多选与集成方文档参考。
+type webhookEventTypeDef struct {
+	Type        string `json:"type"`
+	Category    string `json:"category"`
+	Description string `json:"description"`
+}
+
+// webhookEventCatalog 是可订阅事件的全集（前端 GET /api/webhooks/events 拉取）。
+// 新增事件类型时：在此登记 + 在权威触发点调用 emitEvent。
+func webhookEventCatalog() []webhookEventTypeDef {
+	return []webhookEventTypeDef{
+		{webhookEventTypeStatusChanged, "container", "容器/虚拟机运行状态变更（启动/停止/重启）"},
+		{webhookEventTypeCreated, "container", "容器/虚拟机创建成功"},
+		{webhookEventTypeDeleted, "container", "容器/虚拟机删除成功"},
+		{webhookEventTypeReinstalled, "container", "容器/虚拟机重装成功"},
+		{webhookEventTypeNodeRegistered, "node", "被控节点注册成功"},
+		{webhookEventTypeNodeAdopted, "node", "被控节点对接成功"},
+		{webhookEventTypeNodeDeleted, "node", "被控节点删除"},
+		{webhookEventTypeAccessDenied, "security", "管理员角色权限不足被拒（RBAC）"},
+		{webhookEventTypeLoginFailed, "security", "登录失败"},
+	}
+}
 
 // HandleWebhooks 处理 /api/webhooks（列表 + 创建）。仅管理员。
 func HandleWebhooks(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +87,11 @@ func HandleWebhookItem(w http.ResponseWriter, r *http.Request) {
 	}
 	if parts := strings.SplitN(rest, "/", 2); len(parts) == 2 && parts[1] == "test" {
 		testWebhookDelivery(w, r, parts[0])
+		return
+	}
+	// 事件目录：/api/webhooks/events（id 形如 wh-<hex>，不会与之冲突）。
+	if rest == "events" {
+		jsonResponse(w, http.StatusOK, APIResponse{Success: true, Data: webhookEventCatalog()})
 		return
 	}
 	if rest == "" {
@@ -479,24 +516,30 @@ type containerStatusChange struct {
 	new  string
 }
 
-// webhookStatusHook 把容器状态变更接入事件分发。
-func webhookStatusHook(containerID int, name, oldStatus, newStatus string) {
-	// Agent 模式守卫：agent 也运行 server.Run() 注册本钩子，但其本地
-	// UpdateContainerStatus 与主控心跳同步（syncAgentContainers 锁外触发）
-	// 会对同一事件双重投递。跨节点容器事件以主控心跳同步为唯一投递路径，
-	// agent 侧（token 非空）一律跳过。
+// emitEvent 把一次业务事件接入出站分发（异步，不阻塞调用方）。
+//
+// Agent 模式守卫：agent 也运行 server.Run()，但其本地容器状态变更与主控心跳
+// 同步会对同一事件双重投递，故 agent 侧（token 非空）一律跳过——跨节点容器事件
+// 以主控心跳同步为唯一投递路径。节点/安全类事件只发生在面板侧，agent 上亦无
+// 订阅配置，跳过无损失。
+func emitEvent(eventType string, data map[string]interface{}) {
 	if config.AgentToken() != "" {
 		return
 	}
 	webhookDispatch(webhookEvent{
-		EventType: webhookEventTypeStatusChanged,
+		EventType: eventType,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Data: map[string]interface{}{
-			"container_id": containerID,
-			"name":         name,
-			"old_status":   oldStatus,
-			"new_status":   newStatus,
-		},
+		Data:      data,
+	})
+}
+
+// webhookStatusHook 把容器状态变更接入事件分发。
+func webhookStatusHook(containerID int, name, oldStatus, newStatus string) {
+	emitEvent(webhookEventTypeStatusChanged, map[string]interface{}{
+		"container_id": containerID,
+		"name":         name,
+		"old_status":   oldStatus,
+		"new_status":   newStatus,
 	})
 }
 
