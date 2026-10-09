@@ -211,16 +211,19 @@ jobs:
         run: |
           set -e
           API="https://codeberg.org/api/v1/repos/fenhaolost/eyves-vm-panel"
-          # 创建（或复用）release，然后逐个上传产物。带 target_commitish 以便
-          # tag 尚未推到 Codeberg 时由 API 直接建 tag，省掉额外的 push 步骤。
-          payload="$(printf '{"tag_name":"%s","name":"%s","target_commitish":"%s","draft":false,"prerelease":false}' "$TAG" "$TAG" "$GITHUB_SHA")"
+          # 创建（或复用）release，然后逐个上传产物。**不要**传 target_commitish：
+          # $GITHUB_SHA 是 GitHub 侧提交，Codeberg 镜像里根本没有（镜像通常落后），
+          # 传过去会让 Forgejo 建 tag 时 git.IsErrNotExist → 404「target not found」。
+          # 省略后由 Forgejo 用默认分支兜底建 tag，产物照样能上传。
+          payload="$(printf '{"tag_name":"%s","name":"%s","draft":false,"prerelease":false}' "$TAG" "$TAG")"
           curl -fsSL -X POST "$API/releases" \
             -H "Authorization: token $CODEBERG_TOKEN" \
             -H "Content-Type: application/json" \
             -d "$payload" >/dev/null || true
           # 取首个 "id"（release id）。不能用贪婪 sed 's/.*"id":.../'：单行 JSON 里
-          # 末尾还有 author.id，会取错。
-          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | grep -oE '"id"[[:space:]]*:[[:space:]]*[0-9]+' | head -n 1 | grep -oE '[0-9]+')"
+          # 末尾还有 author.id，会取错。尾随 `|| true` 必不可少：set -e 下命令替换
+          # 失败会让脚本在下面的守卫之前就退出，把真正的报错信息吞掉。
+          id="$(curl -fsSL "$API/releases/tags/$TAG" -H "Authorization: token $CODEBERG_TOKEN" | grep -oE '"id"[[:space:]]*:[[:space:]]*[0-9]+' | head -n 1 | grep -oE '[0-9]+' || true)"
           [ -n "$id" ] || { echo "无法获取 Codeberg release id"; exit 1; }
           for f in $(find artifacts -type f \( -name '*.tar.gz' -o -name '*.sha256' -o -name 'SHA256SUMS' -o -name 'SHA256SUMS.minisig' -o -name 'SHA256SUMS.minisign' \)); do
             echo "upload $f"
