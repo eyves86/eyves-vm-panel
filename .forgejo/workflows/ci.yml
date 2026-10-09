@@ -36,6 +36,24 @@ jobs:
   backend:
     name: 后端（vet / test -race / build）
     runs-on: ubuntu-latest
+    # v3 起配置库仅 Postgres（已移除 SQLite 后端），测试侧不再回落内存/SQLite，
+    # 因此必须提供一个真实 PostgreSQL：未设置 EYVESCLOUD_PG_TEST_DSN 时相关用例会跳过。
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: eyves
+          POSTGRES_PASSWORD: eyves
+          POSTGRES_DB: eyves_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U eyves"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      EYVESCLOUD_PG_TEST_DSN: postgres://eyves:eyves@localhost:5432/eyves_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
 

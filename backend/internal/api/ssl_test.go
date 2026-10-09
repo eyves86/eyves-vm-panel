@@ -20,6 +20,7 @@ import (
 // 不隔离会让测试写到真实的数据目录（生产 $HOME/.eyvescloud）。
 func withSSLTestConfig(t *testing.T) *config.EyvescloudConfig {
 	t.Helper()
+	requirePGTest(t)
 	dir := t.TempDir()
 	previous := config.GetTestConfig()
 	config.SetConfigPath(filepath.Join(dir, "config.json"))

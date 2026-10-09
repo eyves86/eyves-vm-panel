@@ -562,7 +562,7 @@ func HandleBackupRestore(w http.ResponseWriter, r *http.Request) {
 	// 明文；旧版备份为明文，原样通过。无法解密的字段（换过 at-rest 密钥）会被
 	// 置空并回报字段名，避免把密文当明文写回配置。
 	undecryptable := config.DecryptSecretsAfterImport(&snap.Config)
-	// 还原：以备份内容整体替换当前配置并持久化到 SQLite。
+	// 还原：以备份内容整体替换当前配置并持久化到配置库。
 	errRestore := config.MutateGlobal(func(cfg *config.EyvescloudConfig) {
 		*cfg = snap.Config
 	})

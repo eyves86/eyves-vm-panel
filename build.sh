@@ -51,7 +51,7 @@ echo ""
 echo "[2/3] Building Go backend..."
 cd "$BACKEND_DIR"
 
-# 不跑 go mod tidy：测试期依赖（modernc.org/cc 等）会污染 go.mod 并要求联网；
+# 不跑 go mod tidy：会联网并可能改动 go.mod；
 # 构建只需 go.sum 里已有的依赖（离线可构建）。
 go mod download >/dev/null 2>&1 || true
 

@@ -25,7 +25,7 @@ Each audit log entry contains:
 - Policy, storage, routing, snapshot, and other management operations.
 - Sensitive operations such as administrator password changes.
 
-The system keeps at most the most recent 500 audit log entries, and persists them to SQLite so they survive restarts.
+The system keeps at most the most recent 500 audit log entries, and persists them to PostgreSQL so they survive restarts.
 
 ## Login Logs
 

@@ -7,7 +7,7 @@ EyvesCloud 由 Go 后端、React 前端和宿主机虚拟化能力组成，并�
 后端入口在 `backend/main.go`，HTTP 服务路由集中在 `backend/internal/server/server.go`。主要模块：
 
 - `internal/api`：Web 面板和 `/api/v1` 的 HTTP 接口（含主控节点 API 与被控 Agent API）。
-- `internal/config`：配置和 SQLite 存储。
+- `internal/config`：配置与 PostgreSQL 存储（配置库 / 遥测库 / Cell 分库）。
 - `internal/agent`：被控节点 Agent 模式（注册、心跳、本地面板）。
 - `internal/lxc`：LXC 容器管理。
 - `internal/kvm`：KVM/libvirt 虚拟机管理。
@@ -85,4 +85,4 @@ eyvescloud server                    eyvescloud agent --controller=... --install
 
 ## 数据存储
 
-配置与业务数据存储在 SQLite（`config.db`）。容器、子用户、API Key、审计日志、策略、节点等均持久化到 SQLite，重启不丢失。被控节点注册信息（`agent.json`）保存在被控自身的配置目录。
+配置与业务数据存储在 PostgreSQL（配置库由 `EYVESCLOUD_PG_DSN` 指定，安装器落盘到 `/etc/eyvescloud/store.env`），v3 起不再使用 SQLite。容器、子用户、API Key、审计日志、策略、节点等均持久化到 PostgreSQL，重启不丢失；指标采样等遥测数据也存于 PostgreSQL，大规模场景可通过 `EYVESCLOUD_CELL_DSNS` 做 Cell 分库。被控节点注册信息（`agent.json`）保存在被控自身的配置目录。

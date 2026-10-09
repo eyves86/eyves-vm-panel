@@ -14,8 +14,8 @@
 //
 // 租约锁：node_leases 表（node_id, token, expires_at）。
 // 心跳续约时校验 token 一致；扫描器对超时租约标记 offline。
-// 后台扫描器单实例：通过 UPDATE ... RETURNING 抢占式 SELECT（SQLite
-// IMMEDIATE 事务）实现单控制面约束；多个控制面同时跑也只产生一次判定。
+// 后台扫描器单实例：配置库事务内 UPDATE ... RETURNING 抢占式取行实现单控制面
+// 约束；多个控制面同时跑也只产生一次判定（行锁保证只有一个扫描器能改到该行）。
 //
 // events 表（state_changed）由 P7-1 接管；本包 EmitEvent() 提供占位，
 // 写入失败不阻塞主流程。
@@ -95,7 +95,7 @@ func Transition(from, to Status) error {
 	return nil
 }
 
-// Lease 是租约记录（与 SQLite node_leases 表对应）。
+// Lease 是租约记录（与配置库 node_leases 表对应）。
 type Lease struct {
 	NodeID    string
 	Token     string
@@ -147,19 +147,18 @@ type LeaseSweeper interface {
 	SweepExpired(now time.Time) ([]Lease, error)
 }
 
-// ReconcileLock 实现 LeaseSweeper 的 SQLite 抢占版。
+// ReconcileLock 实现 LeaseSweeper 的 Postgres 抢占版。
 //
 // 扫描策略（与 P1-1 验收条目"双控制面并发扫描只触发一次判定"对齐）：
 //
-//   BEGIN IMMEDIATE;
+//   BEGIN;
 //     UPDATE node_leases SET in_progress = 1
 //       WHERE expires_at < ? AND in_progress = 0
 //       RETURNING node_id, token, expires_at;
 //   COMMIT;
 //
-// IMMEDIATE 锁保证并发扫描器只有一个能写入；其它扫描器拿不到行就退出。
-// 由于 row 已 in_progress=1，下次扫描跳过；处理完成后再 UPDATE in_progress=0
-// （由 MarkProcessed 调用）。
+// 配置库事务 + 行锁保证并发扫描器只有一个能改到该行；其它扫描器改不到就退出。
+// 由于 row 已 in_progress=1，下次扫描跳过；处理完成后删除该行（MarkProcessed）。
 type ReconcileLock struct {
 	DB *sql.DB
 }

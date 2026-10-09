@@ -9,7 +9,7 @@ import (
 //
 // 背景：容器 SSH 口令、子用户的登录口令与分享访问码都必须能被面板回显
 // （创建/轮换时一次性展示、分享链接需要访问码），因此无法单向哈希。此前它们
-// 以明文写入 SQLite，一旦数据库文件或配置备份泄露即为可直接使用的登录凭据。
+// 以明文写入配置库，一旦数据库文件或配置备份泄露即为可直接使用的登录凭据。
 //
 // 处理方式：复用节点 Token 的 AES-256-GCM 静态加密实现（密钥来源见
 // nodetoken_crypto.go：EYVESCLOUD_NODE_TOKEN_KEY 环境变量，或数据目录下
@@ -71,7 +71,7 @@ func DecryptSecretSlice(values []string) []string {
 //
 // 有些配置在 app_meta 里以「一个 JSON 值」落库，但其中只有个别字段是凭据
 // （Webhooks[].secret、SMTPSettings.password、NotificationConfig.smtp_password），
-// 其余字段是普通设置。若整值按明文落库，凭据就明文躺在 SQLite 里——DB 或配置
+// 其余字段是普通设置。若整值按明文落库，凭据就明文躺在配置库里——DB 或配置
 // 备份泄露即等于交出 SMTP 账号 / 可伪造的 webhook 回调。
 //
 // 处理方式：指纹仍取**明文**结构（密文含随机 nonce，按密文取指纹会「每次都变了」

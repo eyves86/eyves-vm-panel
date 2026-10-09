@@ -26,6 +26,7 @@ import (
 )
 
 func TestCreateRecipeDoesNotDeadlockAndPersists(t *testing.T) {
+	requirePGTest(t)
 	dir := t.TempDir()
 	config.SetConfigPath(dir + "/config.json")
 	t.Setenv("EYVESCLOUD_DATA_DIR", dir)

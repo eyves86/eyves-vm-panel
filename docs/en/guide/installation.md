@@ -7,6 +7,7 @@ EyvesCloud provides a one-line install script. By default, the script installs t
 - Linux x86_64/amd64 or ARM64/aarch64 host.
 - Root privileges.
 - systemd.
+- PostgreSQL 13+ (required in v3 for the config store and telemetry): on a fresh host the installer provisions and initializes a local instance automatically; set `EYVESCLOUD_PG_DSN` to use an external database instead.
 - Network access to GitHub Release downloads.
 - LXC runtime support on the host if you want to use LXC.
 - Virtualization enabled with libvirt/QEMU installed if you want to use KVM.

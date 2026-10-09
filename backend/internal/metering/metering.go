@@ -99,7 +99,7 @@ type Invoice struct {
 	SourceHash string `json:"source_hash"`
 }
 
-// Store 用量/账单内存仓库（生产环境接 SQLite）。
+// Store 用量/账单内存仓库（生产环境接配置库）。
 //
 // 单测使用 NewMemoryStore；外部包可实现接口接持久化层。
 type Store interface {

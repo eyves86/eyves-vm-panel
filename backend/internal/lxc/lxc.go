@@ -1540,7 +1540,7 @@ func (m *Manager) applyLoopbackDiskLimit(lxcName string, diskGB float64) error {
 // into the selected storage pool, creating a symlink at the original LXC path.
 //
 // P0-1 卷流程：当池后端为 dir 时，目标目录不再以 lxcName 命名，而是改为
-// P0-1 卷目录 <pool>/lxc/vol-<uuid>，并在 SQLite volumes 表中记录卷生命周期
+// P0-1 卷目录 <pool>/lxc/vol-<uuid>，并在配置库 volumes 表中记录卷生命周期
 // （creating → attached），返回 rootVolumeID 供容器记录 RootVolumeID。
 // 非 dir 后端（P0-2+ 之前的未知值已被归一化为 dir，此处仅为防御）沿用旧的
 // lxcName 直连路径模式。卷目录命名刻意与旧容器目录同区（<pool>/lxc/*），
@@ -3078,7 +3078,7 @@ func (m *Manager) DestroyContainer(id int) error {
 		return fmt.Errorf("container destroyed but config entry still exists: %d", id)
 	}
 	// P0-1：容器删除后同步清理其卷记录（根卷+数据卷）。物理卷目录已由上方
-	// cleanupContainerStorage 经符号链接白名单删除，此处只回收 SQLite 记录。
+	// cleanupContainerStorage 经符号链接白名单删除，此处只回收配置库记录。
 	// 删卷属破坏性操作，逐卷写审计日志。
 	for _, removedVolumeID := range config.DeleteContainerVolumes(id) {
 		config.AddAuditLog("volume_delete", removedVolumeID,

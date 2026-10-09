@@ -311,10 +311,8 @@ func TestDeferredFlushFailureMergesBack(t *testing.T) {
 
 	// 注入失败：让容器行的写入中止。批处理走 newExactDirtySet，目录类集合被声明为
 	// 未改动（零扫描），故注入点必须落在容器表上才能触发失败。
-	if _, err := db.Exec(`CREATE TRIGGER fail_container_insert BEFORE INSERT ON containers BEGIN SELECT RAISE(ABORT, 'inject'); END`); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Exec(`DROP TRIGGER IF EXISTS fail_container_insert`) })
+	installFailTrigger(t, "fail_container_insert", "containers", "INSERT")
+	t.Cleanup(func() { dropFailTrigger(t, "fail_container_insert", "containers") })
 
 	AppConfigMu.Lock()
 	AppConfig.Containers[0].Status = "stopped"
@@ -334,9 +332,7 @@ func TestDeferredFlushFailureMergesBack(t *testing.T) {
 	}
 
 	// 移除注入后再次提交必须补上。
-	if _, err := db.Exec(`DROP TRIGGER fail_container_insert`); err != nil {
-		t.Fatal(err)
-	}
+	dropFailTrigger(t, "fail_container_insert", "containers")
 	if err := FlushDeferredSaves(); err != nil {
 		t.Fatal(err)
 	}

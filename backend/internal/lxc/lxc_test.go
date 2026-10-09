@@ -563,7 +563,7 @@ func TestAppendMissingSeccompRulesAddsFutexMitigationOnce(t *testing.T) {
 	}
 }
 
-// setupVolumeTestConfig 把 config 数据目录与 SQLite 重定向到临时目录并
+// setupVolumeTestConfig 把 config 数据目录与配置库重定向到临时目录并
 // 初始化配置，供 P0-1 卷链路测试使用（lxc 包测试与 config 包测试分属不同
 // 进程，互不影响；包内本测试独占全局 config，无需额外串行化）。
 func setupVolumeTestConfig(t *testing.T) {

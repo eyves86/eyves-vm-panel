@@ -213,7 +213,7 @@ systemctl daemon-reload && systemctl enable --now eyvescloud
 - 静态 IP 与 MAC 绑定，配合 ARP 防护保障公网地址安全。
 
 ### 12 多维统计 · 趋势分析
-- 指标采样器每 30 秒采集运行中容器的 CPU / 内存 / 网络 / 磁盘 IO，内存保留近期数据并持久化到 SQLite。
+- 指标采样器每 30 秒采集运行中容器的 CPU / 内存 / 网络 / 磁盘 IO，内存保留近期数据并持久化到 PostgreSQL。
 - 容器详情页提供历史趋势图表（`/api/containers/{id}/history`），面板重启后历史不丢失。
 - 宿主机页面提供主机资源总览与历史趋势（`/api/host-history`）。
 
@@ -221,21 +221,22 @@ systemctl daemon-reload && systemctl enable --now eyvescloud
 
 ## 七、数据存储与备份
 
-面板数据保存在 SQLite 数据库（默认 `/root/.eyvescloud/config.db`），包含：
+v3 起面板数据全部保存在 PostgreSQL（配置库由 `EYVESCLOUD_PG_DSN` 指定，安装器会把它落盘到 0600 的 `/etc/eyvescloud/store.env`），包含：
 - 容器、子用户、API Key、操作日志、登录日志、任务队列
 - 安全设置、通知渠道、面板访问策略、存储池
 - 策略规则与触发历史
-- 容器指标采样
+- 容器指标采样与遥测数据
 
-备份（建议配合 cron 每日执行）：
+备份（建议配合 cron 每日执行，用 `pg_dump`）：
 
 ```bash
-# 停服备份最安全；也可在线复制（WAL 模式下建议先执行 checkpoint）
-sqlite3 /root/.eyvescloud/config.db "PRAGMA wal_checkpoint(TRUNCATE);"
-cp /root/.eyvescloud/config.db /root/eyvescloud-backups/config.$(date +%F).db
+DSN=$(grep '^EYVESCLOUD_PG_DSN=' /etc/eyvescloud/store.env | cut -d= -f2-)
+pg_dump "$DSN" -Fc -f /root/eyvescloud-backups/config.$(date +%F).dump
 ```
 
-恢复：停止 eyvescloud 服务，将备份文件覆盖到 `/root/.eyvescloud/config.db`，然后启动服务。
+恢复：停止 eyvescloud 服务，`pg_restore -d "$DSN" --clean /path/to/config.dump` 恢复到同一数据库，然后启动服务。
+
+> 说明：v3 起配置库与遥测库均为 PostgreSQL，不再使用 SQLite；旧版遗留的 `/root/.eyvescloud/config.db` 不会被新版本读取。
 
 ---
 
@@ -276,7 +277,7 @@ eyvescloud --help
 ## 十、常见问题
 
 **Q1：首次启动没有看到初始密码？**
-说明服务器上已存在 `/root/.eyvescloud/config.db`（旧数据）。管理员密码使用 bcrypt 存储，无法反查；请在面板内「修改密码」，或备份后删除数据库重新初始化。
+说明配置库中已存在初始化过的管理员（旧数据）。管理员密码使用 bcrypt 存储，无法反查；请在面板内「修改密码」，或备份后清空数据库重新初始化。
 
 **Q2：KVM 创建失败？**
 检查 `ls /dev/kvm` 是否存在（VPS 需开启嵌套虚拟化）、`systemctl status libvirtd` 是否正常、`cloud-localds` 是否安装（cloud-image-utils）。
@@ -294,7 +295,7 @@ eyvescloud --help
 说明有 IP-MAC 冲突或欺骗。请检查该公网 IP 是否被重复分配（「路由管理 → 公网 IPv4 池」），确认容器绑定的 MAC 与网关邻居表一致。
 
 **Q7：指标历史不显示？**
-确认容器处于运行状态（仅运行中容器采样）；面板默认保留近 24 小时趋势并可回溯 SQLite 中的持久化历史。
+确认容器处于运行状态（仅运行中容器采样）；面板默认保留近 24 小时趋势并可回溯 PostgreSQL 中的持久化历史。
 
 ---
 

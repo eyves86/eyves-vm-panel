@@ -14,6 +14,7 @@ import (
 
 func TestV2DeleteRecyclesByDefault(t *testing.T) {
 	// MutateContainerByID 持久化需要 DB（与 EIP 绑定测试同款初始化，先 DB 后换配置）。
+	requirePGTest(t)
 	dir := t.TempDir()
 	config.SetConfigPath(dir + "/config.json")
 	t.Setenv("EYVESCLOUD_DATA_DIR", dir)
@@ -124,9 +125,10 @@ func TestV2BatchExtendedActions(t *testing.T) {
 }
 
 func TestV2IPPoolAttachDetach(t *testing.T) {
-	// MutateContainerByID 持久化需要 DB：用容器端点测试同款初始化（临时 sqlite）。
+	// MutateContainerByID 持久化需要 DB：用容器端点测试同款初始化（临时配置库）。
 	// 顺序：先 InitConfig 再 withV2TestConfig（后者整体替换 AppConfig 并签发
 	// 与其 JWTSecret 匹配的 token），否则 token 校验 401。
+	requirePGTest(t)
 	dir := t.TempDir()
 	config.SetConfigPath(dir + "/config.json")
 	t.Setenv("EYVESCLOUD_DATA_DIR", dir)

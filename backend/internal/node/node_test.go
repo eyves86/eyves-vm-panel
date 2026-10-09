@@ -5,40 +5,39 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"eyvescloud/internal/config"
-	_ "modernc.org/sqlite"
 )
 
+// pgTestDSNEnv 与 config 包的测试钩子同名（环境变量是跨包契约，只能按字面约定）。
+const pgTestDSNEnv = "EYVESCLOUD_PG_TEST_DSN"
+
+// newTestDB 返回配置库自身的连接句柄。节点租约表 node_leases 由 config 建表并持有，
+// 生产里心跳/扫描器拿到的也是这条连接，故测试直接复用，不再另起一个 SQLite 文件。
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "test.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	db.SetMaxOpenConns(1)
-	t.Cleanup(func() { db.Close() })
-	if _, err := db.Exec(`PRAGMA journal_mode=WAL`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(EnsureSchemaSQL); err != nil {
-		t.Fatal(err)
+	db := config.TestDB()
+	if db == nil {
+		t.Fatal("配置库未初始化：config.TestDB() 返回 nil（需先 setupConfig）")
 	}
 	return db
 }
 
 func setupConfig(t *testing.T) {
 	t.Helper()
+	if strings.TrimSpace(os.Getenv(pgTestDSNEnv)) == "" {
+		t.Skip("未设置 " + pgTestDSNEnv + "，跳过需要配置库的用例（v3 起配置库仅 Postgres）")
+	}
 	dir := t.TempDir()
 	previous := config.AppConfig
 	config.SetConfigPath(filepath.Join(dir, "config.json"))
 	os.Setenv("EYVESCLOUD_DATA_DIR", dir)
 	t.Cleanup(func() {
+		config.CloseConfigDB()
 		if previous == nil {
 			config.AppConfig = nil
 		} else {
@@ -316,6 +315,7 @@ func (f sinkFunc) Emit(e EventStateChanged) error { return f(e) }
 // ---- EnsureSchema 幂等 ----
 
 func TestEnsureSchemaIdempotent(t *testing.T) {
+	setupConfig(t)
 	db := newTestDB(t)
 	for i := 0; i < 3; i++ {
 		if _, err := db.Exec(EnsureSchemaSQL); err != nil {

@@ -265,13 +265,12 @@ tr_msg() {
         -e 's/完成：配置本地数据服务/Completed: Configure local data services/g' \
         -e 's/配置库：使用已提供的 EYVESCLOUD_PG_DSN，跳过本地 PostgreSQL 自动装配/Config store: EYVESCLOUD_PG_DSN provided; skipping local PostgreSQL auto-provisioning/g' \
         -e 's/配置库：沿用既有 store.env 中的 Postgres 配置，跳过本地自动装配/Config store: reusing the existing Postgres config in store.env; skipping local auto-provisioning/g' \
-        -e 's/配置库：已设置 EYVESCLOUD_DISABLE_LOCAL_PG=1，保持 SQLite/Config store: EYVESCLOUD_DISABLE_LOCAL_PG=1 set; keeping SQLite/g' \
-        -e 's/配置库：非全新安装，保持既有后端不变/Config store: not a fresh install; keeping the existing backend/g' \
-        -e 's/配置库：当前二进制不支持 Postgres（旧版本无此能力），跳过自动装配，保持 SQLite；升级到含 Postgres 支持的版本后重装即自动启用/Config store: this binary lacks Postgres support; skipping auto-provisioning and keeping SQLite. Reinstall with a Postgres-capable build to enable it./g' \
+        -e 's/已设置 EYVESCLOUD_DISABLE_LOCAL_PG=1 但未提供 EYVESCLOUD_PG_DSN：v3 起配置库仅支持 Postgres（已移除 SQLite），请提供 EYVESCLOUD_PG_DSN 或去掉该开关。/EYVESCLOUD_DISABLE_LOCAL_PG=1 set but EYVESCLOUD_PG_DSN is not provided: from v3 the config store is Postgres-only (SQLite removed); set EYVESCLOUD_PG_DSN or drop the switch./g' \
+        -e 's/当前二进制不支持 Postgres：v3 起配置库仅支持 Postgres（已移除 SQLite），请升级到含 Postgres 支持的版本后重装。/This binary lacks Postgres support: from v3 the config store is Postgres-only (SQLite removed); reinstall with a Postgres-capable build./g' \
         -e 's/Redis：当前二进制不支持 Redis 共享信号，跳过自动装配，按单机语义运行/Redis: this binary lacks shared-signal support; skipping auto-provisioning and running with single-node semantics./g' \
-        -e 's/正在自动装配本地 PostgreSQL（全新安装默认启用）.../Auto-provisioning local PostgreSQL (enabled by default on fresh installs).../g' \
-        -e 's/本地 PostgreSQL 已就绪，配置库将改用 Postgres/Local PostgreSQL is ready; the config store will use Postgres/g' \
-        -e 's/本地 PostgreSQL 自动装配失败，本次回落 SQLite；可稍后设置 EYVESCLOUD_PG_DSN 重新安装启用。/Local PostgreSQL auto-provisioning failed; falling back to SQLite this run. Set EYVESCLOUD_PG_DSN and re-run to enable it later./g' \
+        -e 's/正在自动装配本地 PostgreSQL（配置库必需）.../Auto-provisioning local PostgreSQL (required for the config store).../g' \
+        -e 's/本地 PostgreSQL 已就绪，配置库将使用 Postgres/Local PostgreSQL is ready; the config store will use Postgres/g' \
+        -e 's/本地 PostgreSQL 自动装配失败：v3 起配置库仅支持 Postgres（已移除 SQLite），可设置 EYVESCLOUD_PG_DSN 指向外部 Postgres 后重装。/Local PostgreSQL auto-provisioning failed: from v3 the config store is Postgres-only (SQLite removed); set EYVESCLOUD_PG_DSN to an external Postgres and reinstall./g' \
         -e 's/Redis：使用已提供的 EYVESCLOUD_REDIS_ADDR，跳过本地自动装配/Redis: EYVESCLOUD_REDIS_ADDR provided; skipping local auto-provisioning/g' \
         -e 's/Redis：沿用既有 redis.env，跳过本地自动装配/Redis: reusing the existing redis.env; skipping local auto-provisioning/g' \
         -e 's/Redis：已设置 EYVESCLOUD_DISABLE_LOCAL_REDIS=1，按单机语义运行/Redis: EYVESCLOUD_DISABLE_LOCAL_REDIS=1 set; running with single-node semantics/g' \
@@ -316,7 +315,7 @@ tr_msg() {
         -e 's/正在删除 EYVESCLOUD 创建的 LXC 容器（\/var\/lib\/lxc\/ct-数字）.../Removing EYVESCLOUD-created LXC containers (\/var\/lib\/lxc\/ct-NUMBER).../g' \
         -e 's/保留 \/root\/eyvescloud-backups，避免误删部署\/回滚备份。确认不需要后可手动删除。/Keeping \/root\/eyvescloud-backups to avoid deleting deployment\/rollback backups. Remove it manually if no longer needed./g' \
         -e 's/EYVESCLOUD 卸载完成/EYVESCLOUD uninstall complete/g' \
-        -e 's/已删除服务、二进制、SQLite\/配置数据、EYVESCLOUD LXC\/KVM 实例、/Removed service, binary, SQLite\/config data, EYVESCLOUD LXC\/KVM instances,/g' \
+        -e 's/已删除服务、二进制、配置数据、EYVESCLOUD LXC\/KVM 实例、/Removed service, binary, config data, EYVESCLOUD LXC\/KVM instances,/g' \
         -e 's/EYVESCLOUD 镜像缓存、防火墙规则、主机钩子、配额记录和临时文件。/EYVESCLOUD image cache, firewall rules, host hooks, quota records, and temporary files./g' \
         -e 's/已保留 \/root\/eyvescloud-backups 和非 EYVESCLOUD 的 LXC 全局缓存，避免误删生产备份\/共享镜像。/Kept \/root\/eyvescloud-backups and non-EYVESCLOUD global LXC cache to avoid deleting production backups\/shared images./g' \
         -e 's/日志：/Log: /g' \
@@ -400,7 +399,7 @@ tr_msg() {
         -e 's/EYVESCLOUD_REDIS_PASSWORD 含不可打印字符，已忽略密码（仅透传地址）/EYVESCLOUD_REDIS_PASSWORD contains non-printable characters; ignoring the password (address only)/g' \
         -e 's/当前不可达：面板将以单机语义运行（fail-open），请检查地址\/防火墙/is unreachable: the panel will run with single-node semantics (fail-open); check the address and firewall/g' \
         -e 's/多副本共享限流与吊销广播/multi-replica shared rate limiting and revocation broadcast/g' \
-        -e 's/存储后端：SQLite（默认）/Storage backend: SQLite (default)/g' \
+        -e 's/未配置配置库：v3 起必须使用 Postgres，请提供 EYVESCLOUD_PG_DSN。/No config store configured: from v3 Postgres is required; provide EYVESCLOUD_PG_DSN./g' \
         -e 's/存储后端：沿用既有/Storage backend: keeping existing /g' \
         -e 's/（本次未覆盖）/(not overridden this run)/g' \
         -e 's/配置库后端：Postgres（DSN 已写入/Config store: Postgres (DSN written to /g' \
@@ -413,14 +412,15 @@ tr_msg() {
         -e 's/ 含不可打印字符，已忽略（不写入 / contains non-printable characters; not written to /g' \
         -e 's/EYVESCLOUD_CELL_DSNS 含面板会忽略的项（需要 id=dsn）：/EYVESCLOUD_CELL_DSNS has entries the panel will ignore (need id=dsn): /g' \
         -e 's/配置库：/Config store: /g' \
-        -e 's/遥测仍在/telemetry stays at /g' \
+        -e 's/未配置（异常：v3 起必须为 Postgres）/not configured (error: Postgres is required from v3)/g' \
         -e 's/注意：/Note: /g' \
-        -e 's/ 仍存在。若你是从 SQLite 迁到 Postgres，它是旧库（可归档）；若是全新装，请检查是否有进程绕过 PG_DSN 走了 SQLite。/ still exists. If you migrated from SQLite to Postgres it is the old database (safe to archive); if this is a fresh install, check whether some process bypassed PG_DSN and used SQLite./g' \
+        -e 's/ 仍存在。v3 起配置库仅 Postgres，它不再是面板的数据源（旧 SQLite 库，可归档；全新装若出现，请检查是否有进程旁路写了它）。/ still exists. From v3 the config store is Postgres-only, so it is no longer the panel'"'"'s data source (an old SQLite file, safe to archive; if it appears on a fresh install, check whether some process wrote it out-of-band)./g' \
         -e 's/cell 分库：/Cell sharding: /g' \
         -e 's/已配置（见/configured (see /g' \
         -e 's/节点令牌密钥：/Node token key: /g' \
         -e 's/由 env 提供/provided via env/g' \
         -e 's/服务器配置库为 Postgres 且已有管理员账号，初始凭据文件不存在。/The server uses a Postgres config store and already has an admin account, so the initial credentials file does not exist./g' \
+        -e 's/服务器已有配置数据，初始凭据文件不存在。/The server already has configuration data, so the initial credentials file does not exist./g' \
         -e 's/取值不合法（示例：/invalid value (example: /g' \
         -e 's/），已忽略：/); ignored: /g' \
         -e 's/Go 内存软上限：/Go soft memory limit: /g' \
@@ -586,11 +586,11 @@ Environment variables:
   EYVESCLOUD_REDIS_ADDR=host:port     Optional. Multi-replica shared signals (distributed rate limiting + token revocation broadcast);
                                       unset = auto-install a local Redis on fresh installs (single-node if that fails)
   EYVESCLOUD_REDIS_PASSWORD=secret    Optional. Redis AUTH password (for a requirepass-enabled Redis)
-  EYVESCLOUD_PG_DSN=postgres://...    Optional. Config store on Postgres (telemetry stays in local telemetry.db);
-                                      unset = auto-install a local PostgreSQL on fresh installs (SQLite if that fails)
-  EYVESCLOUD_DISABLE_LOCAL_PG=1       Opt out of local PostgreSQL auto-provisioning; keep SQLite
+  EYVESCLOUD_PG_DSN=postgres://...    From v3 the config store (and telemetry) is Postgres-only;
+                                      unset = auto-install a local PostgreSQL on fresh installs
+  EYVESCLOUD_DISABLE_LOCAL_PG=1       Opt out of local PostgreSQL auto-provisioning; EYVESCLOUD_PG_DSN is then required
   EYVESCLOUD_DISABLE_LOCAL_REDIS=1    Opt out of local Redis auto-provisioning; keep single-node semantics
-  EYVESCLOUD_CELL_DSNS=cell-1=/a.db,cell-2=host:port
+  EYVESCLOUD_CELL_DSNS=cell-1=postgres://...,cell-2=postgres://...
                                       Optional. Per-cell shard map for nodes/containers; unset = single config DB
   EYVESCLOUD_NODE_TOKEN_KEY=<64 hex>  Optional. AES-256 key for node tokens; unset = auto-generated into data dir (.tokenkey)
   EYVESCLOUD_AGENT_GATEWAY_ADDR=host:port
@@ -630,11 +630,11 @@ EOF
   EYVESCLOUD_REDIS_ADDR=host:port    可选。多副本共享信号（分布式限流 + 令牌吊销广播）；
                                      不设 = 全新装自动在本机安装 Redis（装不上则回落单机模式）
   EYVESCLOUD_REDIS_PASSWORD=secret   可选。Redis AUTH 密码（对应 Redis 端 requirepass）
-  EYVESCLOUD_PG_DSN=postgres://...   可选。配置库改用 Postgres（遥测仍在本地 telemetry.db）；
-                                     不设 = 全新装自动在本机安装 PostgreSQL（装不上则回落 SQLite）
-  EYVESCLOUD_DISABLE_LOCAL_PG=1      关闭本地 PostgreSQL 自动装配；保持 SQLite
+  EYVESCLOUD_PG_DSN=postgres://...   v3 起配置库（含遥测）仅用 Postgres；
+                                     不设 = 全新装自动在本机安装 PostgreSQL
+  EYVESCLOUD_DISABLE_LOCAL_PG=1      关闭本地 PostgreSQL 自动装配；此时必须提供 EYVESCLOUD_PG_DSN
   EYVESCLOUD_DISABLE_LOCAL_REDIS=1   关闭本地 Redis 自动装配；保持单机语义
-  EYVESCLOUD_CELL_DSNS=cell-1=/a.db,cell-2=host:port
+  EYVESCLOUD_CELL_DSNS=cell-1=postgres://...,cell-2=postgres://...
                                      可选。节点/容器的 per-cell 分库映射；不设 = 单一配置库
   EYVESCLOUD_NODE_TOKEN_KEY=<64位hex> 可选。节点 Token 的 AES-256 密钥；不设 = 自动生成到数据目录（.tokenkey）
   EYVESCLOUD_AGENT_GATEWAY_ADDR=host:port
@@ -924,31 +924,12 @@ delete_ip6tables_nat_source() {
 }
 
 read_eyvescloud_network_records() {
-    db="/root/.eyvescloud/config.db"
     legacy="/root/.eyvescloud/config.json"
-    query="SELECT COALESCE(virtualization,''), COALESCE(ipv6,''), COALESCE(ipv6_interface,''), COALESCE(mac_address,'') FROM containers WHERE COALESCE(ipv6,'') <> '' OR COALESCE(mac_address,'') <> '';"
 
-    # PG 配置库：容器网络记录在 Postgres 里，本函数（sqlite3/python 读本地库）取不到。
+    # v3 配置库仅 Postgres：容器网络记录在 Postgres 里，安装器取不到（也不该在此连库读）。
     # 如实告知，避免卸载时"清理完成"却留下 iptables/ipv6 残留。
-    if [ ! -f "$db" ] && pg_config_backend_active; then
+    if pg_config_backend_active; then
         warn "配置库为 Postgres：无法从本地读取容器网络记录，卸载不会自动清理其 iptables/ipv6 规则，请按需人工核对。"
-        return 0
-    fi
-
-    if [ -f "$db" ] && has_cmd sqlite3; then
-        sqlite3 -separator '|' "$db" "$query" 2>/dev/null || true
-    elif [ -f "$db" ] && has_cmd python3; then
-        EYVESCLOUD_DB="$db" python3 - <<'PY' 2>/dev/null || true
-import os
-import sqlite3
-
-db = os.environ.get("EYVESCLOUD_DB")
-for row in sqlite3.connect(db).execute(
-    "SELECT COALESCE(virtualization,''), COALESCE(ipv6,''), COALESCE(ipv6_interface,''), COALESCE(mac_address,'') "
-    "FROM containers WHERE COALESCE(ipv6,'') <> '' OR COALESCE(mac_address,'') <> ''"
-):
-    print("|".join("" if value is None else str(value) for value in row))
-PY
     fi
 
     if [ -f "$legacy" ] && has_cmd python3; then
@@ -1238,7 +1219,7 @@ uninstall_eyvescloud() {
     echo "====================================="
     echo "  $(tr_msg "EYVESCLOUD 卸载完成")"
     echo "====================================="
-    echo "  $(tr_msg "已删除服务、二进制、SQLite/配置数据、EYVESCLOUD LXC/KVM 实例、")"
+    echo "  $(tr_msg "已删除服务、二进制、配置数据、EYVESCLOUD LXC/KVM 实例、")"
     echo "  $(tr_msg "EYVESCLOUD 镜像缓存、防火墙规则、主机钩子、配额记录和临时文件。")"
     echo "  $(tr_msg "已保留 /root/eyvescloud-backups 和非 EYVESCLOUD 的 LXC 全局缓存，避免误删生产备份/共享镜像。")"
     echo "  $(tr_msg "日志：")$LOG_FILE"
@@ -2331,6 +2312,11 @@ install_agent_service() {
         http://*) insecure_arg="--allow-insecure-http" ;;
     esac
 
+    # v3 起配置库仅 Postgres：agent 每次启动都会走 config.InitConfig 打开配置库，
+    # 因此被控节点同样需要 DSN。落成 store.env/redis.env 并由下面的 EnvironmentFile
+    # 加载（与主控同一套凭据，不写进 0644 的 unit 文件）。
+    persist_runtime_env
+
     cat > /etc/systemd/system/eyvescloud-agent.service << EOF
 [Unit]
 Description=EyvesCloud Agent
@@ -2346,6 +2332,8 @@ Restart=always
 RestartSec=5
 LimitNOFILE=1048576
 Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=-/etc/eyvescloud/redis.env
+EnvironmentFile=-${EYVESCLOUD_STORE_ENV}
 
 [Install]
 WantedBy=multi-user.target
@@ -2920,9 +2908,8 @@ persisted_env_value() {
 # 安装器本次传参优先）。
 #
 # 为什么需要：面板二进制的每次调用（含 `--version`）都会走 InitConfig 打开配置库。
-# 安装器自己也会调它（版本探测 / node-link / account）。若不补齐，PG 部署里这些探测
-# 会旁路创建一份空的 SQLite config.db —— 后续写语言就会写进那份没人用的库，报告"成功"
-# 而面板并不读它（假成功）。
+# 安装器自己也会调它（版本探测 / node-link / account）。若不补齐，v3（仅 Postgres）下
+# 这些探测会因缺少 EYVESCLOUD_PG_DSN 而无法初始化配置库，直接报错。
 load_persisted_env() {
     for env_file in "$EYVESCLOUD_STORE_ENV" /etc/eyvescloud/redis.env; do
         [ -r "$env_file" ] || continue
@@ -2950,7 +2937,7 @@ load_persisted_env() {
 #   变量被显式设置（含设成空串）⇒ 重写文件；空值项不写；全部为空 ⇒ 删文件（= 关闭）
 #   变量未设置            ⇒ 既不改也不删既有文件
 # 后半条是关键：升级时运维通常只跑 `install.sh` 而不重复导出变量；若默认删文件，
-# 面板会静默回落 SQLite —— 在 PG 部署里表现得像"数据全没了"。
+# 面板会因缺少配置库 DSN 而无法启动 —— 表现得像"数据全没了"。
 #
 # 返回 0 = 文件存在（已配置）；1 = 当前无配置。
 write_optional_env_file() {
@@ -3019,9 +3006,10 @@ report_cell_dsns() {
     return 0
 }
 
-install_service() {
-    log "正在安装 EYVESCLOUD 服务..."
-
+# persist_runtime_env：把配置库/Redis 等运行时凭据落成 0600 env 文件。
+# 主控与 agent 都要读配置库（v3 仅 Postgres），故两处都调用；对应 unit 用
+# EnvironmentFile=- 加载它们。凭据不能进 0644 的 unit 文件。
+persist_runtime_env() {
     # 存储后端 / 节点身份：PG 配置库、cell 分库、节点令牌加密密钥、Agent 网关地址。
     if write_optional_env_file "$EYVESCLOUD_STORE_ENV" \
         EYVESCLOUD_PG_DSN EYVESCLOUD_CELL_DSNS \
@@ -3036,7 +3024,7 @@ install_service() {
     elif [ -f "$EYVESCLOUD_STORE_ENV" ]; then
         log "存储后端：沿用既有 $EYVESCLOUD_STORE_ENV（本次未覆盖）"
     else
-        log "存储后端：SQLite（默认）"
+        die "未配置配置库：v3 起必须使用 Postgres，请提供 EYVESCLOUD_PG_DSN。"
     fi
 
     # Redis 共享信号（多副本）：0600 env 文件（密码不能进 644 的 unit 文件）。
@@ -3065,6 +3053,12 @@ install_service() {
             fi
         fi
     fi
+    return 0
+}
+
+install_service() {
+    log "正在安装 EYVESCLOUD 服务..."
+    persist_runtime_env
 
     if is_systemd; then
         install_systemd_service
@@ -3077,12 +3071,11 @@ install_service() {
 
 harden_data_dir_perms() {
     local dir="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}"
-    # 服务刚启动，data dir 里 config.db / telemetry.db / cell 库 / WAL / shm / 节点令牌
-    # 密钥 / 首启凭据文件可能还没显式 chmod，这里作为安装时的兜底（后端每次 openConfigDB
-    # 也会 chmod 0600）。PG 部署下没有 config.db，telemetry.db 与 *.tokenkey 仍在本地。
+    # v3 起配置库/遥测/cell 全部在 Postgres，data dir 里只剩本地凭据类文件：节点令牌
+    # 加密密钥（.tokenkey）、首启凭据文件，可能还有旧 config.json。这里作为安装时兜底
+    # 统一收紧（后端每次启动也会自行 chmod 0600）。
     if [ -d "$dir" ]; then
         chmod 0700 "$dir" 2>/dev/null || true
-        chmod 0600 "$dir"/*.db "$dir"/*.db-wal "$dir"/*.db-shm 2>/dev/null || true
         chmod 0600 "$dir"/*.tokenkey 2>/dev/null || true
         chmod 0600 "$dir"/*.json 2>/dev/null || true
         chmod 0600 "$dir"/initial-admin-credentials.txt 2>/dev/null || true
@@ -3090,7 +3083,7 @@ harden_data_dir_perms() {
 }
 
 # pg_config_backend_active：当前（含上一次安装持久化的）配置库是不是 Postgres。
-# 安装器自己也要用它判断能不能直接写 SQLite 的 config.db。
+# 安装器用它区分「面板是否走 Postgres」，据此决定告警文案与语言预置行为。
 pg_config_backend_active() {
     [ -n "${EYVESCLOUD_PG_DSN:-}" ] && return 0
     [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ]
@@ -3105,10 +3098,10 @@ binary_supports_env() {
 }
 
 # ---------------------------------------------------------------------------
-# 本地数据服务自动装配：全新装默认在本机装好 PostgreSQL + Redis 并接入面板，
-# 让默认部署直接跑在新架构（PG 配置库 + Redis 共享信号），而不是零依赖的 SQLite 单机。
-# 只对全新装生效；升级 / 已有配置 / 显式禁用一律不翻转后端。退出开关：
-#   EYVESCLOUD_DISABLE_LOCAL_PG=1     不自动装 PG（回落 SQLite）
+# 本地数据服务自动装配：v3 起配置库仅 Postgres，若未提供 EYVESCLOUD_PG_DSN 且
+# store.env 里也没有，就在本机装好 PostgreSQL 并接入面板（装不上直接失败，不再有
+# SQLite 兜底）。Redis 为可选共享信号，装不上按单机语义运行。退出开关：
+#   EYVESCLOUD_DISABLE_LOCAL_PG=1     不自动装 PG（此时必须自备 EYVESCLOUD_PG_DSN）
 #   EYVESCLOUD_DISABLE_LOCAL_REDIS=1  不自动装 Redis（回落单机语义）
 # ---------------------------------------------------------------------------
 
@@ -3178,7 +3171,7 @@ PG_LOCAL_USER="eyvescloud"
 PG_LOCAL_DB="eyvescloud"
 
 # provision_local_postgres：本机安装并初始化 PostgreSQL、建库建角色；成功往 stdout
-# 打印面板可用 DSN，任一步失败打印空串（调用方据此回落 SQLite）。
+# 打印面板可用 DSN，任一步失败打印空串（调用方据此报错退出，不再有 SQLite 兜底）。
 provision_local_postgres() {
     case "$OS_ID" in
         ubuntu|debian)
@@ -3263,26 +3256,24 @@ provision_local_redis() {
     printf '127.0.0.1:6379'
 }
 
-# provision_local_stack：全新装默认把本地 PG/Redis 装好并接入面板。
+# provision_local_stack：确保配置库可用（v3 仅 Postgres）；Redis 可选。
 provision_local_stack() {
     if [ -n "${EYVESCLOUD_PG_DSN:-}" ]; then
         log "配置库：使用已提供的 EYVESCLOUD_PG_DSN，跳过本地 PostgreSQL 自动装配"
     elif [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ]; then
         log "配置库：沿用既有 store.env 中的 Postgres 配置，跳过本地自动装配"
     elif [ "${EYVESCLOUD_DISABLE_LOCAL_PG:-}" = "1" ]; then
-        log "配置库：已设置 EYVESCLOUD_DISABLE_LOCAL_PG=1，保持 SQLite"
-    elif [ "${EYVESCLOUD_FRESH_INSTALL:-0}" != "1" ]; then
-        log "配置库：非全新安装，保持既有后端不变"
+        die "已设置 EYVESCLOUD_DISABLE_LOCAL_PG=1 但未提供 EYVESCLOUD_PG_DSN：v3 起配置库仅支持 Postgres（已移除 SQLite），请提供 EYVESCLOUD_PG_DSN 或去掉该开关。"
     elif ! binary_supports_env /usr/local/bin/eyvescloud EYVESCLOUD_PG_DSN; then
-        log "配置库：当前二进制不支持 Postgres（旧版本无此能力），跳过自动装配，保持 SQLite；升级到含 Postgres 支持的版本后重装即自动启用"
+        die "当前二进制不支持 Postgres：v3 起配置库仅支持 Postgres（已移除 SQLite），请升级到含 Postgres 支持的版本后重装。"
     else
-        log "正在自动装配本地 PostgreSQL（全新安装默认启用）..."
+        log "正在自动装配本地 PostgreSQL（配置库必需）..."
         _dsn="$(provision_local_postgres)"
         if [ -n "$_dsn" ]; then
             export EYVESCLOUD_PG_DSN="$_dsn"
-            log "本地 PostgreSQL 已就绪，配置库将改用 Postgres"
+            log "本地 PostgreSQL 已就绪，配置库将使用 Postgres"
         else
-            warn "本地 PostgreSQL 自动装配失败，本次回落 SQLite；可稍后设置 EYVESCLOUD_PG_DSN 重新安装启用。"
+            die "本地 PostgreSQL 自动装配失败：v3 起配置库仅支持 Postgres（已移除 SQLite），可设置 EYVESCLOUD_PG_DSN 指向外部 Postgres 后重装。"
         fi
     fi
 
@@ -3310,61 +3301,9 @@ provision_local_stack() {
 }
 
 set_panel_language() {
-    lang="$EYVESCLOUD_LANG_DETECTED"
-    db="/root/.eyvescloud/config.db"
-    if [ "$lang" != "zh" ] && [ "$lang" != "en" ]; then
-        lang="zh"
-    fi
-
-    # Postgres 配置库下没有本地 config.db：写 SQLite 只会写出一份面板不读的库（假成功）。
-    # 面板语言存在配置库的 app_meta 里，而 /api/language 需要管理员会话，安装阶段拿不到，
-    # 因此这里如实告知，不再走下面那套 SQLite/接口回退。
-    if pg_config_backend_active; then
-        log "配置库为 Postgres：安装阶段无法预置面板语言，请在面板右上角切换（默认中文）"
-        return 0
-    fi
-
-    saved=0
-    i=0
-    while [ ! -f "$db" ] && [ "$i" -lt 20 ]; do
-        i=$((i + 1))
-        sleep 1
-    done
-
-    if [ -f "$db" ] && has_cmd python3; then
-        EYVESCLOUD_PANEL_LANG="$lang" EYVESCLOUD_DB="$db" python3 - <<'PY' >/dev/null 2>&1 && saved=1 || saved=0
-import os
-import sqlite3
-
-db = os.environ["EYVESCLOUD_DB"]
-lang = os.environ["EYVESCLOUD_PANEL_LANG"]
-conn = sqlite3.connect(db)
-conn.execute("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
-conn.execute("INSERT OR REPLACE INTO app_meta(key, value) VALUES('language', ?)", (lang,))
-conn.commit()
-conn.close()
-PY
-    fi
-
-    if [ "$saved" != "1" ] && [ -f "$db" ] && has_cmd sqlite3; then
-        sqlite3 "$db" "CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL); INSERT OR REPLACE INTO app_meta(key, value) VALUES('language', '$lang');" >/dev/null 2>&1 && saved=1 || saved=0
-    fi
-
-    if [ "$saved" != "1" ] && has_cmd curl; then
-        curl -k -fsS -X POST -H 'Content-Type: application/json' -d "{\"language\":\"$lang\"}" "https://127.0.0.1:8999/api/language" >/dev/null 2>&1 && saved=1 || \
-        curl -fsS -X POST -H 'Content-Type: application/json' -d "{\"language\":\"$lang\"}" "http://127.0.0.1:8999/api/language" >/dev/null 2>&1 && saved=1 || saved=0
-    fi
-
-    if [ "$saved" = "1" ]; then
-        log "已写入面板语言：$lang"
-        if has_cmd systemctl && systemctl is-active eyvescloud >/dev/null 2>&1; then
-            systemctl restart eyvescloud >/dev/null 2>&1 || true
-        elif has_cmd rc-service; then
-            rc-service eyvescloud restart >/dev/null 2>&1 || true
-        fi
-    else
-        warn "面板语言写入失败，请安装后在面板右下角手动切换。"
-    fi
+    # v3 起配置库仅 Postgres：面板语言存在配置库 app_meta 里，而 /api/language 需要
+    # 管理员会话，安装阶段拿不到，无法预置。如实告知，不再走 SQLite 直写/接口回退。
+    log "配置库为 Postgres：安装阶段无法预置面板语言，请在面板右上角切换（默认中文）"
 }
 
 # install_vm_tool 安装 /usr/local/bin/vm 快捷管理菜单。
@@ -3535,12 +3474,12 @@ print_summary() {
     data_dir_out="${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}"
     pg_out="$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)"
     if [ -n "$pg_out" ]; then
-        echo "  $(tr_msg "配置库：")Postgres ($(tr_msg "遥测仍在")${data_dir_out}/telemetry.db)"
+        echo "  $(tr_msg "配置库：")Postgres"
         if [ -f "$data_dir_out/config.db" ]; then
-            echo "  $(tr_msg "注意：")${data_dir_out}/config.db $(tr_msg "仍存在。若你是从 SQLite 迁到 Postgres，它是旧库（可归档）；若是全新装，请检查是否有进程绕过 PG_DSN 走了 SQLite。")"
+            echo "  $(tr_msg "注意：")${data_dir_out}/config.db $(tr_msg "仍存在。v3 起配置库仅 Postgres，它不再是面板的数据源（旧 SQLite 库，可归档；全新装若出现，请检查是否有进程旁路写了它）。")"
         fi
     else
-        echo "  $(tr_msg "配置库：")SQLite (${data_dir_out}/config.db)"
+        echo "  $(tr_msg "配置库：")$(tr_msg "未配置（异常：v3 起必须为 Postgres）")"
     fi
     cells_out="$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_CELL_DSNS)"
     if [ -n "$cells_out" ]; then
@@ -3571,7 +3510,7 @@ print_summary() {
         if [ -n "$pg_out" ]; then
             echo "$(tr_msg "  服务器配置库为 Postgres 且已有管理员账号，初始凭据文件不存在。")"
         else
-            echo "$(tr_msg "  服务器已有 /root/.eyvescloud/config.db，初始凭据文件不存在。")"
+            echo "$(tr_msg "  服务器已有配置数据，初始凭据文件不存在。")"
         fi
         echo "$(tr_msg "  管理员密码使用 bcrypt 存储，无法反查；请使用面板内修改密码或重置配置。")"
     fi
@@ -3591,11 +3530,12 @@ print_summary() {
 
 # 升级场景：先把上一次安装持久化的存储/分布式变量补进本进程，让安装器自身调用的
 # 面板二进制（--version / node-link / account）与面板服务走同一个后端，避免在 PG
-# 部署里旁路生成一份空的 SQLite config.db（那会让随后的"写入面板语言"变成假成功）。
+# 部署里因缺少配置库 DSN 而初始化失败。
 load_persisted_env
 
-# 全新装判定：在安装器自身调用面板二进制之前采样，避免 --version 已旁路生成 config.db
-# 而误判。仅全新装才默认切到本地 Postgres/Redis；升级或已有配置一律不翻转后端。
+# 全新装判定：在安装器自身调用面板二进制之前采样。仅全新装才默认自动装配本地
+# Postgres/Redis；升级或已有配置一律不翻转后端。config.db 是 v2（SQLite 时代）遗留
+# 标记：存在即说明是升级而非全新装。
 EYVESCLOUD_FRESH_INSTALL="1"
 if [ -f "${EYVESCLOUD_DATA_DIR:-/root/.eyvescloud}/config.db" ] \
     || [ -n "$(persisted_env_value "$EYVESCLOUD_STORE_ENV" EYVESCLOUD_PG_DSN)" ] \
@@ -3635,12 +3575,12 @@ run_step "下载发行版包" download_release_if_needed
 run_step "安装 EYVESCLOUD 二进制" install_binary
 
 # 本地 PG/Redis 自动装配：必须在本 shell 执行（非 run_step），因为 provision_local_stack
-# 通过 export 把 DSN/地址传给随后的 install_service（run_step 的子 shell 无法回传变量）。
-if [ "$install_mode" != "agent" ]; then
-    log "开始：配置本地数据服务"
-    provision_local_stack
-    log "完成：配置本地数据服务"
-fi
+# 通过 export 把 DSN/地址传给随后的 install_service/install_agent_service
+# （run_step 的子 shell 无法回传变量）。agent 模式同样需要配置库（v3 仅 Postgres），
+# 故不再按模式跳过 —— 否则被控节点会因缺少 EYVESCLOUD_PG_DSN 而起不来。
+log "开始：配置本地数据服务"
+provision_local_stack
+log "完成：配置本地数据服务"
 
 # 根据安装模式安装不同服务
 case "$install_mode" in

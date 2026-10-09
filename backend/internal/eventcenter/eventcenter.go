@@ -6,7 +6,7 @@
 //   - EventSink 写入 + 订阅接口（in-memory + 持久化由调用方注入）；
 //   - Query 多条件查询（severity/type/time-range）；
 //   - 路由：按类型/严重度分发到不同处理通道（P7-2 通知 / P3-1 处置 等）；
-//   - 全量审计 + 持久化（SQLite events 表预留，本包只定义模型）。
+//   - 全量审计 + 持久化（配置库 events 表预留，本包只定义模型）。
 package eventcenter
 
 import (
@@ -81,7 +81,7 @@ func (e Event) Validate() error {
 // ---- 仓储 / 查询 ----
 
 // Sink 是事件落地抽象（持久化 + 路由分发）。
-// 实现可注入 SQLite（按事件类型路由）/WebHook/邮件。
+// 实现可注入配置库（按事件类型路由）/WebHook/邮件。
 type Sink interface {
 	Emit(e Event) error
 }

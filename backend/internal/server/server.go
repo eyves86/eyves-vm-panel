@@ -798,7 +798,7 @@ func Run() error {
 	// 事件订阅引擎：容器状态变更 → Webhook 回调（幂等注册）。
 	api.StartWebhookEngine()
 	// 心跳落库批处理：把「一请求一事务」改为按窗口合并（见 config/store_batch.go）。
-	// 30k 节点 × 10s 心跳 = 3000 次/秒，逐次提交会把单写者 SQLite 变成墙。
+	// 30k 节点 × 10s 心跳 = 3000 次/秒，逐次提交会把单写者数据库变成墙。
 	config.StartDeferredSaver()
 
 	mux := http.NewServeMux()

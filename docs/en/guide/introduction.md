@@ -51,7 +51,7 @@
 
 ## Tech Stack
 
-- **Control plane**: Go (`net/http`), SQLite, scheduling engine.
+- **Control plane**: Go (`net/http`), PostgreSQL (config store and telemetry), scheduling engine.
 - **Virtualization layer**: LXC, KVM/libvirt, cgroup v2, iptables, conntrack.
 - **Data plane**: React, TypeScript, Vite, Tailwind CSS, lucide-react, xterm.js, noVNC.
 - **Delivery**: Linux (systemd / OpenRC); GitHub Actions builds Linux AMD64/ARM64 release artifacts; the install script fetches the latest Release by default.
@@ -63,8 +63,8 @@ EyvesCloud is an **independently written** open-source project: the Go backend, 
 A few clarifications:
 
 - **Naming**: The product name "EyvesCloud" is original to this project and unrelated to any third-party product or trademark.
-- **Common features, original code**: Where functional shape (controller-agent nodes, NAT/IPv6 networking, WebSSH/WebVNC) resembles other products, that reflects common industry requirements rather than code copying. The implementation (see the [architecture doc](../developer/architecture.md)) is original — including the SQLite persistence model, the JWT + API-key (argon2id) auth system, the node-token proxy protocol, TOTP two-factor auth, the policy engine, and the conntrack-based security engine.
-- **Dependencies**: Only the Go standard library / well-known open-source libraries (e.g. `golang.org/x/crypto`, modernc.org/sqlite), the React ecosystem, and Linux system components (LXC, libvirt, iptables) are used, each under its own open-source license.
+- **Common features, original code**: Where functional shape (controller-agent nodes, NAT/IPv6 networking, WebSSH/WebVNC) resembles other products, that reflects common industry requirements rather than code copying. The implementation (see the [architecture doc](../developer/architecture.md)) is original — including the PostgreSQL persistence model, the JWT + API-key (argon2id) auth system, the node-token proxy protocol, TOTP two-factor auth, the policy engine, and the conntrack-based security engine.
+- **Dependencies**: Only the Go standard library / well-known open-source libraries (e.g. `golang.org/x/crypto`, `github.com/jackc/pgx/v5`), the React ecosystem, and Linux system components (LXC, libvirt, iptables) are used, each under its own open-source license.
 - **Docs**: This documentation site, the [README](../../README.md), and the [deployment guide](../../DEPLOYMENT.md) are all written originally for this project.
 
 If you find content here that closely matches Project E material, please open an Issue so we can distinguish or remove it.

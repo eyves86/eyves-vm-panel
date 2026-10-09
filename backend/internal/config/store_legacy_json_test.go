@@ -12,7 +12,9 @@ import (
 	"eyvescloud/internal/storage"
 )
 
-func TestSQLiteConfigMigratesLegacyJSONAndPersists(t *testing.T) {
+// TestConfigMigratesLegacyJSONAndPersists 旧版 config.json 首次启动时被读入配置库
+// （Postgres），随后以库为准往返。
+func TestConfigMigratesLegacyJSONAndPersists(t *testing.T) {
 	resetConfigStoreForTest(t)
 
 	dir := t.TempDir()
@@ -123,13 +125,13 @@ func TestSQLiteConfigMigratesLegacyJSONAndPersists(t *testing.T) {
 		t.Fatalf("legacy config was not migrated: %+v", cfg.Containers)
 	}
 	if len(cfg.Tasks) != 1 || !strings.Contains(cfg.Tasks[0].Config, `"extra_ports":[80,443]`) {
-		t.Fatalf("task config was not restored from sqlite columns: %+v", cfg.Tasks)
+		t.Fatalf("task config was not restored from db columns: %+v", cfg.Tasks)
 	}
 	if !strings.Contains(cfg.Tasks[0].Config, `"nat_port_mappings":[{"host_port":30080,"container_port":80`) {
-		t.Fatalf("task NAT mappings were not restored from sqlite: %+v", cfg.Tasks)
+		t.Fatalf("task NAT mappings were not restored from db: %+v", cfg.Tasks)
 	}
 	if !strings.Contains(cfg.Tasks[0].Config, `"management_port":30022`) {
-		t.Fatalf("task management port was not restored from sqlite: %+v", cfg.Tasks)
+		t.Fatalf("task management port was not restored from db: %+v", cfg.Tasks)
 	}
 	if cfg.TaskConcurrency != DefaultTaskConcurrency {
 		t.Fatalf("legacy task concurrency = %d, want default %d", cfg.TaskConcurrency, DefaultTaskConcurrency)
@@ -142,9 +144,6 @@ func TestSQLiteConfigMigratesLegacyJSONAndPersists(t *testing.T) {
 	}
 	if len(cfg.CustomLXCImages) != 1 || cfg.CustomLXCImages[0].ID != "custom-lxc-test" {
 		t.Fatalf("legacy custom LXC images were not migrated: %+v", cfg.CustomLXCImages)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "config.db")); err != nil {
-		t.Fatalf("sqlite database was not created: %v", err)
 	}
 
 	cfg.Containers[0].Status = "stopped"
@@ -160,7 +159,7 @@ func TestSQLiteConfigMigratesLegacyJSONAndPersists(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := cfg.Containers[0].Status; got != "stopped" {
-		t.Fatalf("expected sqlite value to win after migration, got %q", got)
+		t.Fatalf("expected persisted value to win after migration, got %q", got)
 	}
 	if got := cfg.TaskConcurrency; got != 6 {
 		t.Fatalf("persisted task concurrency = %d, want 6", got)
@@ -184,8 +183,8 @@ func resetConfigStoreForTest(t *testing.T) {
 		}
 		db = nil
 	}
-	// 遥测库（telemetry.db）与配置库生命周期一致，重置时同样必须关闭，
-	// 否则句柄会泄漏到下一个用例的临时目录。
+	// 遥测连接池与配置库生命周期一致，重置时同样必须关闭，否则句柄会泄漏到
+	// 下一个用例。
 	CloseTelemetryDB()
 	// cell 分库连接同理：进程级状态，必须随 db 一起复位，否则上一个用例打开的
 	// cell 库句柄会泄漏到下一个用例。

@@ -76,7 +76,7 @@ func TestExtraAdminLoginAndTokenValidation(t *testing.T) {
 	}
 
 	// 轮换该账号的 TokenVersion → 已签发令牌立即失效（改口令即吊销）
-	// 测试环境没有 sqlite，直接改内存配置（生产走 MutateGlobal 持久化）。
+	// 本用例是内存态（不依赖配置库），直接改内存配置（生产走 MutateGlobal 持久化）。
 	config.AppConfigMu.Lock()
 	for i := range config.AppConfig.Admins {
 		if config.AppConfig.Admins[i].ID == "a1" {

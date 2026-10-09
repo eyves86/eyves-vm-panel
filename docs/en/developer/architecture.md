@@ -7,7 +7,7 @@ EyvesCloud consists of a Go backend, a React frontend, and host virtualization c
 The backend entrypoint is `backend/main.go`; HTTP routes are centralized in `backend/internal/server/server.go`. Main modules:
 
 - `internal/api`: HTTP endpoints for the web panel and `/api/v1` (including the Controller node APIs and the Agent API on workers).
-- `internal/config`: configuration and SQLite storage.
+- `internal/config`: configuration and PostgreSQL storage (config store / telemetry store / cell shards).
 - `internal/agent`: Agent mode for worker nodes (registration, heartbeat, local panel).
 - `internal/lxc`: LXC container management.
 - `internal/kvm`: KVM/libvirt virtual machine management.
@@ -85,4 +85,4 @@ In production builds, the frontend output is placed in `backend/internal/server/
 
 ## Data Storage
 
-Configuration and business data are stored in SQLite (`config.db`). Containers, sub-users, API keys, audit logs, policies, nodes, etc. are all persisted to SQLite and survive restarts. Worker registration info (`agent.json`) is stored in the worker's own configuration directory.
+Configuration and business data are stored in PostgreSQL (the config store is set via `EYVESCLOUD_PG_DSN`, persisted by the installer to `/etc/eyvescloud/store.env`); SQLite was removed in v3. Containers, sub-users, API keys, audit logs, policies, nodes, etc. are all persisted to PostgreSQL and survive restarts; telemetry such as metric samples is also stored in PostgreSQL, and large deployments can shard via `EYVESCLOUD_CELL_DSNS`. Worker registration info (`agent.json`) is stored in the worker's own configuration directory.

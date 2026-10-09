@@ -243,7 +243,7 @@ type Container struct {
 	// AccessCode/AccessCodePassword 是**机器级分享凭据**：每台容器各自持有一个
 	// 访问码与其专用口令，访问码登录后仅能管理这一台容器（与子用户账号解耦，
 	// 一台 = 一个码 = 单机登录）。两者都需在管理端/用户端回显，落库用
-	// AES-256-GCM 可逆加密（见 store_sqlite.go 的 container_access_links 表），
+	// AES-256-GCM 可逆加密（见 store_db.go 的 container_access_links 表），
 	// 内存中为明文。空 = 尚未生成（访问详情/分享时按需生成并落库）。
 	AccessCode         string `json:"access_code,omitempty"`
 	AccessCodePassword string `json:"access_code_password,omitempty"`
@@ -1052,7 +1052,7 @@ type SubUser struct {
 	//   - 账号密码用于用户名/邮箱登录，仅子用户本人持有；
 	//   - 访问码密码用于访问码 + 口令登录（可分享给他人管理已绑定容器）。
 	// 该口令必须可回显（管理员/用户端均需展示），因此以 AES-256-GCM 可逆加密落库
-	// （见 store_sqlite.go 的 save/load），内存中为明文。
+	// （见 store_db.go 的 save/load），内存中为明文。
 	AccessCodePassword string `json:"access_code_password,omitempty"`
 	CreatedAt          string `json:"created_at"`
 	TokenVersion       int    `json:"token_version"`
@@ -1362,8 +1362,8 @@ type APIRateLimitConfig struct {
 }
 
 // SMTPSettings 邮件发送（SMTP）配置：用于子用户账号通知
-// （挂起/复机/到期提醒等）。密码只存于此处并随 config.db 0600 权限保护，
-// API 读取时Password 字段不回显（见 api 层 smtp 设置端点）。
+// （挂起/复机/到期提醒等）。密码只存于配置库且不回显，
+// API 读取时 Password 字段为空（见 api 层 smtp 设置端点）。
 type SMTPSettings struct {
 	Enabled  bool   `json:"enabled"`
 	Host     string `json:"host"`
@@ -2073,7 +2073,7 @@ func InitConfig() (*EyvescloudConfig, error) {
 		normalizeConfigDefaults(dataDir)
 		migrateLoadedConfig()
 		AppConfigMu.Unlock()
-		// Always save legacy JSON data into SQLite.
+		// Always save legacy JSON data into the config store.
 		if err := SaveConfig(); err != nil {
 			return nil, err
 		}
@@ -2939,7 +2939,7 @@ func SaveConfig() error {
 	return saveConfigToDB()
 }
 
-// CloseConfigDB 关闭 SQLite 连接（用于服务优雅停机与测试中重放启动迁移）。
+// CloseConfigDB 关闭配置库连接（用于服务优雅停机与测试中重放启动迁移）。
 // 之后的再次调用会重新打开数据库并重跑 ensureSchema 迁移（幂等）。
 func CloseConfigDB() {
 	dbMu.Lock()
@@ -4752,7 +4752,7 @@ func IsValidContainerNameSyntax(name string) bool {
 	return true
 }
 
-// 审计/登录日志的保留条数上限。内存切片与 SQLite 表用同一上限，增量追加后两者保持一致。
+// 审计/登录日志的保留条数上限。内存切片与配置库表用同一上限，增量追加后两者保持一致。
 const (
 	auditLogKeep = 500
 	loginLogKeep = 200

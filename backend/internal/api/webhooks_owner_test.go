@@ -84,7 +84,7 @@ func TestUpdateWebhook_RejectsNonOwner(t *testing.T) {
 
 // canAccessWebhook 已通过 TestCanAccessWebhook_* 系列覆盖 admin/global/owner/other
 // 四个判定组合，本处不再额外集成测试 update/delete 的 200 路径——它们会触发
-// SQLite 写入（SaveConfig），需真实数据库，与单元测试关注点正交。
+// 配置库写入（SaveConfig），需真实数据库，与单元测试关注点正交。
 
 // 防止编译时方法未使用的告警（withActor / withAuthContext 在测试中被用到）。
 var _ = context.Background

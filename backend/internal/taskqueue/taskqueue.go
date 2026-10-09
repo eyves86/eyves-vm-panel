@@ -8,7 +8,7 @@
 //
 // 本包与 api/taskqueue.go 互不冲突：api/taskqueue.go 是 UI 异步任务队列
 // （创建/启动/停止等长操作入队后由 worker 调 lxc/kvm），本包面向"跨节点编排
-// + 死信 + 进度"语义；任务记录独立写入 SQLite task_orchestration 表（与
+// + 死信 + 进度"语义；任务记录独立写入配置库 task_orchestration 表（与
 // 现有 saved_tasks 表不同）。
 package taskqueue
 
@@ -98,7 +98,7 @@ func NewQueue() *Queue {
 // Enqueue 入队；返回分配的任务 ID。
 //
 // nextID 由调用方注入（保证与全局唯一 ID 不冲突）；纯函数语义，调用方
-// 负责持久化。本包不接 SQLite，调用方负责 Save/Load。
+// 负责持久化。本包不接数据库，调用方负责 Save/Load。
 func (q *Queue) Enqueue(taskID, taskType string, payload []byte, priority Priority, parent string, dependsOn []string) *Task {
 	t := &Task{
 		ID:        taskID,

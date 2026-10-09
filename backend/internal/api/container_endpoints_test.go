@@ -12,10 +12,11 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// setupContainerEndpointTestStore 初始化临时 SQLite + 单一容器，便于
+// setupContainerEndpointTestStore 初始化临时配置库（Postgres）+ 单一容器，便于
 // 调用 /api/containers/{id}/<action> 端点时的 MutateGlobal 落库。
 func setupContainerEndpointTestStore(t *testing.T, container config.Container) {
 	t.Helper()
+	requirePGTest(t)
 	dir := t.TempDir()
 	previous := config.AppConfig
 	config.SetConfigPath(filepath.Join(dir, "config.json"))

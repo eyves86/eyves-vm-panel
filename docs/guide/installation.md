@@ -7,6 +7,7 @@ EyvesCloud 提供一键安装脚本。脚本默认安装 GitHub Releases 的最�
 - Linux x86_64/amd64 或 ARM64/aarch64 宿主机。
 - root 权限。
 - systemd（或 OpenRC）。
+- PostgreSQL 13+（v3 起配置库与遥测库必需）：全新主机由安装器自动安装并初始化本机实例；也可设置 `EYVESCLOUD_PG_DSN` 使用外部数据库。
 - 网络可访问 GitHub Release 下载地址。
 - 如果要使用 LXC，需要宿主机支持 LXC 运行环境。
 - 如果要使用 KVM，需要宿主机开启虚拟化并安装 libvirt/QEMU。

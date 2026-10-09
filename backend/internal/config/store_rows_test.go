@@ -264,18 +264,16 @@ func fpMutateLeaf(t *testing.T, v reflect.Value) func() {
 	}
 }
 
-// writeProbe 统计特定表的 INSERT/DELETE 次数，用于断言「只写变化的行」。
-// 触发器语法两端不同：SQLite 用内联 BEGIN..END，Postgres 必须挂一个 plpgsql 函数。
+// installWriteProbe 统计特定表的 INSERT/UPDATE/DELETE 次数，用于断言「只写变化的行」。
+// Postgres 的触发器必须挂在一个 plpgsql 函数上（不像 SQLite 可内联 BEGIN..END）。
 func installWriteProbe(t *testing.T, tables ...string) {
 	t.Helper()
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS _write_probe (name TEXT PRIMARY KEY, n INTEGER NOT NULL DEFAULT 0)`); err != nil {
 		t.Fatal(err)
 	}
-	if configDBIsPostgres {
-		if _, err := db.Exec(`CREATE OR REPLACE FUNCTION _probe_bump() RETURNS trigger LANGUAGE plpgsql AS $$
-			BEGIN UPDATE _write_probe SET n = n + 1 WHERE name = TG_ARGV[0]; RETURN NULL; END $$`); err != nil {
-			t.Fatal(err)
-		}
+	if _, err := db.Exec(`CREATE OR REPLACE FUNCTION _probe_bump() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN UPDATE _write_probe SET n = n + 1 WHERE name = TG_ARGV[0]; RETURN NULL; END $$`); err != nil {
+		t.Fatal(err)
 	}
 	// UPDATE 也要计：app_meta 的 upsert 走 `INSERT .. ON CONFLICT DO UPDATE`，
 	// 改写已存在的键触发的是 UPDATE 而非 INSERT。
@@ -285,20 +283,42 @@ func installWriteProbe(t *testing.T, tables ...string) {
 			if _, err := db.Exec(`INSERT INTO _write_probe(name, n) VALUES (?, 0) ON CONFLICT(name) DO NOTHING`, name); err != nil {
 				t.Fatal(err)
 			}
-			var stmt string
-			if configDBIsPostgres {
-				stmt = "CREATE OR REPLACE TRIGGER probe_" + name +
-					" AFTER " + op + " ON " + table +
-					" FOR EACH ROW EXECUTE FUNCTION _probe_bump('" + name + "')"
-			} else {
-				stmt = "CREATE TRIGGER IF NOT EXISTS probe_" + name +
-					" AFTER " + op + " ON " + table +
-					" BEGIN UPDATE _write_probe SET n = n + 1 WHERE name = '" + name + "'; END"
+			// PG13 不支持 CREATE OR REPLACE TRIGGER（PG14 才有），统一先 DROP IF EXISTS 再建，
+			// 兼容老发行版自带的 PostgreSQL。
+			if _, err := db.Exec("DROP TRIGGER IF EXISTS probe_" + name + " ON " + table); err != nil {
+				t.Fatal(err)
 			}
+			stmt := "CREATE TRIGGER probe_" + name +
+				" AFTER " + op + " ON " + table +
+				" FOR EACH ROW EXECUTE FUNCTION _probe_bump('" + name + "')"
 			if _, err := db.Exec(stmt); err != nil {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+// installFailTrigger 在 table 的 op（INSERT/UPDATE/DELETE）前挂一个「写入即报错」的触发器，
+// 用于向落库路径注入失败。Postgres 的触发器要挂在 plpgsql 函数上；PG13 无
+// CREATE OR REPLACE TRIGGER，故先 DROP IF EXISTS 再建。
+func installFailTrigger(t *testing.T, name, table, op string) {
+	t.Helper()
+	fn := name + "_fn"
+	if _, err := db.Exec("CREATE OR REPLACE FUNCTION " + fn + "() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'inject'; END $$"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("DROP TRIGGER IF EXISTS " + name + " ON " + table); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("CREATE TRIGGER " + name + " BEFORE " + op + " ON " + table + " FOR EACH ROW EXECUTE FUNCTION " + fn + "()"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func dropFailTrigger(t *testing.T, name, table string) {
+	t.Helper()
+	if _, err := db.Exec("DROP TRIGGER IF EXISTS " + name + " ON " + table); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -961,9 +981,8 @@ func TestExactSaveRollsBackFingerprintsOnFailure(t *testing.T) {
 
 	// 注入失败：sub_users 插入报错。落库步骤顺序为 containers → accessLinks →
 	// subUsers → ...，故容器行已「写入」后失败，正是跨步骤回滚的用例。
-	if _, err := db.Exec(`CREATE TRIGGER fail_sub_user_insert BEFORE INSERT ON sub_users BEGIN SELECT RAISE(ABORT, 'inject'); END`); err != nil {
-		t.Fatal(err)
-	}
+	installFailTrigger(t, "fail_sub_user_insert", "sub_users", "INSERT")
+	t.Cleanup(func() { dropFailTrigger(t, "fail_sub_user_insert", "sub_users") })
 
 	AppConfig.Containers[0].Name = "ct-1-renamed"
 	AppConfig.SubUsers = []SubUser{{ID: "su-1", Username: "alice", PassHash: "h", Role: "operator", CreatedAt: "2026-01-01"}}
@@ -986,9 +1005,7 @@ func TestExactSaveRollsBackFingerprintsOnFailure(t *testing.T) {
 	}
 
 	// 恢复路径：移除注入后，下一次保存必须把「失败的那次改动」补上。
-	if _, err := db.Exec(`DROP TRIGGER fail_sub_user_insert`); err != nil {
-		t.Fatal(err)
-	}
+	dropFailTrigger(t, "fail_sub_user_insert", "sub_users")
 	if err := saveConfigToDBHinted(newExactDirtyHint(nil, nil)); err != nil {
 		t.Fatal(err)
 	}

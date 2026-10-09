@@ -43,7 +43,7 @@ type RefreshToken struct {
 	Used      bool      `json:"used"`
 }
 
-// Store 会话+refresh token 内存仓库（生产换 SQLite）。
+// Store 会话+refresh token 内存仓库（生产可接配置库）。
 type Store struct {
 	mu        sync.Mutex
 	sessions  map[string]*Session

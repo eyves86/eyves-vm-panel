@@ -1,16 +1,15 @@
 package config
 
-// store_postgres_test.go —— P1：Postgres 后端的往返校验（env 门控）。
+// store_postgres_test.go —— Postgres 后端的往返校验（env 门控）。
 //
 // 只有设置了 EYVESCLOUD_PG_TEST_DSN（指向一个一次性的隔离 Postgres 库）才运行，
-// 未设置直接 skip，故默认的 SQLite 测试流不受影响。测试库会被整体重建，
-// 绝不要指向任何真实数据库。
+// 未设置直接 skip。测试库会被整体重建，绝不要指向任何真实数据库。
 //
 // 覆盖的接缝（都是 rebind 与方言差异最容易出错的地方）：
 //   - `?`→`$n` 重绑定（全部语句）；
 //   - 保留字 "user"（audit_logs / tasks / task_history 的写入与过滤）；
 //   - 自增主键（audit_logs / login_logs / task_logs 依赖 IDENTITY 与 id 排序）；
-//   - ON CONFLICT upsert（task_history 覆盖写，替代 SQLite 的 INSERT OR REPLACE）；
+//   - ON CONFLICT upsert（task_history 覆盖写）；
 //   - 加密落库字段（SSH 口令 / 访问码 / 节点 token）跨重启解密还原。
 
 import (
@@ -175,91 +174,6 @@ func TestPostgresRebindPlaceholders(t *testing.T) {
 	for _, c := range cases {
 		if got := rebind(c.in); got != c.want {
 			t.Errorf("rebind(%q) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
-// columnsByTable 从 CREATE TABLE 语句里抽出「表名 → 列名集合」。只处理本项目 DDL 的
-// 写法：一列一行，约束行以 PRIMARY/UNIQUE/FOREIGN/CONSTRAINT/CHECK 开头。
-func columnsByTable(stmts []string) map[string]map[string]bool {
-	out := map[string]map[string]bool{}
-	for _, s := range stmts {
-		body := strings.TrimSpace(s)
-		if !strings.HasPrefix(strings.ToUpper(body), "CREATE TABLE") {
-			continue
-		}
-		open, closeIdx := strings.Index(body, "("), strings.LastIndex(body, ")")
-		if open < 0 || closeIdx <= open {
-			continue
-		}
-		fields := strings.Fields(body[:open])
-		table := strings.Trim(fields[len(fields)-1], `"`)
-		cols := map[string]bool{}
-		for _, line := range strings.Split(body[open+1:closeIdx], "\n") {
-			line = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(line), ","))
-			if line == "" {
-				continue
-			}
-			name := strings.Trim(strings.Fields(line)[0], `"`)
-			switch strings.ToUpper(name) {
-			case "PRIMARY", "UNIQUE", "FOREIGN", "CONSTRAINT", "CHECK":
-				continue
-			}
-			cols[name] = true
-		}
-		out[table] = cols
-	}
-	return out
-}
-
-// migrationsByTable 把共享的后加列清单整理成「表 → 列集合」。
-func migrationsByTable() map[string]map[string]bool {
-	out := map[string]map[string]bool{}
-	for _, m := range schemaColumnMigrations() {
-		if out[m.table] == nil {
-			out[m.table] = map[string]bool{}
-		}
-		out[m.table][m.name] = true
-	}
-	return out
-}
-
-// TestSQLiteAndPostgresSchemaParity 断言两端「最终列集合」逐表一致，即
-// sqliteBase ∪ 迁移 == postgresBase ∪ 迁移（PG 基础建表内联了历史列，SQLite 靠迁移补，
-// 见 schemaColumnMigrations 的注释）。任何一处加了列而另一处既不在基础也不在迁移清单，
-// 都会让该后端缺列 —— PG 侧尤其致命：CREATE TABLE IF NOT EXISTS 对已存在的表是空操作，
-// 缺的列只能靠 ensureSchemaMigrations 补。纯静态、不需要 PG，默认测试流即跑。
-func TestSQLiteAndPostgresSchemaParity(t *testing.T) {
-	mig := migrationsByTable()
-	sqlite := columnsByTable(sqliteSchemaStmts())
-	pg := columnsByTable(postgresSchemaStmts())
-	// 解析自检：DDL 写法若被改坏导致抽不出列，测试会静默通过 —— 先钉死规模。
-	if len(sqlite) < 20 || len(pg) < 20 || len(mig) == 0 {
-		t.Fatalf("DDL 解析出的表/迁移过少（sqlite=%d pg=%d mig=%d），解析可能失效", len(sqlite), len(pg), len(mig))
-	}
-	if len(sqlite["containers"]) < 60 {
-		t.Fatalf("containers 解析出的列过少（%d），解析可能失效", len(sqlite["containers"]))
-	}
-	// 某侧「基础 ∪ 迁移」有的列，另一侧也必须在「基础 ∪ 迁移」里有。
-	has := func(base map[string]map[string]bool, table, col string) bool {
-		return base[table][col] || mig[table][col]
-	}
-	all := map[string]bool{}
-	for _, tset := range []map[string]map[string]bool{sqlite, pg, mig} {
-		for table := range tset {
-			all[table] = true
-		}
-	}
-	for table := range all {
-		for col := range sqlite[table] {
-			if !has(pg, table, col) {
-				t.Errorf("表 %s 列 %s：SQLite 侧有（基础∪迁移），Postgres 侧没有", table, col)
-			}
-		}
-		for col := range pg[table] {
-			if !has(sqlite, table, col) {
-				t.Errorf("表 %s 列 %s：Postgres 侧有（基础∪迁移），SQLite 侧没有", table, col)
-			}
 		}
 	}
 }

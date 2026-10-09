@@ -379,25 +379,18 @@ if [ -n "$TOKEN" ]; then
     fi
 fi
 
-# 配置库完好性
+# 配置库形态（v3 起配置库仅 Postgres）：全新装不应产生 SQLite 的 config.db，
+# 且安装器会把 Postgres DSN 落盘到 0600 的 store.env。
 if [ -f "$DATA_DIR/config.db" ]; then
-    if have python3; then
-        ic="$(python3 - "$DATA_DIR/config.db" <<'PY' 2>/dev/null || true
-import sqlite3, sys
-try:
-    c = sqlite3.connect(sys.argv[1])
-    print(c.execute("PRAGMA integrity_check").fetchone()[0])
-except Exception as e:
-    print("error: %s" % e)
-PY
-)"
-        [ "$ic" = "ok" ] && record PASS "config.db integrity_check=ok" || record FAIL "config.db integrity_check=ok" "$ic"
-    else
-        record SKIP "config.db integrity_check" "无 python3"
-    fi
+    record FAIL "全新装无 SQLite config.db" "$DATA_DIR/config.db 残留（v3 应为 Postgres）"
     cp -f "$DATA_DIR/config.db" "$REPORT_DIR/config.db.copy" 2>/dev/null || true
 else
-    record FAIL "config.db 已生成" "$DATA_DIR/config.db 不存在"
+    record PASS "全新装无 SQLite config.db"
+fi
+if [ -f /etc/eyvescloud/store.env ] && grep -q '^EYVESCLOUD_PG_DSN=' /etc/eyvescloud/store.env; then
+    record PASS "配置库 DSN 已持久化（Postgres，store.env）"
+else
+    record WARN "store.env 未见 EYVESCLOUD_PG_DSN" "配置库可能未按 Postgres 落盘"
 fi
 
 # 首启凭据文件应存在（尚未登录过则保留；已登录后可能被删）

@@ -104,7 +104,7 @@ func secretKey(key string, get func() string) metaEntry {
 // jsonSecretKey：src 为明文结构（指纹稳定，不因每次加密的随机 nonce 而抖动），
 // 落库串为该结构的 JSON 但 secretFields 列出的字段（json tag 名）已 AES-GCM 加密。
 // 适用于「一个 JSON 值里混有普通设置与凭据字段」的配置——整体明文落库会让凭据
-// 明文躺在 SQLite 里（Webhooks[].secret 可伪造回调；SMTPSettings.password /
+// 明文躺在配置库里（Webhooks[].secret 可伪造回调；SMTPSettings.password /
 // NotificationConfig.smtp_password 可劫持邮件）。
 //
 // storedSane 逐字段校验：任一列出字段为非空明文即判为历史明文，强制重写一次完成
@@ -207,7 +207,7 @@ func metaEntries(cfg *EyvescloudConfig) []metaEntry {
 		jsonKey("sec_groups", func() any { return cfg.SecGroups }),
 		jsonKey("sec_group_rules", func() any { return cfg.SecGroupRules }),
 		boolKey("security_group_enforced", func() bool { return cfg.SecurityGroupEnforced }),
-		// 节点自 P2 起独立成表（每节点一行，见 store_sqlite.go 的 loadNodes /
+		// 节点自 P2 起独立成表（每节点一行，见 store_db.go 的 loadNodes /
 		// upsertNodeRow 与 store_rows.go 的 diffNodes）：不再作为单个 app_meta 大值键。
 		// 30k 节点时该键序列化 + 逐节点 AES-GCM 加密要 129ms、提交 9.5MB 值要 65ms，
 		// 且节点任何一点遥测变化都要整键重写。历史键由 migrateLegacyNodesRow 搬迁后删除。
@@ -220,7 +220,7 @@ func metaEntries(cfg *EyvescloudConfig) []metaEntry {
 		jsonKey("instance_backup_settings", func() any { return cfg.InstanceBackupSettings }),
 		jsonKey("remote_backup_settings", func() any { return cfg.RemoteBackupSettings }),
 		// smtp_settings 的 password 是 SMTP 账号凭据：混在普通设置里，必须单独加密
-		// （此前整值明文落库 = 邮箱口令明文躺在 SQLite）。
+		// （此前整值明文落库 = 邮箱口令明文躺在配置库）。
 		jsonSecretKey("smtp_settings", func() any { return cfg.SMTPSettings }, "password"),
 		jsonKey("backups", func() any { return cfg.Backups }),
 		jsonKey("instance_backups", func() any { return cfg.InstanceBackups }),

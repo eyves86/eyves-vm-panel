@@ -2,9 +2,13 @@ package config
 
 import (
 	"context"
+	"crypto/sha1"
 	"database/sql"
 	"database/sql/driver"
+	"encoding/hex"
 	"fmt"
+	"net/url"
+	"os"
 	"strconv"
 	"strings"
 
@@ -12,22 +16,20 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
-// store_postgres.go —— 配置库的 Postgres 后端（P1，实验性，env 门控）。
+// store_postgres.go —— 配置库的 Postgres 后端（v3 起为唯一后端）。
 //
-// 门控：EYVESCLOUD_PG_DSN 非空时配置库走 Postgres，否则保持 SQLite（默认，行为不变）。
+// EYVESCLOUD_PG_DSN 指定配置库；v3 已整体移除 SQLite 后端，未配置时直接启动失败（无回落）。
 // 复用同一套行级增量落库 SQL：现有语句全是 `?` 占位符，pgx 只认 `$n`，故在 driver
 // 层做 `?`→`$n` 重绑定（rebindConnector），避免改动上百处调用点。少数方言差异
-// （保留字 user、INSERT OR REPLACE）已就地改成两端通用写法。
+// （保留字 user、INSERT OR REPLACE）已就地改成 PG 通用写法。
 //
-// 第一刀范围 = 配置库的读写往返（表结构映射）。已知局限：
-//   - 表结构由 ensurePostgresSchema 一次建全（含全部历史迁移列），不做逐列 ALTER 迁移；
-//   - 自备份（VACUUM INTO）与 WAL 检查点是 SQLite 专有，PG 下分别「明确报错」与「跳过」；
-//   - 单实例写路径仍由 dbMu 串行，尚未做分片（P3）。
+// 表结构由 ensureSchemaOn 建全（基础建表内联历史列 + 共享列迁移补后加列）。
 const pgDSNEnv = "EYVESCLOUD_PG_DSN"
 
-// configDBIsPostgres 标记当前配置库是否为 Postgres 后端，供 SQLite 专有维护路径
-// （WAL 检查点 / VACUUM 备份）判断是否跳过。仅在 dbMu 保护下读写。
-var configDBIsPostgres bool
+// pgTestDSNEnv 是**测试专用**钩子：Go 测试进程未显式设置 pgDSNEnv 时改读本变量，
+// 并按配置文件路径派生一个独立 schema（复刻 SQLite 时代「每个用例一个库文件」的隔离
+// 语义）。生产部署只设 EYVESCLOUD_PG_DSN，绝不设本变量。见 testConfigDSN。
+const pgTestDSNEnv = "EYVESCLOUD_PG_TEST_DSN"
 
 // rebind 把 `?` 占位符改写成 pgx 需要的 `$1..$n`。引用段（单引号 / 双引号包裹的
 // 字符串与标识符）内的 `?` 原样保留，含 SQL 的相邻引号转义写法。语句里没有 `?`
@@ -139,14 +141,60 @@ func openPostgresConfigDB(dsn string) error {
 		return err
 	}
 	db = next
-	configDBIsPostgres = true
-	return ensurePostgresSchema()
+	return ensureSchemaOn(db)
 }
 
-// postgresSchemaStmts 是 Postgres 的基础建表语句，与 sqliteSchemaStmts 的列集合一一对应
-// （TestSQLiteAndPostgresSchemaParity 守卫）。类型映射：INTEGER→BIGINT、REAL→
-// DOUBLE PRECISION、自增主键→IDENTITY；保留字 "user" 加引号（SQLite 同样接受带引号
-// 写法，故运行时 SQL 也统一加引号）。此后新增列统一走共享的 ensureSchemaMigrations。
+// testConfigDSN 是 pgTestDSNEnv 的读取端：非测试进程返回空串；测试进程返回一个带
+// 独立 schema 的 DSN，隔离粒度 = 配置文件路径（每个用例各自的 TempDir/config.json）。
+// schema 名由路径哈希派生，故同一用例内 reopenConfig（关闭再 InitConfig）会命中同一
+// schema 而保留数据，不同用例天然互不干扰。
+func testConfigDSN() (string, error) {
+	base := strings.TrimSpace(os.Getenv(pgTestDSNEnv))
+	if base == "" {
+		return "", nil
+	}
+	return schemaDSN(base, testSchemaName(getConfigPath()))
+}
+
+// testCellDSN 为 cell 分库测试派生一个 DSN：schema 由控制库配置路径 + cell 名共同派生，
+// 故每个用例各自唯一（且与控制库 schema 不同），复用同一台测试 Postgres。
+func testCellDSN(cellID string) (string, error) {
+	base := strings.TrimSpace(os.Getenv(pgTestDSNEnv))
+	if base == "" {
+		return "", fmt.Errorf("未设置 %s（cell 分库测试需要 Postgres）", pgTestDSNEnv)
+	}
+	return schemaDSN(base, testSchemaName(getConfigPath()+"|"+cellID))
+}
+
+// schemaDSN 在 base DSN 上建好 schema 并把 search_path 指向它，返回可用的 DSN。
+func schemaDSN(base, schema string) (string, error) {
+	conn, err := openPostgresConn(base)
+	if err != nil {
+		return "", fmt.Errorf("测试 Postgres 连接失败: %w", err)
+	}
+	defer conn.Close()
+	if _, err := conn.Exec("CREATE SCHEMA IF NOT EXISTS " + schema); err != nil {
+		return "", fmt.Errorf("创建测试 schema %s 失败: %w", schema, err)
+	}
+	u, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("解析测试 Postgres DSN 失败: %w", err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	return u.String(), nil
+}
+
+// testSchemaName 由配置路径派生一个合法的 Postgres schema 名（≤63 字符、纯 ASCII）。
+func testSchemaName(cfgPath string) string {
+	sum := sha1.Sum([]byte(cfgPath))
+	return "t_" + hex.EncodeToString(sum[:6])
+}
+
+// postgresSchemaStmts 是配置库的基础建表语句（SQLite 类型经 INTEGER→BIGINT、
+// REAL→DOUBLE PRECISION、自增主键→IDENTITY 翻译而来）；保留字 "user" 加引号。
+// 此后新增列统一走共享的 schemaColumnMigrations。
 func postgresSchemaStmts() []string {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS app_meta (
@@ -499,11 +547,4 @@ func postgresSchemaStmts() []string {
 		`CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs (task_id, id)`,
 	}
 	return stmts
-}
-
-// ensurePostgresSchema 建基础表后跑共享列迁移：既有 PG 库升级时靠它补齐新增列
-// （否则 CREATE TABLE IF NOT EXISTS 对已存在的表是空操作、新列永远补不上），
-// 新库则等价于「基础表 + 迁移列」的并集。幂等。
-func ensurePostgresSchema() error {
-	return ensureSchemaOn(db, true)
 }

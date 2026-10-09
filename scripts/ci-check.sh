@@ -77,7 +77,7 @@ verify_contracts() {
   fi
 
   # 4) 安全组配置必须落库（曾完全不落库：重启后配置全丢）。
-  if grep -q '"sec_groups"' "$BACKEND/internal/config/store_sqlite.go"; then
+  if grep -q '"sec_groups"' "$BACKEND/internal/config/store_meta.go"; then
     ok "安全组配置已纳入持久化"
   else
     bad "安全组配置未落库（重启后丢失）"

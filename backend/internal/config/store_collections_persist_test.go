@@ -91,7 +91,7 @@ func TestCollectionsSurviveRestart(t *testing.T) {
 }
 
 // TestWebhookSecretEncryptedAtRest Webhook HMAC 密钥是可伪造回调的凭据，
-// 落库必须是密文（enc:v1: 前缀），不能明文躺在 SQLite 里。
+// 落库必须是密文（enc:v1: 前缀），不能明文躺在配置库里。
 func TestWebhookSecretEncryptedAtRest(t *testing.T) {
 	withCollectionsPersistTest(t)
 

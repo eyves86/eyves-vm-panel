@@ -71,7 +71,7 @@ At minimum, verify:
 
 Back up regularly:
 
-- The EyvesCloud configuration directory (including the SQLite database).
+- The EyvesCloud configuration directory and the PostgreSQL database (back it up with `pg_dump`).
 - The worker's `agent.json` (lets you restore access directly after replacing the worker's disk).
 - Container configuration.
 - Snapshots of critical containers or external data backups.

@@ -1,6 +1,6 @@
 # 配置说明
 
-EyvesCloud 安装后会以 systemd 服务运行，运行时配置和数据库保存在宿主机本地。实际路径可能随安装脚本参数变化，默认安装建议以 `/root/.eyvescloud/` 为主要检查位置。
+EyvesCloud 安装后会以 systemd 服务运行。面板配置（含 PostgreSQL DSN）保存在宿主机本地（安装器写入 `/etc/eyvescloud/store.env`），业务数据保存在 PostgreSQL 数据库。实际路径可能随安装脚本参数变化，默认安装建议以 `/root/.eyvescloud/` 为主要检查位置。
 
 ## 常见配置项
 
@@ -8,7 +8,7 @@ EyvesCloud 安装后会以 systemd 服务运行，运行时配置和数据库保
 | --- | --- |
 | Web 端口 | 默认 `8999`，服务启动时监听 `0.0.0.0:8999`。 |
 | 管理员账号 | 用于登录 Web 面板和管理 API Key。 |
-| 数据库 | SQLite，用于保存容器元数据、节点、子用户、审计日志、API Key 等。 |
+| 数据库 | PostgreSQL（v3 起），保存容器元数据、节点、子用户、审计日志、API Key、指标采样等；连接串见 `EYVESCLOUD_PG_DSN`。 |
 | NAT 端口范围 | 用于随机端口和端口映射分配。 |
 | IPv6 地址段 | 宿主机有可路由 IPv6 时可配置分配策略。 |
 | 存储池 | 可配置多个存储池及内容类型（LXC/KVM/镜像/快照/备份）。 |

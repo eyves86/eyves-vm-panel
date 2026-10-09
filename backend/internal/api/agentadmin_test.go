@@ -7,11 +7,25 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"eyvescloud/internal/config"
 )
+
+// pgTestDSNEnv 与 config 包的测试钩子同名（环境变量是跨包契约，只能按字面约定）。
+const pgTestDSNEnv = "EYVESCLOUD_PG_TEST_DSN"
+
+// requirePGTest 在未配置 Postgres 测试 DSN 时跳过需要配置库的用例。v3 起配置库
+// 仅 Postgres、无 SQLite 回落，因此没有 DSN 就无法初始化配置库。内存态用例
+// （只改 config.AppConfig）不受影响，不会被跳过。
+func requirePGTest(tb testing.TB) {
+	tb.Helper()
+	if strings.TrimSpace(os.Getenv(pgTestDSNEnv)) == "" {
+		tb.Skip("未设置 " + pgTestDSNEnv + "，跳过需要配置库的用例（v3 起配置库仅 Postgres）")
+	}
+}
 
 // TestMain 屏蔽「节点侧重启」副作用：注册/对接链路（TestNodeAdoptEndToEnd 等）
 // 会触发 scheduleNodeSideRestart，默认实现 2 秒后真的执行
@@ -224,6 +238,7 @@ func TestAgentRegisterValidatesInput(t *testing.T) {
 // 回连主控 handleNodeRegister（install key 换 node token）→ agent.json 落盘、
 // 对接密钥即焚、install key 一次性清空、节点自动上线；重放同一密钥被拒绝。
 func TestNodeAdoptEndToEnd(t *testing.T) {
+	requirePGTest(t)
 	agentAdminTestConfig(t)
 	// 模拟全新安装：临时数据目录 + 首启 InitConfig（自动生成管理员凭据与
 	// 24h 一次性对接密钥，即安装脚本 node-link 展示的那把）。

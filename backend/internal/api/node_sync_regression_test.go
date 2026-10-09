@@ -3,7 +3,7 @@ package api
 // node_sync_regression_test.go —— 节点容器同步/持久化回归（2026-09-30 生产实测修复）。
 //
 // 锁定以下真实 bug（生产复现链）：
-//   1. 节点容器主控 ID 与本地容器撞号 → SQLite 主键冲突 → 整笔保存回滚（静默丢配置）
+//   1. 节点容器主控 ID 与本地容器撞号 → 配置库主键冲突 → 整笔保存回滚（静默丢配置）
 //   2. node_id 不落库 → 重启后节点容器"变成本机"→ orphan 检测永远失配
 //   3. 心跳空容器清单时不同步 → 节点清空容器后主控无法清理 orphan
 //   4. 代理删除成功后主控侧记录残留
@@ -37,9 +37,10 @@ func resetNodeReportedForTest() {
 	nodeReportedSeeded = false
 }
 
-// setupNodeSyncTest 初始化临时 DB + 基础配置（1 个本机容器 id=3）。
+// setupNodeSyncTest 初始化临时配置库 + 基础配置（1 个本机容器 id=3）。
 func setupNodeSyncTest(t *testing.T) {
 	t.Helper()
+	requirePGTest(t)
 	resetNodeReportedForTest()
 	dir := t.TempDir()
 	config.SetConfigPath(filepath.Join(dir, "config.json"))

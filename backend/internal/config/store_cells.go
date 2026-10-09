@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -23,10 +22,10 @@ import (
 // 换库（靠指纹键里编码的归属库检测）。container_access_links（访问码凭据，UUID 主键）
 // **留在控制库**，不随分库搬运。
 //
-// 配置来源：环境变量 EYVESCLOUD_CELL_DSNS，逗号分隔 "cell-1=/path/a.db,cell-2=postgres://..."。
-// 用 env 而非配置字段，是为了不在本片就引入「凭据入库 + 加密」这条链路（与既有的
-// EYVESCLOUD_PG_DSN / EYVESCLOUD_AGENT_GATEWAY_ADDR 风格一致）。未列出的 cell ⇒
-// 其节点仍落在控制库。
+// 配置来源：环境变量 EYVESCLOUD_CELL_DSNS，逗号分隔 "cell-1=postgres://...,cell-2=postgres://..."。
+// v3 起 cell 库与配置库一样只支持 Postgres。用 env 而非配置字段，是为了不在本片就引入
+// 「凭据入库 + 加密」这条链路（与既有的 EYVESCLOUD_PG_DSN / EYVESCLOUD_AGENT_GATEWAY_ADDR
+// 风格一致）。未列出的 cell ⇒ 其节点仍落在控制库。
 //
 // 一致性口径：跨库没有事务——控制库事务失败不会回滚已提交的 cell 事务（反之亦然）。
 // 这是分片的固有代价（设计文档 §7 接受最终一致），也正是 P3 要的隔离性：单个 cell
@@ -39,9 +38,8 @@ import (
 const cellDSNsEnv = "EYVESCLOUD_CELL_DSNS"
 
 type cellStore struct {
-	id   string
-	db   *sql.DB
-	isPG bool
+	id string
+	db *sql.DB
 }
 
 var (
@@ -65,11 +63,6 @@ func parseCellDSNs(raw string) map[string]string {
 		out[id] = dsn
 	}
 	return out
-}
-
-func isPostgresDSN(dsn string) bool {
-	lower := strings.ToLower(dsn)
-	return strings.HasPrefix(lower, "postgres://") || strings.HasPrefix(lower, "postgresql://")
 }
 
 // openCellStores 打开并建表全部已配置的 cell 库。调用方（openConfigDB）已持有 dbMu。
@@ -111,33 +104,15 @@ func openCellStores() error {
 }
 
 func openCellStore(id, dsn string) (*cellStore, error) {
-	isPG := isPostgresDSN(dsn)
-	var conn *sql.DB
-	var err error
-	if isPG {
-		conn, err = openPostgresConn(dsn)
-	} else {
-		if err = os.MkdirAll(filepath.Dir(dsn), 0700); err != nil {
-			return nil, fmt.Errorf("创建 cell 库目录失败: %w", err)
-		}
-		conn, err = sql.Open("sqlite", sqliteDSN(dsn, configDBPragmas))
-		if err == nil {
-			conn.SetMaxOpenConns(1)
-			conn.SetMaxIdleConns(1)
-		}
-	}
+	conn, err := openPostgresConn(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("打开 cell 库失败: %w", err)
 	}
-	if err := ensureSchemaOn(conn, isPG); err != nil {
+	if err := ensureSchemaOn(conn); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}
-	// chmod 必须在建表之后：sql.Open 惰性，文件要等第一条语句才落盘。
-	if !isPG {
-		_ = os.Chmod(dsn, 0600)
-	}
-	return &cellStore{id: id, db: conn, isPG: isPG}, nil
+	return &cellStore{id: id, db: conn}, nil
 }
 
 func closeCellStores() {

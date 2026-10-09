@@ -4,7 +4,7 @@ package config
 //
 // 背景（写放大）：AddAuditLog/AddLoginLog 原先每次追加一行都会 SaveConfig()，
 // 触发整库 17 张表 DELETE+INSERT。改成只 INSERT 一行 + 按 id 裁剪后，必须保证
-// SQLite 表与内存切片始终一致、上限口径一致——否则日志会丢或错位。
+// 配置库表与内存切片始终一致、上限口径一致——否则日志会丢或错位。
 
 import "testing"
 

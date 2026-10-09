@@ -124,8 +124,8 @@ func ComputeIdempotencyKey(cmd Command) string {
 // 控制面与 Agent 共享 Channel 实例：Enqueue 写入待发指令，Poll 返回 after ID 之后
 // 的所有 pending 指令；Agent 提交回执后 MarkCompleted 清理。
 //
-// 持久化由 SQLite 层完成（agent_commands 表），本结构只提供 in-memory 抽象，
-// 接口签名稳定便于后续接 SQLite。
+// 持久化由配置库完成（agent_commands 表），本结构只提供 in-memory 抽象，
+// 接口签名稳定便于后续接持久层。
 type Channel struct {
 	mu       sync.Mutex
 	nextID   int64

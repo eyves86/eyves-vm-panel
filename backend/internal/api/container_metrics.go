@@ -182,7 +182,7 @@ func appendContainerMetricPoint(c config.Container, usage map[string]interface{}
 	}
 	containerMetricHistory[key] = append(history, point)
 
-	// 持久化到 SQLite，面板重启后历史不丢失
+	// 持久化到配置库，面板重启后历史不丢失
 	go func(key string, point ContainerMetricPoint) {
 		_ = config.SaveMetricSamples(key, []config.MetricSample{{
 			TS:        point.TS,
@@ -203,7 +203,7 @@ func getContainerMetricHistory(c *config.Container) []ContainerMetricPoint {
 	key := containerMetricKey(*c)
 	cutoff := time.Now().Add(-hostMetricRetention).UnixMilli()
 
-	// 合并 SQLite 持久化历史与内存最新采样
+	// 合并配置库持久化历史与内存最新采样
 	dbSamples, _ := config.LoadMetricSamples(key, cutoff)
 	merged := make([]ContainerMetricPoint, 0, len(dbSamples)+8)
 	seen := map[int64]bool{}
@@ -278,7 +278,7 @@ func pruneContainerMetricHistory() {
 		}
 	}
 
-	// 清理 SQLite 持久化历史（过期 + 已删除容器）
+	// 清理配置库持久化历史（过期 + 已删除容器）
 	_ = config.PruneMetricSamples(cutoff)
 	_ = config.PruneMetricSamplesForContainers(valid)
 

@@ -49,6 +49,7 @@ func BenchmarkNodeHeartbeatAtScale(b *testing.B) {
 // setupHeartbeatBench 建立 N 个容器的库（其中 10 个归属被测节点），并注册被测节点。
 func setupHeartbeatBench(b *testing.B, n int) {
 	b.Helper()
+	requirePGTest(b)
 	dir := b.TempDir()
 	config.SetConfigPath(filepath.Join(dir, "config.json"))
 	b.Setenv("EYVESCLOUD_DATA_DIR", dir)

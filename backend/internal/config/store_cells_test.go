@@ -14,8 +14,6 @@ import (
 //  3. 节点更新写回 cell 库、删除也从 cell 库生效；
 //  4. 节点换库（控制↔cell）时新库写入、旧库删除，不留双份；重启后仍不重不漏。
 func TestCellShardedNodes(t *testing.T) {
-	cellPath := filepath.Join(t.TempDir(), "cell-1.db")
-
 	// 阶段 1：未配置 cell 库。
 	prev, had := os.LookupEnv(cellDSNsEnv)
 	os.Unsetenv(cellDSNsEnv)
@@ -43,7 +41,11 @@ func TestCellShardedNodes(t *testing.T) {
 	}
 
 	// 阶段 2：配置 cell 库后重启。
-	if err := os.Setenv(cellDSNsEnv, "cell-1="+cellPath); err != nil {
+	cellDSN, err := testCellDSN("cell-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Setenv(cellDSNsEnv, "cell-1="+cellDSN); err != nil {
 		t.Fatal(err)
 	}
 	resetConfigStoreForTest(t)
@@ -131,7 +133,7 @@ func TestCellShardedNodes(t *testing.T) {
 		}
 	}
 	AppConfigMu.Lock()
-	err := saveConfigToDBHinted(newExactDirtySet(DirtySet{Nodes: []Node{moved}}))
+	err = saveConfigToDBHinted(newExactDirtySet(DirtySet{Nodes: []Node{moved}}))
 	AppConfigMu.Unlock()
 	if err != nil {
 		t.Fatal(err)
@@ -199,7 +201,6 @@ func countNodesIn(t *testing.T, conn *sql.DB, id string) int {
 //  5. 节点换回控制库时其容器一并迁回（子表同行），旧库不留双份；
 //  6. 重启后不重不漏、子表与改动完整。
 func TestCellShardedContainers(t *testing.T) {
-	cellPath := filepath.Join(t.TempDir(), "cell-1.db")
 	prev, had := os.LookupEnv(cellDSNsEnv)
 	os.Unsetenv(cellDSNsEnv)
 	t.Cleanup(func() {
@@ -227,7 +228,11 @@ func TestCellShardedContainers(t *testing.T) {
 	}
 
 	// 阶段 2：配置 cell 库后重启 → 节点与其容器一并搬迁、合并读回。
-	if err := os.Setenv(cellDSNsEnv, "cell-1="+cellPath); err != nil {
+	cellDSN, err := testCellDSN("cell-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Setenv(cellDSNsEnv, "cell-1="+cellDSN); err != nil {
 		t.Fatal(err)
 	}
 	resetConfigStoreForTest(t)
@@ -281,7 +286,7 @@ func TestCellShardedContainers(t *testing.T) {
 		}
 	}
 	AppConfigMu.Lock()
-	err := saveConfigToDBHinted(newExactDirtySet(DirtySet{Nodes: []Node{n}, Containers: []Container{c1}}))
+	err = saveConfigToDBHinted(newExactDirtySet(DirtySet{Nodes: []Node{n}, Containers: []Container{c1}}))
 	AppConfigMu.Unlock()
 	if err != nil {
 		t.Fatal(err)

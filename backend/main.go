@@ -27,7 +27,7 @@ var shutdownCaptureOnce sync.Once
 func main() {
 	// 版本查询：`eyvescloud --version | -v | version`。
 	// 必须**早于配置初始化**：否则在全新机器上仅查询版本就会触发首启流程
-	// （生成 config.db、管理员账号与首启凭据文件），在只读文件系统上还会直接报错。
+	// （初始化配置库、创建管理员账号与首启凭据文件），在只读文件系统上还会直接报错。
 	// 安装脚本用该输出做已装版本检测（形如 "EyvesCloud 2.2.3"），因此输出保持单行。
 	for _, arg := range os.Args[1:] {
 		if arg == "--version" || arg == "-v" || arg == "version" {
@@ -171,13 +171,6 @@ func main() {
 
 		// Clean up stale container configs (LXC dir was deleted but config remains)
 		config.CleanStaleContainers()
-
-		// 配置库自备份 + WAL 检查点。
-		//
-		// config.db 是平台唯一真相来源：它损坏时客户的容器还在跑，但面板再也
-		// 管不了它们。生产实测该目录下 backups/ 长期为空（零备份），且 -wal
-		// 涨到主库体积的 10 倍。传 0 使用内置默认（每 6 小时一份、保留 28 份）。
-		config.StartConfigBackupScheduler(0, 0)
 
 		// 安全组强制执行（默认关闭）。
 		//

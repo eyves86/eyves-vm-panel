@@ -16,6 +16,7 @@ import (
 // setupAgentGatewayTest 初始化临时配置库并注册一个带 token 的节点。
 func setupAgentGatewayTest(t *testing.T) {
 	t.Helper()
+	requirePGTest(t)
 	resetNodeReportedForTest()
 	dir := t.TempDir()
 	config.SetConfigPath(filepath.Join(dir, "config.json"))

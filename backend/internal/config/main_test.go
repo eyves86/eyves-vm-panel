@@ -14,6 +14,7 @@ package config
 // 真实数据目录；需要特定目录的用例仍可用 t.Setenv / os.Setenv 自行覆盖。
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -56,6 +57,14 @@ func TestCleanStaleContainersKeepsRecordsWhenLXCRootMissing(t *testing.T) {
 }
 
 func TestMain(m *testing.M) {
+	// v3 起配置库只有 Postgres 后端：绝大多数用例都要 InitConfig 连库，未提供测试 DSN
+	// 时它们只会在 openConfigDB 处集体失败。这里整包跳过（与各用例内部
+	// pgTestDSN 的 skip 口径一致），CI / 本地验证经 EYVESCLOUD_PG_TEST_DSN 注入。
+	if strings.TrimSpace(os.Getenv(pgTestDSNEnv)) == "" {
+		fmt.Fprintln(os.Stderr, "未设置 "+pgTestDSNEnv+"，跳过 config 包测试（配置库已改为 Postgres 必需，无 SQLite 回落）")
+		os.Exit(0)
+	}
+
 	dir, err := os.MkdirTemp("", "eyvescloud-configtest-")
 	if err != nil {
 		panic("创建测试数据目录失败: " + err.Error())

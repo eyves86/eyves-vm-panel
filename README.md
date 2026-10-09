@@ -87,7 +87,7 @@ EYVESCLOUD_REPO=github:eyves86/eyves-vm-panel   # 更新源
 
 ## 技术栈（给开发者）
 
-Go 1.25（单二进制，无外部依赖）+ SQLite（零配置）+ React 18 / TypeScript / Tailwind；虚拟化走 LXC 与 KVM/QEMU（libvirt）。API 见 [docs/features/api.md](docs/features/api.md)（v1 面板自用）与 [docs/API-V2.md](docs/API-V2.md)（v2 给外部集成的稳定契约，117 端点，OpenAPI 自描述）。
+Go 1.25（单二进制，内嵌前端）+ PostgreSQL（配置库与遥测）+ Redis（可选，分布式限流/吊销）+ React 18 / TypeScript / Tailwind；虚拟化走 LXC 与 KVM/QEMU（libvirt）。API 见 [docs/features/api.md](docs/features/api.md)（v1 面板自用）与 [docs/API-V2.md](docs/API-V2.md)（v2 给外部集成的稳定契约，117 端点，OpenAPI 自描述）。
 
 ## 更多文档
 

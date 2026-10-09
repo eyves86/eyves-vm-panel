@@ -71,7 +71,7 @@ eyvescloud agent --controller=http://MASTER_IP:8999 --install-key=INSTALL_KEY --
 
 建议定期备份：
 
-- EyvesCloud 配置目录（含 SQLite 数据库）。
+- EyvesCloud 配置目录与 PostgreSQL 数据库（用 `pg_dump` 备份）。
 - 被控节点的 `agent.json`（更换被控磁盘后可直接恢复接入）。
 - 容器配置。
 - 关键容器的快照或外部数据备份。

@@ -12,10 +12,11 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// setupRDNSTestStore 初始化一个临时 SQLite 配置库并写入测试容器，
+// setupRDNSTestStore 初始化一个临时配置库（Postgres）并写入测试容器，
 // 以便 MutateGlobal / SaveConfig 能真正落库（否则返回 "database is not initialized"）。
 func setupRDNSTestStore(t *testing.T, container config.Container) {
 	t.Helper()
+	requirePGTest(t)
 	dir := t.TempDir()
 	previous := config.AppConfig
 	config.SetConfigPath(filepath.Join(dir, "config.json"))
@@ -75,7 +76,7 @@ func TestUpdateReverseDNSSetsOwnedAddress(t *testing.T) {
 		t.Fatalf("IPv6 RDNS = %q, want v6.example.com", got)
 	}
 
-	// 关闭并从 SQLite 重新加载，确认 RDNS 真正落库（而非仅内存生效）。
+	// 关闭并从配置库重新加载，确认 RDNS 真正落库（而非仅内存生效）。
 	config.CloseConfigDB()
 	if _, err := config.InitConfig(); err != nil {
 		t.Fatalf("重新加载配置库失败: %v", err)

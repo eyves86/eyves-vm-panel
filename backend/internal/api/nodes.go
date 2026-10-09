@@ -425,7 +425,7 @@ func createNode(w http.ResponseWriter, r *http.Request) {
 			"address":    address,
 		}, "", "  ")
 		// 响应不下发 install_key（手动模式无）；agent Token 仅此一次明文展示，
-		// 落库即 AES-GCM 密文（store_sqlite.go F7/P2-11）。
+		// 落库即 AES-GCM 密文（store_db.go F7/P2-11）。
 		jsonResponse(w, http.StatusCreated, APIResponse{Success: true, Data: map[string]any{
 			"node": sanitizeNode(node),
 			"manual_bootstrap": map[string]string{
@@ -781,7 +781,7 @@ func handleNodeHeartbeat(w http.ResponseWriter, r *http.Request, nodeID string) 
 	// 心跳只触碰本节点的 cfg.Node 与本节点的容器，故用精确脏集声明：未声明的行不
 	// 重算指纹，子用户/密钥/快照/任务零扫描。落库本身并入后台窗口合并成一个事务
 	// （P2，见 config/store_batch.go）：30k 节点 × 10s = 3000 次/秒的请求不再等于
-	// 3000 次提交，HTTP 响应也不再等 SQLite 提交。
+	// 3000 次提交，HTTP 响应也不再等数据库提交。
 	config.MutateGlobalSaveDeferred(func(cfg *config.EyvescloudConfig) (bool, config.DirtyIDs) {
 		idx, ok := config.FindNodeIndexUnlocked(nodeID)
 		if !ok {
@@ -1023,7 +1023,7 @@ func syncAgentContainersUnlocked(cfg *config.EyvescloudConfig, nodeID string, su
 			continue
 		}
 		// Not present on the controller: add from the agent summary. The
-		// controller-side ID must be globally unique (SQLite primary key):
+		// controller-side ID must be globally unique (config store primary key):
 		// node-local IDs may collide with local containers (observed: node
 		// id=3 vs local id=3 -> whole save tx PK conflict -> all writes fail
 		// silently). Allocate a controller-unique ID; keep the node-local ID

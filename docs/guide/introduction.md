@@ -51,7 +51,7 @@
 
 ## 技术栈
 
-- **控制面**：Go（`net/http`）、SQLite、调度引擎。
+- **控制面**：Go（`net/http`）、PostgreSQL（配置库与遥测）、调度引擎。
 - **虚拟化层**：LXC、KVM/libvirt、cgroup v2、iptables、conntrack。
 - **数据面**：React、TypeScript、Vite、Tailwind CSS、lucide-react、xterm.js、noVNC。
 - **交付**：Linux（systemd / OpenRC）、GitHub Actions 构建 Linux AMD64/ARM64 release 产物，安装脚本默认拉取最新 Release。
@@ -63,8 +63,8 @@ EyvesCloud 是**独立编写**的开源项目：后端（Go）、前端（React/
 需要澄清的几点：
 
 - **命名与标识**：产品名 "EyvesCloud" 为本项目自有命名，与任何第三方产品或商标无关。
-- **可借鉴但不抄源码**：项目在「主控-被控节点」「NAT/IPv6 网络」「WebSSH/WebVNC」等常见场景的**功能形态**上与部分同类产品相似，这是行业通用需求，并非代码抄袭。其**实现方式**（[架构文档](../developer/architecture.md)）为自主设计，包括 SQLite 持久化模型、JWT + API Key（argon2id）鉴权体系、节点 token 代理协议、基于 TOTP 的两步验证、策略引擎与基于 conntrack 的安全引擎等均有单独落地。
-- **依赖的第三方组件**：仅使用 Go 标准库/知名开源库（如 `golang.org/x/crypto`、modernc.org/sqlite）、React 生态与 Linux 系统组件（LXC、libvirt、iptables），各自遵循其开源许可。
+- **可借鉴但不抄源码**：项目在「主控-被控节点」「NAT/IPv6 网络」「WebSSH/WebVNC」等常见场景的**功能形态**上与部分同类产品相似，这是行业通用需求，并非代码抄袭。其**实现方式**（[架构文档](../developer/architecture.md)）为自主设计，包括 PostgreSQL 持久化模型、JWT + API Key（argon2id）鉴权体系、节点 token 代理协议、基于 TOTP 的两步验证、策略引擎与基于 conntrack 的安全引擎等均有单独落地。
+- **依赖的第三方组件**：仅使用 Go 标准库/知名开源库（如 `golang.org/x/crypto`、`github.com/jackc/pgx/v5`）、React 生态与 Linux 系统组件（LXC、libvirt、iptables），各自遵循其开源许可。
 - **文档**：本文档站与 [README](../../README.md)、[部署文档](../../DEPLOYMENT.md) 均为本项目原创撰写。
 
 如果你在某处看到与本项目文字或代码高度雷同的内容，欢迎提交 Issue 反馈以便区分或移除。

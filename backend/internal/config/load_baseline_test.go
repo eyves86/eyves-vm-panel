@@ -131,8 +131,12 @@ func TestLoadBaseline(t *testing.T) {
 	report("规模 容器=%d 节点=%d 子用户=%d 每节点上报容器=%d 轮数=%d", nCont, nNodes, nSub, m, rounds)
 	report("首次全量落库（构建库）=%s", initialWrite.Round(time.Millisecond))
 
-	if st, err := os.Stat(getDBPath()); err == nil {
-		report("库文件大小=%.1f MB", float64(st.Size())/(1024*1024))
+	// 配置库占用（Postgres：当前测试 schema 下全部表的总大小）。
+	var dbBytes int64
+	if err := db.QueryRow(`SELECT COALESCE(SUM(pg_total_relation_size(c.oid)), 0)
+		FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+		WHERE n.nspname = current_schema() AND c.relkind = 'r'`).Scan(&dbBytes); err == nil {
+		report("配置库占用=%.1f MB", float64(dbBytes)/(1024*1024))
 	}
 
 	installWriteProbe(t, "containers", "nodes", "sub_users", "app_meta", "audit_logs", "login_logs")

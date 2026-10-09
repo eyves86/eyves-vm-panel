@@ -12,8 +12,6 @@ import (
 	"sync"
 	"time"
 
-	_ "modernc.org/sqlite"
-
 	"eyvescloud/internal/storage"
 )
 
@@ -157,432 +155,50 @@ func openConfigDB() error {
 	if db != nil {
 		return nil
 	}
-	// P1：env 门控 —— 设置 EYVESCLOUD_PG_DSN 时配置库走 Postgres（实验性），否则保持
-	// SQLite（默认，行为不变）。PG 无本地库文件 / 无 WAL，故跳过 chmod 与遗留指标迁移；
-	// 遥测库当前仍是本机 SQLite（P1-c），PG 下同样打开。
-	if dsn := strings.TrimSpace(os.Getenv(pgDSNEnv)); dsn != "" {
-		if err := openPostgresConfigDB(dsn); err != nil {
+	// 配置库一律走 Postgres（v3：SQLite 后端已整体移除，无回落）。
+	dsn := strings.TrimSpace(os.Getenv(pgDSNEnv))
+	if dsn == "" {
+		var err error
+		if dsn, err = testConfigDSN(); err != nil {
 			return err
 		}
-		if err := openCellStores(); err != nil {
-			return err
-		}
-		return openTelemetryDB()
 	}
-	configDBIsPostgres = false
-	dbPath := getDBPath()
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
-		return fmt.Errorf("failed to create database directory: %v", err)
+	if dsn == "" {
+		return fmt.Errorf("未配置 %s：配置库已改为 Postgres 必需（v3 起不再支持 SQLite）。"+
+			"示例：%s=postgres://user:pass@127.0.0.1:5432/eyvescloud?sslmode=disable",
+			pgDSNEnv, pgDSNEnv)
 	}
-	next, err := sql.Open("sqlite", sqliteDSN(dbPath, configDBPragmas))
-	if err != nil {
-		return fmt.Errorf("failed to open sqlite database: %v", err)
-	}
-	next.SetMaxOpenConns(1)
-	next.SetMaxIdleConns(1)
-
-	// 安全加固：SQLite 文件含 AdminPassHash / JWTSecret / ApiKeyHash 等敏感字段，
-	// 无论是否新建，都把它严格锁到当前用户可读。
-	// 注意 chmod 必须放在 ensureSchema 之后：sql.Open 是惰性的，文件要等到第一次
-	// 执行语句时才落盘，提前 chmod 会打在尚不存在的路径上静默失败（首次启动即以
-	// 0644 落盘，直到下次启动才被纠正）。
-	db = next
-	if err := ensureSchema(); err != nil {
+	if err := openPostgresConfigDB(dsn); err != nil {
 		return err
 	}
-	_ = os.Chmod(dbPath, 0600)
-	// cell 分库：EYVESCLOUD_CELL_DSNS 未配置时直接返回，行为与历史完全一致。
+	// cell 分库：EYVESCLOUD_CELL_DSNS 未配置时直接返回，行为与历史一致。
 	if err := openCellStores(); err != nil {
 		return err
 	}
-	// 遥测独立成库（P1-c）：必须在 db 就绪之后打开，迁移会从旧的 config.db
-	// 读取遗留指标行。openTelemetryDB 内部不再取 dbMu（此处已持有），锁序 dbMu → telemetryMu。
-	if err := openTelemetryDB(); err != nil {
-		return err
-	}
-	migrateLegacyMetrics()
-	return nil
+	// 遥测独立成库（P1-c）：必须在 db 就绪之后打开（openTelemetryDB 内部不再取
+	// dbMu，此处已持有，锁序 dbMu → telemetryMu）。
+	return openTelemetryDB(dsn)
 }
 
-// sqliteSchemaStmts 是 SQLite 的基础建表语句。列集合必须与 postgresSchemaStmts 一致
-// （TestSQLiteAndPostgresSchemaParity 守卫）；此后新增列统一走共享的
-// ensureSchemaMigrations（PG 侧做 INTEGER→BIGINT / REAL→DOUBLE PRECISION 类型翻译），
-// 两端各自动补齐。
-func sqliteSchemaStmts() []string {
-	stmts := []string{
-		`CREATE TABLE IF NOT EXISTS app_meta (
-			key TEXT PRIMARY KEY,
-			value TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS containers (
-			id INTEGER PRIMARY KEY,
-			uuid TEXT NOT NULL UNIQUE,
-			name TEXT NOT NULL,
-			virtualization TEXT,
-			lxc_name TEXT,
-			kvm_name TEXT,
-			disk_image TEXT,
-			storage_pool_id TEXT,
-			storage_path TEXT,
-			mac_address TEXT,
-			template TEXT,
-			vcpu REAL,
-			ram_mb INTEGER,
-			disk_gb REAL,
-			data_disk_gb REAL NOT NULL DEFAULT 0,
-			data_disk_mount_path TEXT,
-			network_bw_mbps INTEGER,
-			network_down_mbps INTEGER NOT NULL DEFAULT 0,
-			network_up_mbps INTEGER NOT NULL DEFAULT 0,
-			monthly_traffic_gb INTEGER,
-			traffic_mode TEXT,
-			traffic_in_gb INTEGER,
-			traffic_out_gb INTEGER,
-			traffic_used_rx INTEGER,
-			traffic_used_tx INTEGER,
-			traffic_reset_date TEXT,
-			io_speed_mbps INTEGER,
-			io_read_mbps INTEGER NOT NULL DEFAULT 0,
-			io_write_mbps INTEGER NOT NULL DEFAULT 0,
-			status TEXT,
-			restore_on_host_boot INTEGER NOT NULL DEFAULT 0,
-			ip TEXT,
-			lan_ipv4_mode TEXT,
-			lan_interface TEXT,
-			lan_ipv4_address TEXT,
-			lan_ipv4_prefix_len INTEGER,
-			lan_ipv4_gateway TEXT,
-			ipv6 TEXT,
-			ipv6_prefix_len INTEGER,
-			ipv6_interface TEXT,
-			vnc_port INTEGER,
-			ssh_port INTEGER,
-			ssh_password TEXT,
-			ssh_host_key TEXT,
-			port_mapping_limit INTEGER,
-			snapshot_limit INTEGER,
-			created_at TEXT,
-			expires_at TEXT,
-			snapshot_schedule_enabled INTEGER,
-			snapshot_schedule_interval_hours INTEGER,
-			snapshot_schedule_time TEXT,
-			snapshot_schedule_last_run TEXT,
-			snapshot_schedule_next_run TEXT,
-			snapshot_schedule_created_by TEXT,
-			policy_blocked INTEGER,
-			policy_blocked_reason TEXT,
-			policy_blocked_at TEXT,
-			allowed_image_ids TEXT,
-			image_limit_configured INTEGER NOT NULL DEFAULT 0,
-			rescue_enabled INTEGER NOT NULL DEFAULT 0,
-			rescue_iso_id TEXT,
-			rescue_iso_path TEXT,
-			optional_iso_id TEXT,
-			optional_iso_path TEXT,
-			suspended INTEGER NOT NULL DEFAULT 0,
-			suspended_at TEXT,
-			suspended_reason TEXT,
-			remark TEXT,
-			locked INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS port_mappings (
-			container_id INTEGER NOT NULL,
-			position INTEGER NOT NULL,
-			container_port INTEGER NOT NULL,
-			host_port INTEGER NOT NULL,
-			host_ip TEXT,
-			protocol TEXT,
-			description TEXT,
-			PRIMARY KEY (container_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS container_public_ipv4s (
-			container_id INTEGER NOT NULL,
-			position INTEGER NOT NULL,
-			address TEXT NOT NULL,
-			interface TEXT,
-			prefix_len INTEGER,
-			gateway TEXT,
-			rdns TEXT,
-			PRIMARY KEY (container_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS container_ipv6_addresses (
-			container_id INTEGER NOT NULL,
-			position INTEGER NOT NULL,
-			address TEXT NOT NULL,
-			prefix_len INTEGER,
-			interface TEXT,
-			rdns TEXT,
-			PRIMARY KEY (container_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS container_access_links (
-			container_uuid TEXT PRIMARY KEY,
-			access_code TEXT,
-			access_code_password TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS sub_users (
-			id TEXT PRIMARY KEY,
-			username TEXT NOT NULL,
-			password TEXT,
-			pass_hash TEXT,
-			access_code TEXT,
-			access_code_password TEXT,
-			created_at TEXT,
-			token_version INTEGER,
-			allowed_image_ids TEXT,
-			image_limit_configured INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE TABLE IF NOT EXISTS sub_user_container_names (
-			sub_user_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			container_name TEXT NOT NULL,
-			PRIMARY KEY (sub_user_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS sub_user_container_uuids (
-			sub_user_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			container_uuid TEXT NOT NULL,
-			PRIMARY KEY (sub_user_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS api_keys (
-			id TEXT PRIMARY KEY,
-			name TEXT,
-			key_hash TEXT,
-			key_fingerprint TEXT,
-			prefix TEXT,
-			ip_whitelist TEXT,
-			created_at TEXT,
-			last_used TEXT,
-			scopes TEXT,
-			expires_at TEXT,
-			disabled INTEGER,
-			container_uuids TEXT,
-			last_used_ip TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS audit_logs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			time TEXT,
-			action TEXT,
-			target TEXT,
-			detail TEXT,
-			user TEXT,
-			ip TEXT,
-			user_agent TEXT,
-			success_set INTEGER,
-			success INTEGER,
-			error TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS security_conntrack_snapshots (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			container_ip TEXT NOT NULL,
-			line TEXT NOT NULL,
-			captured_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_conntrack_snapshots_ip_time
-			ON security_conntrack_snapshots(container_ip, captured_at)`,
-		`CREATE TABLE IF NOT EXISTS tasks (
-			id TEXT PRIMARY KEY,
-			type TEXT,
-			container_id INTEGER,
-			container_name TEXT,
-			status TEXT,
-			error TEXT,
-			created_at TEXT,
-			template_id TEXT,
-			user TEXT,
-			ip TEXT,
-			user_agent TEXT,
-			cfg_name TEXT,
-			cfg_virtualization TEXT,
-			cfg_template_id TEXT,
-			cfg_vcpu REAL,
-			cfg_cpu_percent INTEGER,
-			cfg_ram_mb INTEGER,
-			cfg_disk_gb REAL,
-			cfg_network_bw_mbps INTEGER,
-			cfg_network_down_mbps INTEGER NOT NULL DEFAULT 0,
-			cfg_network_up_mbps INTEGER NOT NULL DEFAULT 0,
-			cfg_monthly_traffic_gb INTEGER,
-			cfg_traffic_mode TEXT,
-			cfg_traffic_in_gb INTEGER,
-			cfg_traffic_out_gb INTEGER,
-			cfg_io_speed_mbps INTEGER,
-			cfg_io_read_mbps INTEGER NOT NULL DEFAULT 0,
-			cfg_io_write_mbps INTEGER NOT NULL DEFAULT 0,
-			cfg_management_port INTEGER NOT NULL DEFAULT 0,
-			cfg_port_mapping_count INTEGER,
-			cfg_assign_nat INTEGER,
-			cfg_lan_ipv4_mode TEXT,
-			cfg_lan_interface TEXT,
-			cfg_lan_ipv4_address TEXT,
-			cfg_lan_ipv4_prefix_len INTEGER,
-			cfg_lan_ipv4_gateway TEXT,
-			cfg_snapshot_limit INTEGER,
-			cfg_assign_ipv4 INTEGER,
-			cfg_ipv4_count INTEGER,
-			cfg_public_ipv4s TEXT,
-			cfg_assign_ipv6 INTEGER,
-			cfg_ipv6_count INTEGER,
-			cfg_ipv6_addresses TEXT,
-			cfg_ssh_auth_mode TEXT,
-			cfg_ssh_password TEXT,
-			cfg_ssh_public_key TEXT,
-			cfg_allowed_image_ids TEXT,
-			cfg_image_limit_configured INTEGER NOT NULL DEFAULT 0,
-			cfg_expires_at TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS task_extra_ports (
-			task_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			port INTEGER NOT NULL,
-			PRIMARY KEY (task_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS task_nat_port_mappings (
-			task_id TEXT NOT NULL,
-			position INTEGER NOT NULL,
-			host_port INTEGER NOT NULL,
-			container_port INTEGER NOT NULL,
-			protocol TEXT,
-			description TEXT,
-			PRIMARY KEY (task_id, position)
-		)`,
-		`CREATE TABLE IF NOT EXISTS login_logs (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			time TEXT,
-			username TEXT,
-			ip TEXT,
-			user_agent TEXT,
-			success INTEGER
-		)`,
-		`CREATE TABLE IF NOT EXISTS enabled_images (
-			position INTEGER PRIMARY KEY,
-			image_id TEXT NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS snapshots (
-			id TEXT PRIMARY KEY,
-			container_id INTEGER,
-			container_name TEXT,
-			lxc_name TEXT,
-			created_at TEXT,
-			created_by TEXT,
-			scheduled INTEGER,
-			path TEXT,
-			size_bytes INTEGER
-		)`,
-		// 遥测表（container_metrics / container_metrics_hourly）已迁至独立的
-		// telemetry.db，由 ensureTelemetrySchema 建表，见 telemetry_db.go。
-		// P0-1 存储抽象层：卷表，把卷与容器/池解耦。
-		// 卷记录独立于 saveConfigToDB 的全量快照流程（不在其 DELETE 列表中），
-		// 采用即时 CRUD，与 security_conntrack_snapshots 的直写模式一致。
-		`CREATE TABLE IF NOT EXISTS volumes (
-			id TEXT PRIMARY KEY,
-			pool_id TEXT NOT NULL,
-			kind TEXT NOT NULL,
-			size_mb INTEGER NOT NULL DEFAULT 0,
-			attached_to_container_id INTEGER NOT NULL DEFAULT 0,
-			status TEXT NOT NULL,
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_volumes_container ON volumes (attached_to_container_id)`,
-		// P2：节点从 app_meta 的单行 JSON 改为**每节点一行**。此前 30k 节点下一次
-		// 心跳保存要重新序列化 9.5MB JSON + 重加密全部节点 token（实测 220ms/次），
-		// 而心跳只改一个节点。行级化后单次保存只写 1 行（见 store_rows.go 的 diffNodes）。
-		// token / install_key 仍逐行 AES-GCM 加密落库，且只在所属节点行变化时才重新加密。
-		`CREATE TABLE IF NOT EXISTS nodes (
-			id TEXT PRIMARY KEY,
-			name TEXT NOT NULL DEFAULT '',
-			address TEXT NOT NULL DEFAULT '',
-			public_host TEXT NOT NULL DEFAULT '',
-			token TEXT NOT NULL DEFAULT '',
-			install_key TEXT NOT NULL DEFAULT '',
-			install_key_created_at TEXT NOT NULL DEFAULT '',
-			install_key_ip TEXT NOT NULL DEFAULT '',
-			status TEXT NOT NULL DEFAULT '',
-			last_seen TEXT NOT NULL DEFAULT '',
-			version TEXT NOT NULL DEFAULT '',
-			os_name TEXT NOT NULL DEFAULT '',
-			cpu_count INTEGER NOT NULL DEFAULT 0,
-			ram_total_mb INTEGER NOT NULL DEFAULT 0,
-			ram_used_mb INTEGER NOT NULL DEFAULT 0,
-			disk_total_gb REAL NOT NULL DEFAULT 0,
-			disk_used_gb REAL NOT NULL DEFAULT 0,
-			container_count INTEGER NOT NULL DEFAULT 0,
-			region_id TEXT NOT NULL DEFAULT '',
-			node_group_id TEXT NOT NULL DEFAULT '',
-			cluster_id TEXT NOT NULL DEFAULT '',
-			cell_id TEXT NOT NULL DEFAULT '',
-			virt_types TEXT NOT NULL DEFAULT '',
-			created_at TEXT NOT NULL DEFAULT '',
-			maintenance_mode INTEGER NOT NULL DEFAULT 0,
-			maintenance_since TEXT NOT NULL DEFAULT '',
-			tls_skip_verify INTEGER NOT NULL DEFAULT 0,
-			allow_private_addr INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_nodes_region ON nodes (region_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_nodes_node_group ON nodes (node_group_id)`,
-		// P1-1 节点状态机 + 租约锁
-		`CREATE TABLE IF NOT EXISTS node_leases (
-			node_id TEXT PRIMARY KEY,
-			token TEXT NOT NULL,
-			expires_at TEXT NOT NULL,
-			in_progress INTEGER NOT NULL DEFAULT 0
-		)`,
-		// 任务终态留档表：独立于 tasks / task_extra_ports / task_nat_port_mappings
-		// 这三张"创建续跑"表。后者只保存 pending/running 用于重启续跑，
-		// 完成/失败/取消的任务在此留档，供任务历史与任务中心查询。
-		`CREATE TABLE IF NOT EXISTS task_history (
-			id            TEXT PRIMARY KEY,
-			type          TEXT,
-			container_id  INTEGER,
-			container_name TEXT,
-			status        TEXT,
-			error         TEXT,
-			stage         TEXT,
-			stage_detail  TEXT,
-			percent       INTEGER NOT NULL DEFAULT 0,
-			user          TEXT,
-			ip            TEXT,
-			user_agent    TEXT,
-			created_at    TEXT,
-			started_at    TEXT,
-			ended_at      TEXT,
-			duration_ms   INTEGER NOT NULL DEFAULT 0
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_task_history_created ON task_history (created_at DESC)`,
-		`CREATE INDEX IF NOT EXISTS idx_task_history_status ON task_history (status)`,
-		`CREATE INDEX IF NOT EXISTS idx_task_history_container ON task_history (container_id)`,
-		// 任务日志表：按 task_id 追加的过程日志（INFO/WARN/ERROR）。
-		`CREATE TABLE IF NOT EXISTS task_logs (
-			id         INTEGER PRIMARY KEY AUTOINCREMENT,
-			task_id    TEXT NOT NULL,
-			level      TEXT NOT NULL,
-			message    TEXT NOT NULL,
-			created_at TEXT NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs (task_id, id)`,
-	}
-	return stmts
-}
-
-func ensureSchema() error {
-	return ensureSchemaOn(db, false)
+// TestDB 返回配置库的底层连接句柄（未初始化时为 nil）。配置库内部表（如节点租约
+// node_leases）由 config 建表并持有，需要在同一库上直接读写的内部包（node）与测试
+// 经此取得连接，无需另起一个库。生产代码应优先使用 config 的高层 API。
+func TestDB() *sql.DB {
+	dbMu.Lock()
+	defer dbMu.Unlock()
+	return db
 }
 
 // ensureSchemaOn 在任意连接上建基础表并跑共享列迁移。配置库与 cell 分库共用同一份
 // 建表语句与迁移清单——cell 库虽为新建（基础建表已含当前全部列），但它跨版本存活，
 // 后续版本新增列只能靠迁移补齐，故迁移不能省。
-func ensureSchemaOn(conn *sql.DB, isPG bool) error {
-	stmts := sqliteSchemaStmts()
-	label := "sqlite"
-	if isPG {
-		stmts = postgresSchemaStmts()
-		label = "postgres"
-	}
-	for _, stmt := range stmts {
+func ensureSchemaOn(conn *sql.DB) error {
+	for _, stmt := range postgresSchemaStmts() {
 		if _, err := conn.Exec(stmt); err != nil {
-			return fmt.Errorf("failed to create %s schema: %w", label, err)
+			return fmt.Errorf("failed to create postgres schema: %w", err)
 		}
 	}
-	return ensureSchemaMigrationsOn(conn, isPG)
+	return ensureSchemaMigrationsOn(conn)
 }
 
 // schemaColumnMigration 描述一条「后加列」迁移：table.name 缺列时按 def 补列。
@@ -592,10 +208,9 @@ type schemaColumnMigration struct {
 	def   string
 }
 
-// schemaColumnMigrations 是两端共享的后加列清单：SQLite 与 Postgres 启动时都跑它。
-// 故「两端最终列集合一致」等价于 sqliteBase ∪ M == postgresBase ∪ M —— PG 的基础建表
-// 把历史列内联了，SQLite 的基础建表只保留最早的列，两者靠这份清单补齐到同一集合
-// （TestSQLiteAndPostgresSchemaParity 正是按并集断言的）。
+// schemaColumnMigrations 是后加列清单，Postgres 启动时跑它：基础建表已内联历史列，
+// 存量库通过 CREATE TABLE IF NOT EXISTS 补不到新列，只能靠这份清单 ALTER 补齐
+// （ensureColumnOn 顺带把 SQLite 时代写的 INTEGER/REAL 翻译成 BIGINT/DOUBLE PRECISION）。
 func schemaColumnMigrations() []schemaColumnMigration {
 	return []schemaColumnMigration{
 		{"api_keys", "scopes", "TEXT"},
@@ -688,12 +303,12 @@ func schemaColumnMigrations() []schemaColumnMigration {
 	}
 }
 
-// ensureSchemaMigrationsOn 在 conn 上跑共享列迁移与回填。conn/isPG 参数化是为了让
-// cell 分库复用同一份迁移清单——cell 库跨版本存活，新增列只能靠这里补齐。
-func ensureSchemaMigrationsOn(conn *sql.DB, isPG bool) error {
+// ensureSchemaMigrationsOn 在 conn 上跑列迁移与回填。cell 分库复用同一份迁移清单——
+// cell 库跨版本存活，新增列只能靠这里补齐。
+func ensureSchemaMigrationsOn(conn *sql.DB) error {
 	added := map[string]bool{}
 	for _, column := range schemaColumnMigrations() {
-		wasAdded, err := ensureColumnOn(conn, isPG, column.table, column.name, column.def)
+		wasAdded, err := ensureColumnOn(conn, column.table, column.name, column.def)
 		if err != nil {
 			return err
 		}
@@ -765,57 +380,33 @@ func ensureSchemaMigrationsOn(conn *sql.DB, isPG bool) error {
 	return nil
 }
 
-// ensureColumnOn 在列缺失时补列，返回是否真的新增。isPG 决定列存在性判断的方言；
-// PG 侧还需把建表列类型（SQLite 的 INTEGER/REAL）翻译成与 ensurePostgresSchema
-// 一致的类型，否则 ALTER 出来的列会是 int4/float4（traffic_used_rx 之类的字节计数
-// 会溢出 int4）。
-func ensureColumnOn(conn *sql.DB, isPG bool, table, name, def string) (bool, error) {
-	exists, err := columnExistsOn(conn, isPG, table, name)
+// ensureColumnOn 在列缺失时补列，返回是否真的新增。列类型经 pgColumnDef 翻译后再
+// ALTER：迁移清单沿用了 SQLite 时代的 INTEGER/REAL 写法，直接落到 PG 会得到
+// int4/float4，traffic_used_rx 之类的字节计数会溢出 int4。
+func ensureColumnOn(conn *sql.DB, table, name, def string) (bool, error) {
+	exists, err := columnExistsOn(conn, table, name)
 	if err != nil {
 		return false, err
 	}
 	if exists {
 		return false, nil
 	}
-	if isPG {
-		def = pgColumnDef(def)
-	}
-	_, err = conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + def)
+	_, err = conn.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + pgColumnDef(def))
 	return err == nil, err
 }
 
-func columnExistsOn(conn *sql.DB, isPG bool, table, name string) (bool, error) {
-	if isPG {
-		var one int
-		err := conn.QueryRow(`SELECT 1 FROM information_schema.columns
-			WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
-			table, name).Scan(&one)
-		if err == sql.ErrNoRows {
-			return false, nil
-		}
-		return err == nil, err
+func columnExistsOn(conn *sql.DB, table, name string) (bool, error) {
+	var one int
+	err := conn.QueryRow(`SELECT 1 FROM information_schema.columns
+		WHERE table_schema = current_schema() AND table_name = ? AND column_name = ?`,
+		table, name).Scan(&one)
+	if err == sql.ErrNoRows {
+		return false, nil
 	}
-	rows, err := conn.Query("PRAGMA table_info(" + table + ")")
-	if err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var columnName, columnType string
-		var notNull, pk int
-		var defaultValue interface{}
-		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
-		}
-		if columnName == name {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
+	return err == nil, err
 }
 
-// pgColumnDef 把迁移列表里的 SQLite 类型翻译成 Postgres 建表所用的类型。
+// pgColumnDef 把迁移清单里的 SQLite 类型翻译成 Postgres 建表所用的类型。
 func pgColumnDef(def string) string {
 	def = strings.ReplaceAll(def, "INTEGER", "BIGINT")
 	return strings.ReplaceAll(def, "REAL", "DOUBLE PRECISION")
@@ -1212,7 +803,7 @@ func saveConfigToDBHinted(hint *dirtyHint) error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
 	if db == nil {
-		return fmt.Errorf("sqlite database is not initialized")
+		return fmt.Errorf("config database is not initialized")
 	}
 
 	tx, err := db.Begin()
@@ -1261,7 +852,7 @@ func saveConfigToDBHinted(hint *dirtyHint) error {
 // 确实遵守契约的路径/测试使用——故意违反契约的契约测试不能用它判定。
 func verifyHintCompleteness() error {
 	if db == nil {
-		return fmt.Errorf("sqlite database is not initialized")
+		return fmt.Errorf("config database is not initialized")
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -1611,7 +1202,7 @@ func CreateVolumeRecord(v storage.Volume) error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
 	if db == nil {
-		return fmt.Errorf("sqlite database is not initialized")
+		return fmt.Errorf("config database is not initialized")
 	}
 	if volumeRecordExistsLocked(v.ID) {
 		return fmt.Errorf("%w: %s", storage.ErrVolumeExists, v.ID)
@@ -1631,7 +1222,7 @@ func UpdateVolumeRecord(v storage.Volume) error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
 	if db == nil {
-		return fmt.Errorf("sqlite database is not initialized")
+		return fmt.Errorf("config database is not initialized")
 	}
 	res, err := db.Exec(`UPDATE volumes SET pool_id = ?, kind = ?, size_mb = ?, attached_to_container_id = ?, status = ?
 		WHERE id = ?`,
@@ -1856,7 +1447,7 @@ func appendAuditLogRow(log AuditLog, keep int) error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
 	if db == nil {
-		return fmt.Errorf("sqlite database is not initialized")
+		return fmt.Errorf("config database is not initialized")
 	}
 	tx, err := db.Begin()
 	if err != nil {
@@ -1881,7 +1472,7 @@ func appendLoginLogRow(log SavedLoginLog, keep int) error {
 	dbMu.Lock()
 	defer dbMu.Unlock()
 	if db == nil {
-		return fmt.Errorf("sqlite database is not initialized")
+		return fmt.Errorf("config database is not initialized")
 	}
 	tx, err := db.Begin()
 	if err != nil {

@@ -97,11 +97,8 @@ func TestMarkLogsDirtyRewritesAndReconciles(t *testing.T) {
 // TestFailedAppendMarksLogsDirty 追加落库失败必须置脏，使下一次保存自愈补齐。
 func TestFailedAppendMarksLogsDirty(t *testing.T) {
 	initLogsTest(t)
-	if _, err := db.Exec(`CREATE TRIGGER fail_audit_insert BEFORE INSERT ON audit_logs
-		BEGIN SELECT RAISE(ABORT,'inject'); END`); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _, _ = db.Exec(`DROP TRIGGER IF EXISTS fail_audit_insert`) }()
+	installFailTrigger(t, "fail_audit_insert", "audit_logs", "INSERT")
+	defer dropFailTrigger(t, "fail_audit_insert", "audit_logs")
 
 	AddAuditLog("a.fail", "t", "d", "u")
 
@@ -113,9 +110,7 @@ func TestFailedAppendMarksLogsDirty(t *testing.T) {
 	}
 
 	// 去掉注入后，下一次保存应把有界表重写回一致：内存里的那一条最终出现在库中。
-	if _, err := db.Exec(`DROP TRIGGER IF EXISTS fail_audit_insert`); err != nil {
-		t.Fatal(err)
-	}
+	dropFailTrigger(t, "fail_audit_insert", "audit_logs")
 	if err := SaveConfig(); err != nil {
 		t.Fatal(err)
 	}

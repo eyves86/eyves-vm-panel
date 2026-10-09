@@ -329,7 +329,7 @@ func snapshotNodes() []config.Node {
 
 // ---- Decision 记录（P1-2 验收"留痕"） ----
 
-// Decision 是单次调度的留痕记录（也写入 SQLite scheduling_decisions）。
+// Decision 是单次调度的留痕记录（也写入配置库 scheduling_decisions）。
 type Decision struct {
 	ID         string    `json:"id"`
 	RequestID  string    `json:"request_id"`
@@ -339,7 +339,7 @@ type Decision struct {
 	At         time.Time `json:"at"`
 }
 
-// recordDecision 全局留痕（仅写内存 ring buffer；P7-1 events 表前不持久化 SQLite，
+// recordDecision 全局留痕（仅写内存 ring buffer；P7-1 events 表前不持久化到配置库，
 // 减少 P1-2 范围；记录仍可用于 /api/scheduler/decisions 调试端点）。
 func recordDecision(diag Diagnostics) {
 	decisionsMu.Lock()

@@ -1,6 +1,6 @@
 # Configuration
 
-After installation, EyvesCloud runs as a systemd service, with runtime configuration and the database stored locally on the host. The exact paths may vary with install script options; for a default installation, start by checking `/root/.eyvescloud/`.
+After installation, EyvesCloud runs as a systemd service. Panel configuration (including the PostgreSQL DSN) is stored locally on the host (the installer writes `/etc/eyvescloud/store.env`), and business data lives in a PostgreSQL database. The exact paths may vary with install script options; for a default installation, start by checking `/root/.eyvescloud/`.
 
 ## Common Settings
 
@@ -8,7 +8,7 @@ After installation, EyvesCloud runs as a systemd service, with runtime configura
 | --- | --- |
 | Web port | Defaults to `8999`; the service listens on `0.0.0.0:8999`. |
 | Administrator account | Used to log in to the web panel and manage API keys. |
-| Database | SQLite, storing container metadata, nodes, sub-users, audit logs, API keys, and more. |
+| Database | PostgreSQL (since v3), storing container metadata, nodes, sub-users, audit logs, API keys, metric samples, and more; the connection string is `EYVESCLOUD_PG_DSN`. |
 | NAT port range | Used for random ports and port mapping allocation. |
 | IPv6 address range | Allocation policy configurable when the host has routable IPv6. |
 | Storage pools | Multiple pools with content types (LXC/KVM/images/snapshots/backups). |

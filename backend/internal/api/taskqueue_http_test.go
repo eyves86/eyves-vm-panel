@@ -18,10 +18,11 @@ import (
 	"eyvescloud/internal/config"
 )
 
-// setupBatchActionTestStore 初始化临时 SQLite 配置库 + 给定容器集合，使
+// setupBatchActionTestStore 初始化临时配置库（Postgres）+ 给定容器集合，使
 // HandleBatchAction 的容器校验与入队落库都能真实执行（不依赖全局真实数据目录）。
 func setupBatchActionTestStore(t *testing.T, containers ...config.Container) {
 	t.Helper()
+	requirePGTest(t)
 	dir := t.TempDir()
 	previous := config.AppConfig
 	config.SetConfigPath(filepath.Join(dir, "config.json"))
